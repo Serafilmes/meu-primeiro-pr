@@ -778,17 +778,28 @@ Configurações do Sistema → Privacidade e Segurança → Acesso Total ao Disc
 
 ## 13.1. Próximos passos
 
-1. ~~**PDF rico com frames/thumbnails**~~ ✅ **FEITO (sessão 8):** `gma_relatorio_pdf.py` v2
-   entregue. 22 páginas, 3 partes: cabeçalho rico + folha de contato + tabela completa.
-   GoPro: `.THM`/`.LRV` como proxies. Modelo da câmera detectado via exiftool.
+1. **PDF Overview — PRÓXIMA SESSÃO:** criar o gerador de PDF no estilo **Overview** (dashboard +
+   folha de contato) que **lê** o `manifesto.json` (mídia) + `.sppo` (integridade) e só **desenha**
+   (não extrai nada). Briefing completo na **§13.4**. Material de teste (manifesto + 224 frames)
+   já gerado pelo `extrator_frames.py`.
 
-2. **Sistema de relatórios rico (TXT/CSV/PDF, padrão ShotPutPro):** spec completo na **§13.2**.
-   Referência (TXT/CSV/PDF) já recebida e analisada. Implica enriquecer o **Leitor (Camada 1)** com
-   metadados por arquivo + frames e fazer o JOIN com a integridade do **copiador (Camada 2)**.
-   Instalar `ffmpeg`/`exiftool`/`poppler`.
-2. **Fichas online (entrada de dados):** ✅ Endpoint `/forms/tally` pronto no Flask. A escolha da ferramenta de formulário (Tally ou outra) e a integração com o Flask são decisões da **Camada 3** (guardiã do fluxo de informação). Pendente (→ **Camada 5**): instalação do ngrok por máquina, autenticação, configuração do webhook e do `.env` em cada máquina.
-3. **Organograma no Miro:** desenvolver o organograma (hoje em `organograma_GMA.md`) no **Miro**,
-   aproveitando a colaboração de outros agentes IA. Conector Miro já disponível.
+2. ~~**Sistema de relatórios — extração de frames/metadados**~~ ✅ **FEITO (sessão 9):**
+   `extrator_frames.py` gera o `manifesto.json` (metadados + 10 frames por vídeo). A inteligência
+   de mídia (antes prevista no Leitor) virou um passo mecânico pós-cópia. Ver §13.2 e sessão 9.
+
+3. **Integrar o extrator ao fluxo + fonte automática de frames:** ligar
+   `extrator_frames.gerar_manifesto()` no `transferencia.py` após a cópia verificada, e implementar
+   a **escolha automática da fonte** dos frames (cartão vs destino — plano aprovado na sessão 9).
+
+4. **Relatórios CSV/TXT (Acesso 3):** a partir do mesmo `manifesto.json` + `.sppo` (1 linha por
+   arquivo; o CSV alimenta a Planilha de Análise).
+
+5. **Exportação para Google Sheets (Camada 3):** assíncrona, offline-first, só metadados.
+
+6. **Fichas online (entrada de dados):** ✅ Endpoint `/forms/tally` pronto no Flask. Pendente
+   (→ **Camada 5**): ngrok por máquina, autenticação, webhook e `.env` em cada máquina.
+
+7. **Organograma no Miro:** desenvolver o organograma (hoje em `organograma_GMA.md`) no **Miro**.
 
 ---
 
@@ -919,80 +930,70 @@ destrutiva no banco exige confirmação; backup do `gma.db` antes de migrações
 
 ---
 
-## 13.4. Briefing — próxima sessão: PDF rico com frames e thumbnails
+## 13.4. Briefing — próxima sessão: PDF Overview (lendo o manifesto)
 
-**Objetivo da sessão:** reescrever `gma_relatorio_pdf.py` para gerar o relatório no padrão
-ShotPutPro — com folha de contato visual (thumbnails + metadados por arquivo de mídia).
+**Objetivo da sessão:** criar o gerador de PDF no estilo **Overview** (dashboard + folha de
+contato) que apenas **DESENHA** lendo duas fontes prontas — **não extrai mais nada**:
+- `manifesto.json` (mídia: metadados + caminhos dos thumbnails) — do `extrator_frames.py`
+- `.sppo` (integridade: checksums e status por arquivo) — do `copiador.py`
 
-### O que existe hoje (versão 1)
-`gma_relatorio_pdf.py` lê o `.sppo` (XML) e gera: cabeçalho → tabela de arquivos → rodapé.
-Sem imagens, sem metadados de mídia. Funcional para auditoria, mas sem valor visual.
+> **Mudança de abordagem (sessão 9):** na sessão 8, o `gma_relatorio_pdf.py` v2 extraía os frames
+> na hora. Agora a extração é do `extrator_frames.py` (feito, mecânico, roda uma vez). O novo
+> gerador só faz o **JOIN** (manifesto + sppo) e o layout. Estilo escolhido: **Overview** (não o
+> Filmstrip), para o contexto de entrega de conteúdo variado. O gerador atual
+> (`gma_relatorio_pdf.py`) pode virar base — mas trocando a extração ao vivo por leitura do manifesto.
 
-### O que queremos (versão 2 — padrão ShotPutPro)
+### Estrutura do PDF
 
-**Estrutura do PDF em 3 partes:**
+**Página 1 — Dashboard em cartões** (inspirado no "Summary Overview" do ShotPutPro):
+- Topo: nome do job + início/fim
+- Cartões: Tempo decorrido · Status (✓ Verificado) · Velocidade
+- Máquina (macOS · RAM · CPU) · Verificação (MD5 completo)
+- Origem (volume · tamanho) · Destino (pasta)
+- Duas colunas: **Arquivos** (total, pastas, barra de tipos vídeo/foto/outro) ·
+  **Mídia** (nº de mídia, câmeras, duração total, formatos, resoluções, fps) + **dados do match**
+  (profissional · tipo · operador)
 
-**Parte 1 — Cabeçalho/resumo** (já existe, melhorar):
-- Nome do job + status final + 3 colunas:
-  - Col A: tamanho total · verificação · total de arquivos
-  - Col B: início · fim · duração · arquivos de mídia (só os de mídia)
-  - Col C: dados do match (nome do profissional · câmera · tipo · operador)
+**Páginas seguintes — Folha de contato:** um bloco por arquivo de mídia, com os **10 frames**
+(do manifesto) + metadados ao lado. Mais frames por arquivo que o Overview do SPP (que usa 1) —
+decisão do idealizador para ajudar os editores a ver o conteúdo.
 
-**Parte 2 — Folha de contato** (a construir — o coração do relatório):
-- Um bloco por arquivo de **mídia** (`.mp4`, `.mov`, `.mxf`, `.jpg`, `.jpeg`, `.png`, `.dng`, `.raw`, `.arw`, etc.)
-- **Coluna esquerda (metadados):**
-  - Nome do arquivo (bold)
-  - Tamanho · data de criação
-  - Formato · resolução · codec (vídeo) ou dimensões (foto)
-  - Modelo da câmera (via exiftool)
-  - Duração · timecode · frames · fps (vídeo) ou `—` (foto)
-  - Áudio: canais · codec · bitrate · sample rate (se houver)
-- **Coluna direita (filmstrip):**
-  - Vídeo: N thumbnails amostrados ao longo do clipe (mín. 3, mais para clipes longos)
-    - GoPro: usar `.LRV` como proxy (mais rápido) ou extrair do `.MP4` com ffmpeg
-    - Outros: extrair direto do arquivo de destino com ffmpeg
-  - Foto/RAW: 1 thumbnail (via Pillow para JPEG, exiftool para RAW)
+**Últimas páginas — Auditoria:** tabela completa de todos os arquivos com checksum origem ×
+destino e status (já existe no gerador atual — reaproveitar).
 
-**Parte 3 — Detalhes completos** (a construir):
-- Todos os arquivos (inclusive os de sistema), sem thumbnail
-- Tabela: nome · origem · destino · tamanho · checksum origem × destino · status
-
-### Ferramentas disponíveis (todas instaladas em 2026-06-06)
-```
-ffmpeg/ffprobe  /opt/homebrew/bin/ffprobe   — metadata de vídeo + extração de frames
-mediainfo       /opt/homebrew/bin/mediainfo  — metadata com saída templável
-exiftool        /opt/homebrew/bin/exiftool   — EXIF de foto/RAW + modelo da câmera
-Pillow          pip                          — miniaturas + composição de imagens
-reportlab       pip                          — geração de PDF (já em uso)
-```
+### De onde vem cada dado
+| Bloco | Fonte |
+|---|---|
+| Tamanho, duração, velocidade, status, checksums | `.sppo` |
+| Codec, resolução, fps, câmera, duração, thumbnails | `manifesto.json` |
+| Profissional · tipo de material · operador | formulário (passar como `dados_match`) |
+| macOS · RAM · CPU | `platform` / `os` (Python) |
 
 ### Regras de implementação
-- Extrair frames/metadados **do arquivo no destino verificado** — nunca do cartão.
-- GoPro traz `.THM` (thumbnail JPEG nativo) e `.LRV` (proxy de baixa resolução) junto com cada
-  `.MP4`. Usar `.THM`/`.LRV` quando existirem — evita re-encodar o clipe original.
-- A Parte 2 (folha de contato) é gerada em uma **passagem separada** após a cópia: o
-  `transferencia.py` já chama `gma_relatorio_pdf.py` passando o `.sppo`; ajustar a chamada
-  para também passar o caminho da pasta de destino.
-- O `.sppo` já tem os caminhos dos arquivos de destino — usar como índice.
+- O gerador **não chama ffmpeg/exiftool** — isso já foi feito pelo `extrator_frames.py`. Só lê o
+  `manifesto.json` (mídia) + o `.sppo` (integridade) e faz o JOIN pela chave = caminho/nome.
+- Rodar **offline** e nunca quebrar se um thumbnail faltar (mostra "sem preview").
+- Paisagem letter, cores GMA (verde teal `#1D9E75`). Reaproveitar estilos do `gma_relatorio_pdf.py`.
+- Caminhos dos thumbnails no manifesto são **relativos à pasta do manifesto** — resolver a partir dela.
+- Ao integrar no fluxo: `transferencia.py` chama `extrator_frames.gerar_manifesto(...)` após a
+  cópia verificada e, em seguida, o gerador do PDF Overview.
 
-### Material de teste disponível agora
+### Material de teste pronto (cartão GoPro real) — JÁ GERADO na sessão 9
 ```
-/Users/serafa/GMA/TESTE LOGAGEM/20260607/VIDEO/NOME_DO_PROFISSIONAL/NOME_DO_PROFISSIONAL_001/
-├── NOME_DO_PROFISSIONAL_001_20260607_022552.sppo     ← log XML com 106 arquivos
-├── NOME_DO_PROFISSIONAL_001_20260607_022552_relatorio.pdf  ← PDF atual (sem frames)
-├── DCIM/...                                          ← material GoPro (fotos + vídeos)
-├── *.LRV  *.THM                                      ← proxies GoPro prontos para usar
-└── ...
+TESTE LOGAGEM/20260607/VIDEO/NOME_DO_PROFISSIONAL/NOME_DO_PROFISSIONAL_001/
+├── ..._022552.sppo                 ← integridade (106 arquivos)
+├── ..._022552_manifesto.json       ← mídia + 224 frames (62 mídias) — PRONTO
+└── _GMA_frames/                    ← 224 miniaturas JPEG — PRONTAS
 ```
-Testar o PDF novo sobre este material antes de declarar a sessão concluída.
+Regenerar manifesto/frames (se precisar): `python3 extrator_frames.py "<caminho do .sppo>"`
 
 ### Critério de conclusão da sessão
-PDF gerado a partir do `.sppo` + pasta de destino, com:
-- [ ] Folha de contato com pelo menos 1 thumbnail por vídeo e 1 por foto
-- [ ] Metadados: nome, tamanho, resolução/duração, modelo de câmera
-- [ ] GoPro usando `.THM` como thumbnail (não re-extrai do .MP4)
-- [ ] Parte 3 com tabela completa de todos os arquivos
-- [ ] `transferencia.py` chamando a nova versão automaticamente ao final da cópia
+PDF Overview gerado a partir do `manifesto.json` + `.sppo`, com:
+- [ ] Página 1: dashboard em cartões (tempo, status, máquina, origem/destino, arquivos, mídia, match)
+- [ ] Folha de contato com os 10 frames por vídeo + metadados (lendo do manifesto)
+- [ ] Auditoria: tabela completa com checksums origem × destino
+- [ ] Gerador **não extrai nada** (só lê manifesto + sppo)
+- [ ] Testado sobre o material de teste acima
 
 ---
 
