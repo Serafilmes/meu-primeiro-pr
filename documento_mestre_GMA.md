@@ -23,7 +23,8 @@
 - **`extrator_frames.py` criado** — o "executador dos frames": lê o `.sppo` + a pasta de destino, extrai metadados + um **padrão fixo de 10 frames por vídeo** (**divisão uniforme no tempo** entre 5% e 95%, igual ao ShotPutPro — folha de contato visualmente consistente; decisão de 2026-06-07: tempo extra é aceitável, padrão importa mais), e grava um **`manifesto.json`** (índice de mídia: metadados + caminhos das miniaturas). Salva thumbnails em `_GMA_frames/` ao lado do relatório. É **idempotente** (reaproveita miniaturas), **não-destrutivo** (só lê a mídia; escreve apenas thumbnails + manifesto).
 - **Truque de velocidade confirmado:** usa o `.LRV` (proxy GoPro) como fonte dos frames de vídeo e o JPG irmão para o RAW `.GPR`. Resultado no teste real: **62 mídias / 179 frames em ~17 s**, câmera detectada ("GoPro HERO7 Black" via exiftool, inclusive nos MP4 que o ffprobe não pega).
 - **Layout do relatório (em definição):** o idealizador prefere o estilo **Overview** (dashboard + folha de contato com vários frames por arquivo) para o contexto atual (cartão com conteúdo variado, ajudar editores). O **Filmstrip** (10 frames/arquivo) fica para publicidade/docs/cinema. O `manifesto.json` é **agnóstico ao layout** — serve aos dois.
-- **Próximo passo:** reescrever o gerador de PDF para o estilo **Overview**, lendo do `manifesto.json` (mídia) + `.sppo` (integridade) — sem extrair nada (extração já foi feita uma vez pelo executador).
+- **Fonte dos frames — avaliação automática (plano APROVADO, a implementar na integração ao fluxo):** depois da cópia **verificada**, o extrator pode ler os frames do **próprio cartão** (em vez do destino) quando o destino for um **servidor de rede compartilhado** — assim alivia a banda da rede para os outros acessos. É seguro porque o material já tem backup íntegro (MD5 conferido) e a leitura é não-destrutiva. **Regras inegociáveis:** (1) só com `transferencia_ok`; (2) cartão ainda montado; (3) só-leitura no cartão (miniaturas vão para o destino/local); (4) **terminar antes da ejeção** (Camada 4). **Lógica:** destino é rede + cartão montado → lê do cartão; senão (destino local ou cartão ejetado) → lê do destino. **Critério é aliviar a rede, não velocidade.** Implementar quando o extrator for ligado ao fluxo (`transferencia.py`).
+- **Próximo passo:** reescrever o gerador de PDF para o estilo **Overview** (escolhido pelo idealizador para o contexto de entrega de conteúdo variado), lendo do `manifesto.json` (mídia) + `.sppo` (integridade) — sem extrair nada (extração já foi feita uma vez pelo executador).
 
 **Decisões da sessão 8 (2026-06-07) — PDF rico com thumbnails:**
 - `gma_relatorio_pdf.py` reescrito (versão 2): 3 partes — cabeçalho com 3 colunas, folha de contato com thumbnails, tabela completa de todos os arquivos com checksums.
@@ -410,6 +411,13 @@ após o formato — o GMA só confirma que é hora de acionar e monitora o resul
 3. Se confirmado → atualiza status para `concluido` no banco
 4. Aciona o Parashoot para embaralhamento/ejeção
 5. Registra o evento de conclusão na tabela `eventos`
+
+> **Dependência da fonte de frames (decisão 2026-06-07):** quando o extrator
+> estiver configurado para ler os frames do **cartão** (caso de destino em servidor
+> de rede — ver sessão 9), a Camada 4 **deve esperar os frames terminarem** antes de
+> acionar o Parashoot (que ejeta/embaralha e torna o cartão ilegível). Ordem segura:
+> cópia → verificação → frames do cartão → auditoria C4 → Parashoot. Se os frames já
+> saíram do **destino**, essa restrição não se aplica.
 
 > **A analisar:** como o Parashoot expõe sua interface para ser acionado pelo GMA
 > (CLI, AppleScript, URL scheme). Investigar antes de codar a integração.
