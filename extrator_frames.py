@@ -26,10 +26,11 @@ O QUE ELE PRODUZ
 
 LÓGICA DOS FRAMES (divisão simples e uniforme)
 ----------------------------------------------
-Para um vídeo de duração D, pegamos N frames igualmente espaçados entre 5% e 95%
-do clipe (evita o preto do começo/fim). N cresce com a duração — clipes mais
-longos ganham mais frames, para ajudar o editor a entender o conteúdo. Fotos
-recebem 1 thumbnail. (Sem detecção de cena — isso fica para a Camada 6.)
+Para um vídeo, pegamos um padrão FIXO de frames (FRAMES_POR_VIDEO = 10, igual ao
+ShotPutPro), igualmente espaçados entre 5% e 95% do clipe (evita o preto das
+pontas). Padrão fixo = folha de contato visualmente consistente. Fotos recebem
+1 thumbnail. (Sem detecção de cena nem "escolher o melhor frame" — isso é
+entender a imagem, trabalho da Camada 6.)
 
 Dependências (todas já instaladas):
     ffmpeg / ffprobe   /opt/homebrew/bin
@@ -117,16 +118,16 @@ def eh_midia(nome):
 
 # ── LÓGICA DOS FRAMES (divisão uniforme) ──────────────────────────────────────
 
-# Limites (em segundos) → quantos frames extrair. Fácil de ajustar aqui.
+# Padrão fixo de frames por vídeo (decisão de 2026-06-07, igual ao ShotPutPro):
+# todo clipe gera a MESMA quantidade — folha de contato visualmente consistente
+# (grade 5×2 sempre cheia), independente da duração. Tempo extra é aceitável.
+# Fotos sempre geram 1 thumbnail. Ajuste só aqui se quiser outro padrão.
+FRAMES_POR_VIDEO = 10
+
+
 def numero_de_frames(duracao_seg):
-    """
-    Quantos frames extrair de um vídeo, conforme a duração.
-    Divisão simples e uniforme: clipes mais longos ganham mais frames.
-    """
-    if duracao_seg <= 5:    return 4
-    if duracao_seg <= 30:   return 6
-    if duracao_seg <= 120:  return 9
-    return 12
+    """Quantos frames extrair de um vídeo. Padrão fixo (ver FRAMES_POR_VIDEO)."""
+    return FRAMES_POR_VIDEO
 
 
 def instantes_para_amostrar(duracao_seg, n):
