@@ -3,7 +3,7 @@
 
 > Documento de arquitetura e estado do projeto. Serve como contexto completo para
 > continuar o desenvolvimento (inclusive em sessões do Claude Code).
-> Última atualização: 2026-06-07 (sessão 8 — PDF rico com thumbnails e folha de contato)
+> Última atualização: 2026-06-07 (sessão 9 — extrator_frames.py: executador mecânico de frames + manifesto.json)
 
 ## Estado atual (2026-06-07)
 
@@ -16,6 +16,14 @@
 | 5 | Interface (GUI) e multi-máquina | 📋 Futura |
 | 6 | IA assíncrona | 📋 Futura |
 | 7 | Marca e design | 📋 Planejada (prazo: 2026-06-20) |
+
+**Decisões da sessão 9 (2026-06-07) — executador de frames + divisão de responsabilidade visual:**
+- **Decisão de arquitetura (frames mecânicos vs. IA):** extrair frame e ler metadados é **mecânico, offline e grátis** (ffmpeg/ffprobe/exiftool) → fica no **ciclo operacional**, NUNCA na Camada 6. *Entender* o frame (escolher o mais representativo, descrever, etiquetar, busca semântica) é **IA → Camada 6** (paga, assíncrona, opcional, vem depois). Motivo: o PDF de entrega precisa sair completo, com thumbnails, offline na base — não pode depender de API paga/internet.
+- **O Leitor (Camada 1) fica enxuto** (só estrutura: codec, resolução, duração, datas, câmera, para match e painel). A extração de frames vira um **passo mecânico pós-cópia** que lê o **destino já verificado** (princípio nº 2 — nunca estressa o cartão).
+- **`extrator_frames.py` criado** — o "executador dos frames": lê o `.sppo` + a pasta de destino, extrai metadados + N frames por vídeo (**divisão uniforme no tempo**, N cresce com a duração: 4/6/9/12 frames), e grava um **`manifesto.json`** (índice de mídia: metadados + caminhos das miniaturas). Salva thumbnails em `_GMA_frames/` ao lado do relatório. É **idempotente** (reaproveita miniaturas), **não-destrutivo** (só lê a mídia; escreve apenas thumbnails + manifesto).
+- **Truque de velocidade confirmado:** usa o `.LRV` (proxy GoPro) como fonte dos frames de vídeo e o JPG irmão para o RAW `.GPR`. Resultado no teste real: **62 mídias / 179 frames em ~17 s**, câmera detectada ("GoPro HERO7 Black" via exiftool, inclusive nos MP4 que o ffprobe não pega).
+- **Layout do relatório (em definição):** o idealizador prefere o estilo **Overview** (dashboard + folha de contato com vários frames por arquivo) para o contexto atual (cartão com conteúdo variado, ajudar editores). O **Filmstrip** (10 frames/arquivo) fica para publicidade/docs/cinema. O `manifesto.json` é **agnóstico ao layout** — serve aos dois.
+- **Próximo passo:** reescrever o gerador de PDF para o estilo **Overview**, lendo do `manifesto.json` (mídia) + `.sppo` (integridade) — sem extrair nada (extração já foi feita uma vez pelo executador).
 
 **Decisões da sessão 8 (2026-06-07) — PDF rico com thumbnails:**
 - `gma_relatorio_pdf.py` reescrito (versão 2): 3 partes — cabeçalho com 3 colunas, folha de contato com thumbnails, tabela completa de todos os arquivos com checksums.
@@ -451,6 +459,8 @@ após o formato — o GMA só confirma que é hora de acionar e monitora o resul
 │
 ├── banco_dados.py           ← [Camada 3] inicializa gma.db, define schema, obter_conexao(), registrar_evento()
 ├── gma.db                   ← [Camada 3] banco SQLite local — fonte única de verdade (5 tabelas)
+│
+├── extrator_frames.py       ← [mecânico, pós-cópia] extrai frames + metadados do destino → manifesto.json (alimenta PDF/CSV/painel)
 │
 ├── ler_cartao.py            ← leitura e classificação de material
 ├── gma_correcao.py          ← correção de registros (append-only)

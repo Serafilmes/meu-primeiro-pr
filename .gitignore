@@ -1,0 +1,28 @@
+# Variáveis de ambiente (segredos — nunca versionar)
+.env
+
+# Banco de dados local (é operacional, não vai para o repositório)
+gma.db
+gma.db-shm
+gma.db-wal
+
+# Sentinela de ativação (estado de runtime)
+.gma_ativo
+
+# Arquivos do macOS
+.DS_Store
+
+# Filas e logs (estado de runtime)
+fila_forms/*.json
+fila_material/*.json
+logs/*.log
+
+# Contadores (estado operacional por profissional)
+contadores/*.json
+
+# Material de teste (mídia — insubstituível, pesada, nunca vai para o repositório)
+TESTE LOGAGEM/
+
+# Miniaturas geradas pelo extrator de frames (saída operacional, recriável)
+_GMA_frames/
+*_manifesto.json
