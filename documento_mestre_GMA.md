@@ -78,6 +78,23 @@ tela para inserção de informações" + deixá-la online.
   `06de4a0` — também passou a versionar o restante do sistema, antes não rastreado). **README próprio
   do GMA** escrito, substituindo o placeholder de aprendizado (commit `d6953ee`, fecha a branch
   `melhoria/readme`). **Sem PR/push** — ficou para depois, por opção do idealizador.
+- **Achado de teste pós-commit + correção (cartão SEM MÍDIA):** num teste, um cartão ARRI físico
+  ("MINI") que era só **configuração** (`ARRI/ALEXA/Framelines/`, 0 mídia, 2 XMLs) expôs duas falhas:
+  (1) o **Porteiro** decide a marca só pelo nome da pasta (`pasta:ARRI`), sem conferir mídia; (2) o
+  **Leitor** detectava "sem mídia" mas só logava — o cartão seguia para o Matcher. **Corrigido na
+  Camada 1** (agente `checkin-gma`, 2 etapas): o Leitor agora classifica em **dois níveis** quando
+  `total_midia == 0` (conta só VIDEO+FOTO+AUDIO): **`sem_midia`** (conteúdo trivial/config → fim de
+  linha, "sem mídia — ignorado", laranja, não entra em match/cópia) e **`revisar`** (há arquivos
+  OUTRO **grandes** — possível footage em formato não mapeado → "verificar — arquivos não reconhecidos",
+  vermelho, **chama o operador**, não copia). Limiares como constantes (50 MB/arquivo, 500 MB total).
+  **Segurança (princípio nº 1):** a lista `EXTENSOES` (ler_cartao.py) é a guardiã — cobre ARRI/RED/
+  Blackmagic/etc.; em dúvida o sistema prefere `revisar` a ignorar (nunca pular footage). Testado:
+  MINI → `sem_midia`; arquivo .xyz de 60 MB → `revisar`; cartão com mídia → fluxo normal. Memória:
+  `cartao-sem-midia`. ⚠️ **Estas mudanças (leitor_midia.py, flask_gma.py) ainda NÃO foram commitadas.**
+- **Pendente do teste original:** o ciclo completo de cartão ainda não foi exercitado nesta rodada —
+  o Porteiro nem chegou a rodar (só o Flask estava no ar; o sentinela `.gma_ativo` existia, mas o
+  processo não). Para testar de verdade: `encerrar_gma.py` → `inicializar_gma.py` e reconectar um
+  cartão **com mídia** (o MINI não serve — é de ajustes).
 
 **🔧 Sessão 20 (2026-06-10) — VIRADA protótipo → produto: planejamento da Camada 5:**
 

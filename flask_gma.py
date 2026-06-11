@@ -1144,6 +1144,14 @@ COLUNAS_KANBAN = [
 STATUS_PARA_COLUNA = {
     "detectado":              "detectado",
     "aguardando_match":       "detectado",
+    # Cartão sem mídia (conteúdo trivial — config/sistema, ex.: XMLs de framelines ARRI):
+    # aparece em "Detectado" como fim de linha explícito, badge laranja "sem mídia — ignorado".
+    "sem_midia":              "detectado",
+    # Cartão com arquivos não reconhecidos como mídia mas de tamanho suspeito:
+    # pode ser footage num formato não mapeado na lista EXTENSOES. Aparece em "Detectado"
+    # com badge vermelho "verificar — arquivos não reconhecidos" para o operador conferir.
+    # NÃO entra no Matcher nem na Transferência automática.
+    "revisar":                "detectado",
     "matched":                "match",
     "aguardando_confirmacao": "match",
     "copiando":               "copiando",
@@ -1225,7 +1233,31 @@ def _card_kanban(cartao):
     """HTML de um card do Kanban a partir de uma linha da tabela cartoes."""
     titulo = cartao["numero_cartao"] or cartao["volume"] or f"Cartão {cartao['id']}"
     status = cartao["status"] or ""
-    cor_status = "#c0392b" if "falh" in status else "#6c757d"
+
+    # Cores do badge de status:
+    #   vermelho escuro → qualquer falha técnica (transferência, verificação)
+    #   vermelho vivo   → "revisar": conteúdo não reconhecido mas suspeito de footage;
+    #                     exige atenção IMEDIATA do operador — não pode ser ignorado
+    #   laranja         → "sem_midia": conteúdo trivial confirmado (config/sistema);
+    #                     fim de linha explícito, não é erro mas chama atenção
+    #   cinza           → estado normal de espera no fluxo
+    if "falh" in status:
+        cor_status = "#c0392b"   # vermelho escuro — falha técnica
+    elif status == "revisar":
+        cor_status = "#e74c3c"   # vermelho vivo — operador DEVE verificar
+    elif status == "sem_midia":
+        cor_status = "#e67e22"   # laranja — ignorado com segurança
+    else:
+        cor_status = "#6c757d"   # cinza — espera normal
+
+    # Rótulo legível para o badge — traduz os status internos para texto claro
+    if status == "sem_midia":
+        rotulo_status = "sem mídia — ignorado"
+    elif status == "revisar":
+        rotulo_status = "verificar — arquivos não reconhecidos"
+    else:
+        rotulo_status = status
+
     meta = " · ".join(p for p in [cartao["marca_camera"], cartao["tipo_material"]] if p)
 
     selo_multidia = "<span class='selo-alerta'>multi-dia</span>" if cartao["alerta_multidia"] else ""
@@ -1236,7 +1268,7 @@ def _card_kanban(cartao):
             <div class="card-titulo">{_esc(titulo)}</div>
             <div class="card-meta">{_esc(meta) or '—'}</div>
             <div class="card-badges">
-                <span class="badge-status" style="background:{cor_status}">{_esc(status) or '—'}</span>
+                <span class="badge-status" style="background:{cor_status}">{_esc(rotulo_status) or '—'}</span>
                 {selo_multidia}
             </div>
             <form class="postit-form" action="/cartao/{cartao['id']}/observacao" method="post">

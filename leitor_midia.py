@@ -285,13 +285,14 @@ def analisar_cartao(caminho_cartao, logger):
             "total_arquivos": 0,
         }
 
-    # Pasta vazia ou sem arquivos de mídia reconhecidos
+    # Pasta completamente vazia (sem nenhum arquivo, nem de sistema)
     if not lista_arquivos:
-        logger.warning(f"AVISO: CARTÃO SEM MÍDIA | Nenhum arquivo de mídia encontrado em: {caminho_cartao}")
+        logger.warning(f"AVISO: CARTÃO VAZIO | Nenhum arquivo encontrado em: {caminho_cartao}")
         return {
             "analise_realizada": True,
             "analise_timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
             "total_arquivos": 0,
+            "total_midia": 0,          # arquivos VIDEO+FOTO+AUDIO
             "tamanho_total_bytes": 0,
             "contagem_tipo": {},
             "cameras_detectadas": [],
@@ -306,6 +307,15 @@ def analisar_cartao(caminho_cartao, logger):
 
     # Monta o resumo com as funções de ler_cartao.py
     resumo = ler_cartao.analisar(lista_arquivos)
+
+    # Conta apenas arquivos de mídia real (VIDEO, FOTO, AUDIO) — exclui OUTRO.
+    # "OUTRO" inclui arquivos de sistema, XML de framelines, thumbnails, etc.
+    # Esse número é a fonte de verdade para decidir se há footage real no cartão.
+    TIPOS_MIDIA_REAL = {"VIDEO", "FOTO", "AUDIO"}
+    contagem_tipo = resumo["contagem_tipo"]
+    total_midia_real = sum(
+        qtd for tipo, qtd in contagem_tipo.items() if tipo in TIPOS_MIDIA_REAL
+    )
 
     # Converte os objetos date e datetime para strings ISO-8601
     # (JSON não serializa datetime nativamente)
@@ -330,7 +340,7 @@ def analisar_cartao(caminho_cartao, logger):
     else:
         logger.info(
             f"ANÁLISE OK | "
-            f"{resumo['total']} arquivos | "
+            f"{resumo['total']} arquivos ({total_midia_real} de mídia) | "
             f"Tamanho: {ler_cartao.formatar_tamanho(resumo['tamanho_total'])} | "
             f"Dia único: {dias_str[0] if dias_str else '?'}"
         )
@@ -342,6 +352,7 @@ def analisar_cartao(caminho_cartao, logger):
         "analise_realizada": True,
         "analise_timestamp": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
         "total_arquivos": resumo["total"],
+        "total_midia": total_midia_real,   # apenas VIDEO+FOTO+AUDIO (fonte de verdade)
         "tamanho_total_bytes": resumo["tamanho_total"],
         "contagem_tipo": resumo["contagem_tipo"],
         "cameras_detectadas": resumo["cameras"],
@@ -401,6 +412,123 @@ def processar_json(caminho_arquivo, nome_arquivo, dados, logger):
         sucesso = salvar_json(caminho_arquivo, dados)
         if not sucesso:
             logger.error(f"FALHA AO SALVAR JSON | Arquivo: {nome_arquivo}")
+        return
+
+    # ── Passo 2b: cartão sem mídia reconhecida — dois casos possíveis ────────────
+    #
+    # "total_midia" conta apenas arquivos VIDEO+FOTO+AUDIO (extensões listadas em
+    # ler_cartao.EXTENSOES). Arquivos com extensão desconhecida viram tipo OUTRO.
+    #
+    # ATENÇÃO — limitação real da lista EXTENSOES:
+    #   A lista é a guardiã, mas NÃO é perfeita nem exaustiva. Se um cartão tiver
+    #   footage num formato que ainda não está na lista (câmera nova, codec proprietário
+    #   pouco conhecido), esses arquivos viram OUTRO, total_midia dá zero, e o cartão
+    #   correria o risco de ser silenciosamente ignorado como "sem mídia".
+    #   Isso seria um FALSO NEGATIVO — a pior direção, pois footage real seria perdida.
+    #
+    # Para evitar o falso negativo usamos o TAMANHO do conteúdo não-mídia (OUTRO):
+    #   • Footage é GRANDE: clips de cinema facilmente chegam a GBs; mesmo um único
+    #     arquivo de 50 MB já seria um RAW de foto pesado ou um clip muito curto.
+    #   • Configuração/sistema é MINÚSCULA: XML de framelines, LUTs, thumbnails,
+    #     logs de câmera — normalmente ficam abaixo de 1 MB cada, total abaixo de 10 MB.
+    #
+    # Critério de decisão (constantes ajustáveis abaixo):
+    #   - Se algum arquivo OUTRO tiver tamanho >= LIMIAR_ARQUIVO_OUTRO_BYTES → "revisar"
+    #   - Se a soma de todos os OUTRO tiver tamanho >= LIMIAR_TOTAL_OUTRO_BYTES → "revisar"
+    #   - Caso contrário → "sem_midia" (conteúdo trivial, pode ignorar com segurança)
+    #
+    # Em dúvida, SEMPRE prefira "revisar" (chamar o operador) a "sem_midia" (ignorar).
+    # Melhor incomodar o operador do que silenciosamente jogar footage no lixo.
+
+    # Arquivo individual OUTRO acima deste tamanho → suspeito de footage não reconhecida.
+    # 50 MB: menor que qualquer clip de câmera profissional, maior que qualquer config.
+    LIMIAR_ARQUIVO_OUTRO_BYTES = 50 * 1024 * 1024   # 50 MB
+
+    # Soma de todos os arquivos OUTRO acima deste total → suspeito de footage.
+    # 500 MB: uma pasta de configuração nunca chega aqui; uma cartão com footage sim.
+    LIMIAR_TOTAL_OUTRO_BYTES   = 500 * 1024 * 1024  # 500 MB
+
+    if resultado_analise.get("total_midia", 0) == 0:
+
+        # ── Avalia o conteúdo não-mídia (tipo OUTRO) para decidir entre os dois casos
+        lista_arquivos_para_avaliacao = resultado_analise.get(
+            "_lista_arquivos_para_assinatura", []
+        )
+        arquivos_outro = [
+            a for a in lista_arquivos_para_avaliacao if a.get("tipo") == "OUTRO"
+        ]
+        maior_arquivo_outro    = max((a["tamanho"] for a in arquivos_outro), default=0)
+        tamanho_total_outro    = sum(a["tamanho"] for a in arquivos_outro)
+
+        # Verifica se algum arquivo OUTRO é grande o suficiente para ser footage
+        ha_arquivo_outro_grande = maior_arquivo_outro >= LIMIAR_ARQUIVO_OUTRO_BYTES
+        ha_volume_outro_grande  = tamanho_total_outro >= LIMIAR_TOTAL_OUTRO_BYTES
+        conteudo_suspeito       = ha_arquivo_outro_grande or ha_volume_outro_grande
+
+        if conteudo_suspeito:
+            # ── CASO 2: arquivos não reconhecidos mas de tamanho compatível com footage ──
+            # NÃO ignoramos — chamamos o operador para verificar manualmente.
+            # O cartão recebe status "revisar" e aparece no painel com cor de atenção.
+            # Ele NÃO entra no Matcher nem na Transferência automática.
+            status_sem_midia = "revisar"
+            logger.warning(
+                f"ATENÇÃO — REVISAR | Cartão: {nome_cartao} | "
+                f"0 arquivos de mídia reconhecida, MAS há {len(arquivos_outro)} arquivo(s) "
+                f"OUTRO com tamanho suspeito | "
+                f"Maior arquivo: {ler_cartao.formatar_tamanho(maior_arquivo_outro)} | "
+                f"Total não-mídia: {ler_cartao.formatar_tamanho(tamanho_total_outro)} | "
+                f"Possível footage em formato não mapeado — operador deve verificar: "
+                f"{caminho_cartao}"
+            )
+        else:
+            # ── CASO 1: conteúdo trivial (config, sistema, XML de câmera) ──────────────
+            # Arquivos OUTRO existem mas são todos pequenos — seguro ignorar.
+            # Ex.: ARRI /Volumes/MINI com 2 XMLs de framelines totalizando alguns KB.
+            status_sem_midia = "sem_midia"
+            logger.warning(
+                f"SEM MÍDIA — IGNORADO | Cartão: {nome_cartao} | "
+                f"Marca detectada pelo Porteiro: {dados.get('marca_camera', '?')} | "
+                f"0 arquivos de mídia reconhecida em: {caminho_cartao} | "
+                f"Conteúdo OUTRO é trivial ({ler_cartao.formatar_tamanho(tamanho_total_outro)}) | "
+                f"Cartão não entra no Matcher nem na Transferência."
+            )
+
+        # Enriquece o JSON com os dados da análise (timestamps, contagens) e salva
+        lista_arquivos_analise = resultado_analise.pop("_lista_arquivos_para_assinatura", [])
+        dados.update(resultado_analise)
+        dados["status"] = status_sem_midia
+
+        salvar_json(caminho_arquivo, dados)
+
+        # Grava no banco para aparecer no Kanban com o rótulo correto
+        try:
+            import banco_dados as _bd
+            _conn_sem_midia = _bd.inicializar_banco()
+            _db_id_sem_midia = _bd.gravar_cartao(
+                _conn_sem_midia,
+                volume=dados.get("volume", dados.get("nome", "")),
+                caminho_origem=dados.get("caminho", ""),
+                marca_camera=dados.get("marca_camera"),
+                tipo_material=dados.get("tipo_material"),
+                data_inicio=None,
+                data_fim=None,
+                alerta_multidia=False,
+                dias_distintos=0,
+                total_arquivos=dados.get("total_arquivos", 0),
+                tamanho_bytes=dados.get("tamanho_total_bytes", 0),
+            )
+            # Aplica o status terminal no banco (gravar_cartao usa "detectado" por padrão)
+            _bd.atualizar_cartao(_conn_sem_midia, _db_id_sem_midia, {"status": status_sem_midia})
+            _conn_sem_midia.close()
+            dados["db_cartao_id"] = _db_id_sem_midia
+            salvar_json(caminho_arquivo, dados)
+            logger.info(
+                f"BANCO | Gravado | db_id={_db_id_sem_midia} | status={status_sem_midia}"
+            )
+        except Exception as _err_sm:
+            logger.error(f"BANCO | Falha ao gravar {status_sem_midia} (fluxo continua) | {_err_sm}")
+
+        # Para aqui — sem assinatura, sem Matcher, sem Transferência
         return
 
     # ── Passo 3: enriquece e salva o JSON com os dados da análise ─────────────
