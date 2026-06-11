@@ -3,17 +3,457 @@
 
 > Documento de arquitetura e estado do projeto. Serve como contexto completo para
 > continuar o desenvolvimento (inclusive em sessões do Claude Code).
-> Última atualização: 2026-06-07 (sessão 9 — extrator_frames.py: executador mecânico de frames + manifesto.json)
+> Última atualização: 2026-06-10 (sessão 21 — ficha local no GMA: porta de entrada própria + gabarito/edição + portão de senha)
 
-## Estado atual (2026-06-07)
+## Estado atual (2026-06-10)
+
+**✅ Sessão 21 (2026-06-10) — Ficha de check-in DENTRO do GMA (entrada própria, gabarito, edição, online):**
+
+A Camada 1 deixou de depender **só** de ferramentas externas (Google Forms/Tally) para a entrada
+de dados: agora existe uma **tela de inserção própria**, servida pelo Flask, alimentando a MESMA
+função central já testada (`_processar_e_salvar_formulario`). Pedido do idealizador: "ter também a
+tela para inserção de informações" + deixá-la online.
+
+- **Decisão de canais (fechada com o idealizador):** **a nossa ficha (Flask) é o canal PRINCIPAL**
+  — local + online — e é onde vivem o gabarito e a edição; **o Tally fica como canal de RESERVA**
+  (rede de segurança: a nuvem dele reentrega o webhook se a base piscar offline). Motivo: editar
+  uma ficha e montar gabaritos dinâmicos exige ler/gravar o *nosso* banco — o Tally só envia, nunca
+  edita nossos registros. Respeita a fronteira C1↔C3 (sessão 18): perguntas/edição = C1; transporte
+  (webhook/túnel) = C5; normalização na entrada = uma função só, que os dois canais já usam.
+- **`GET/POST /ficha` (nova):** página de formulário no padrão visual das outras telas (núcleo
+  obrigatório nome★/câmera★/tipo★/data★ + editoriais). Aba **"Nova Ficha"** somada à barra. Erro de
+  validação volta na própria tela sem perder o digitado; sucesso mostra confirmação + nº de matches.
+- **Gabarito (selecionável que aprende):** nome/câmera/modelo viram **datalists** (dropdown que
+  também aceita digitar), alimentados pelos valores **distintos já no banco** (`_sugestoes_gabarito`).
+  Quanto mais o sistema roda, mais ele sugere. Degrada para digitação livre se o banco falhar.
+- **Edição de fichas (`GET/POST /ficha/<id>/editar`):** lista de **fichas recentes** com link
+  "editar"; formulário pré-preenchido. Nova função C3 `atualizar_formulario(conn, id, campos)`
+  (whitelist de colunas + evento `formulario_editado`) espelhando `atualizar_cartao`. A fila JSON é
+  sincronizada (`_atualizar_json_fila`) para o Matcher/Transferência verem o mesmo dado.
+  - **Trava de segurança (princípio nº 2):** se a ficha **já casou** (status fora de
+    `STATUS_FICHA_LIVRE`), os campos críticos (nome/câmera/tipo/data) ficam **travados** — mexer
+    neles afetaria a numeração e a pasta no HD. Defesa **no servidor** (não confia só no `disabled`
+    do HTML): o POST descarta esses campos. Só os editoriais passam. Testado: tentativa de trocar o
+    nome de uma ficha matched foi ignorada; obs mudou.
+- **Caminho para "online" (Camada 5, prep feito):**
+  - **`GMA_HOST`/`GMA_PORT`** configuráveis (padrão SEGURO `127.0.0.1`). `GMA_HOST=0.0.0.0` libera a
+    ficha na **rede local** (celulares no Wi-Fi do evento → `http://IP_LOCAL:5050/ficha`). Capacidade
+    pronta, **não ligada** (idealizador ainda decide).
+  - **`GMA_SENHA` (portão Basic Auth):** pré-requisito do princípio inegociável "nunca expor o Flask
+    à internet sem autenticação". Vazia → uso local livre; definida → navegador pede senha em todas
+    as telas; webhooks `/forms*` isentos (têm HMAC). Testado (401 sem/errada, 200 com a certa,
+    webhook não bloqueado). Documentado no `.env.exemplo`.
+  - **Internet via túnel — TESTADA AO VIVO:** ngrok instalado (`brew`), authtoken do idealizador
+    registrado, túnel temporário no ar. Ficha aberta pela internet **com senha** (`.env` criado,
+    `GMA_SENHA=gma123` provisória). Sem domínio fixo por ora (idealizador dispensou) → URL temporária.
+- **Acesso remoto POR PAPEL (decisão + implementação, sessão 21):** o idealizador definiu que o link
+  público é **só para câmeras preencherem a ficha**, e teve a ideia de um **2º link de supervisão**
+  (monitoramento remoto). Régua: **operação completa só na BASE (localhost); remoto é restrito por
+  papel.** Implementado o **papel CÂMERA** (`_portao_de_acesso` + `_remoto_pode_acessar`): o acesso
+  remoto só alcança **`/ficha` exato** (ficha NOVA — GET do formulário + POST do envio) e webhooks
+  `/forms`; **tudo mais → 403**, raiz redireciona à ficha. Reforço de UI no remoto: somem a lista de
+  **"fichas recentes"**, as **abas** de navegação e os botões de gestão — o câmera **não vê nem edita**
+  fichas alheias. A **edição** (`/ficha/<id>/editar`) é **só na BASE**. Testado pela URL real do ngrok:
+  `/ficha` 200 (sem recentes/abas); `/ficha/<id>/editar`, `/kanban`, `/porteiro/ativar` **403**; base
+  intacta. Fecha o risco de mexerem no Porteiro **e** de editarem fichas alheias pela internet.
+  **QR code da ficha — FEITO:** painel na janela de Acompanhamento (`/kanban`) com o QR do link
+  público (gerado por **segno**, Python puro/offline, SVG embutido — sem serviço externo). O link é
+  resolvido por `_descobrir_link_ficha()`: override `GMA_LINK_FICHA` **ou auto-detecção da URL ativa
+  do ngrok** (API local `127.0.0.1:4040`) — o QR se atualiza sozinho quando o túnel muda de endereço,
+  sem editar o `.env`. Testado (detecta a URL viva; segue a mudança). **MURAL DOS CÂMERAS** (a metade
+  read-only do Acesso 2, num 2º monitor, status em linguagem de câmera + QR fixo): **DESENHO aprovado,
+  a construir** — layout (lista × colunas) em aberto; detalhado em `plano_camada5_GMA.md` §1.1.B.
+  **Papel SUPERVISÃO:** ainda a desenhar (C5).
+- **Reportado ao agente C5 (`plano_camada5_GMA.md` §1.1):** (A) **multi-projeto** — cada trabalho é
+  uma nova instância do GMA (config externa por evento); (B) **acesso remoto por papel**. Memórias:
+  `ficha-canais-decisao`, `multi-projeto-por-trabalho`.
+- **Arquivos tocados:** `flask_gma.py` (rotas + gabarito + edição + portão de acesso/senha + escopo
+  remoto + host configurável), `banco_dados.py` (`atualizar_formulario`), `.env.exemplo` + `.env`
+  (GMA_HOST/PORT/SENHA), `plano_camada5_GMA.md` (§1.1).
+- **Testado:** envio válido/inválido pela ficha; gravação em fila JSON + banco; gabarito do histórico;
+  edição livre vs. travada; portão de senha; **escopo remoto (câmera só-ficha) pela internet real**.
+  Registros de teste limpos do banco.
+
+**🔧 Sessão 20 (2026-06-10) — VIRADA protótipo → produto: planejamento da Camada 5:**
+
+O idealizador definiu o objetivo principal: transformar o protótipo (scripts validados) num
+**software profissional** — a Camada 5. Decisão de **NÃO construir ainda**: seguimos no laboratório
+(pasta `GMA/`), pois faltam testes (rodar 2–3 cartões simultâneos) e alinhamentos. Sessão de
+**planejamento + preparação do agente**, sem código de produto.
+
+- **Decisão de stack** (idealizador delegou; critérios: segurança, adaptabilidade, integração com o
+  Parashoot): **Python continua o cérebro** — não reescrever, para preservar a validação com cartão
+  real. Camada de produto: **Flask** (telas, já existe) + **pywebview** (janela nativa) + **py2app**
+  (app `.app` clicável) + **configuração externa** + **supervisor** de processos.
+- **Escopo da C5** (o que a plataforma entrega): programa único, robusto e integrado — tela do
+  Operador, tela de Monitoração (2ª máquina), planilha de entrega, recebimentos externos
+  (Forms/Tally, post-its, profissionais), acesso à máquina (Porteiro), Parashoot no fluxo, e
+  multi-máquina (2–3 cartões/máquinas). **Foco: consistência e integração, NÃO estética** (estética
+  é a Camada 7, prazo 20/06).
+- **Roteiro em 5 fases:** 0 Fundação · 1 Migração do núcleo · 2 Robustez · 3 Empacotamento ·
+  4 Multi-máquina + integrações. Cada fase é um entregável testável.
+- **Princípio de migração:** laboratório (`GMA/`) **intocado**; o produto nasce na pasta nova
+  **`GMA-TESTE`** (nome provisório, o definitivo virá com a C7), copiando camada por camada; nada
+  que funciona é apagado.
+- **Entregáveis desta sessão:** agente **`plataforma-gma`** (`.claude/agents/`), ciente de tudo e do
+  estado de teste; blueprint **`plano_camada5_GMA.md`** (a referência do agente); `CLAUDE.md`
+  atualizado (lista de subagentes).
+- **Pré-requisitos antes de construir** (decididos hoje): rodar **2–3 cartões simultâneos** no
+  laboratório (capacidade + concorrência) e fechar os alinhamentos pendentes.
+
+**✅ Sessão 19 (2026-06-10) — telas "uma fonte → três vistas": Acessos 2 e 3 no ar (C1↔C3 juntas):**
+
+Sessão de integração entre a Camada 1 (Flask/entrada) e a Camada 3 (banco/telas), pedida pelo
+idealizador como uma *demonstração do sistema rodando* — poder mandar um formulário e um post-it e
+ver refletir nas telas. Construídas as DUAS telas que faltavam, lendo direto da fonte única
+(`gma.db`), tudo no `flask_gma.py` (nenhuma mudança no schema do banco):
+
+- **Barra de abas** ligando as três vistas: **Operação** (`/`) · **Acompanhamento** (`/kanban`) ·
+  **Planilha de Entrega** (`/planilha`).
+- **Acesso 2 — Kanban (`/kanban`):** lê `cartoes` do banco e distribui em 5 colunas (Detectado →
+  Match → Copiando → Verificado → Concluído), via `STATUS_PARA_COLUNA`. Auto-refresh de 8 s que
+  **pausa** quando o operador está escrevendo um post-it (não perde o texto).
+- **Post-it por cartão:** usa a coluna `observacoes` que **já existia** na tabela `cartoes` (zero
+  mudança de schema). Rota `POST /cartao/<id>/observacao` → `bd.atualizar_cartao()` → grava no banco
+  **e registra evento** (auditoria append-only).
+- **Acesso 3 — Planilha (`/planilha`):** JOIN `cartoes` + `matches` + `formularios` (match mais
+  recente); 9 colunas (profissional, câmera, tipo, data, nº cartão, nº arquivos, tamanho, status,
+  caminho no HD); filtro de busca client-side. É o **espelho local** do que vai para o Google Sheets.
+- **Testado ponta a ponta (curl):** `/` (abas), `/kanban` (3 cartões nas colunas certas — JOE_001 em
+  Concluído, SONY_CARD e GOPRO_TESTE em Match), `/planilha` (3 linhas); **post-it**: POST no cartão 2
+  → gravou em `gma.db` → reapareceu no `/kanban` → evento na tabela `eventos`. Servidor sem erros.
+- **Decisão consciente:** o **painel de Operação (`/`) ainda lê as filas JSON**, não o banco — passo
+  pequeno, para não mexer no que já funciona. As duas telas novas leem do banco. Unificar o painel
+  na fonte única é o passo seguinte natural.
+- **Visual de rascunho proposital** (sem identidade visual — isso é o Andar 7). **Pendente para a
+  próxima sessão** (a pedido do idealizador): revisar as **informações e colunas** das telas (campos
+  do card no Kanban; colunas da Planilha). O evento do post-it hoje é gravado como `status_atualizado`
+  (genérico) — dá para criar um tipo `post_it` dedicado.
+- **Arquivo tocado:** `flask_gma.py` (3 rotas novas + barra de abas + helpers de UI).
+
+**📐 Sessão 18 (2026-06-10) — DESENHO: fronteira C1 ↔ C3 (a troca de informação nas fichas):**
+
+Sessão de desenho (debate entre os agentes `checkin-gma` e `banco-dados-gma`, mediado pelo
+orquestrador). Provocada pela pergunta do idealizador: *"quem cria as fichas? a C3 não deveria
+escolher a plataforma e zelar pela integridade, e a C1 cuidar das perguntas e das entregas?"*. Os
+dois especialistas CONCORDARAM com essa divisão — que ainda reforça a decisão de 2026-06-07 (escolha
+da ferramenta de formulário é da C3). **Aprovado, NÃO implementado** ("aprovo por hora, depois
+revemos para não parar a progressão" — é um checkpoint, não um ponto final).
+
+- **A régua da fronteira (quem é dono de quê):**
+  - **Perguntas da ficha (o que se pergunta no set) → C1.** C1 propõe; C3 aprova como cada pergunta
+    vira coluna/contrato no banco. As perguntas são sinais do Matcher, por isso são da C1.
+  - **Plataforma + cano de entrada (Tally/Forms, webhook, formato do payload) → C3.** Guardiã do
+    fluxo que entra no banco. Mudança que afete o payload passa pela C1 antes de produção.
+  - **"Criar a ficha" tinha 2 sentidos embolados:** bolar as perguntas (C1) ≠ escolher/configurar a
+    ferramenta (C3). O **"leitor das fichas"** (recebe o envio do Tally, hoje no Flask) é a JUNTA:
+    mora na infra da C1, mas obedece ao contrato da C3.
+  - **Validar/normalizar na entrada → uma função só, escrita pela C3, revisada pela C1.** Régua
+    única → acaba o risco de a C3 "arrumar" a câmera diferente do que o Matcher espera (medo da C1).
+    Rejeita LIXO na porta (ficha sem nome, data inválida), mas a gravação no banco continua
+    NÃO-BLOQUEANTE (princípio offline-first nº 1: SQLite engasgado nunca trava o check-in do set).
+  - **Identidade do cartão → C1 (Matcher), antes de chamar a C3.** A C3 só aceita cartão já
+    identificado; "Untitled" não é problema dela. Conserta o bug do Joe (liga com a sessão 17 e as
+    memórias `banco-reuso-registro-volume` / `identidade-cartao-camadas`).
+- **Decisões concretas de schema (a implementar):**
+  - **Rótulos agnósticos (B):** híbrido — núcleo fixo em colunas (o que o Matcher usa) + gaveta
+    `campos_extras` (JSON) para lacunas que mudam por evento (PALCO/ARTISTA ≠ SALA/PALESTRANTE). O
+    custo cai todo na C3: o Google Sheets precisa de colunas dinâmicas por evento (lê os rótulos via
+    `json_each`). O Matcher continua lendo SÓ as colunas fixas.
+  - **Matches ambíguos (C):** nova tabela `match_candidatos` (1 linha por candidato, status
+    pendente/escolhido/descartado); a tabela `matches` fica só para os confirmados. Auditável e não
+    mexe na tabela atual. Painel/operador resolvem depois (é o Passo 2 do Matcher, ainda pendente).
+  - **Contrato de entrada que a C3 exige da C1:** `id_form_original` (gerado pela C1, para dedup de
+    webhook), `nome`/`camera`/`data_gravacao`/`tipo_material` obrigatórios e normalizados; transação
+    atômica (formulário + evento num commit só).
+- **Pendência de coerência revelada:** a descrição do agente `checkin-gma` ainda lista "Google Forms"
+  como dele — conflita com "plataforma é da C3". Reconciliar as descrições dos agentes quando esta
+  decisão for implementada.
+- **Status:** desenho aprovado, NÃO implementado. Memória: `fronteira-c1-c3-fichas`.
+
+**📐 Sessão 17 (2026-06-10) — DESENHO: identidade do cartão em camadas:**
+
+Sessão de desenho (não de implementação), disparada pela dívida de consistência da C3 (cartões com
+mesmo nome de volume colidindo — bug do Joe). Decisão de arquitetura e validação com material real.
+
+- **O Matcher passa a ser a AUTORIDADE única da identidade do cartão:** ele decide de quem é o
+  cartão e repassa o nome pronto para a C2 (numeração) e a C3 (chave do registro), em vez de a C3
+  adivinhar pelo nome do volume. Conserta o bug do "Untitled" na raiz.
+- **Identidade = impressão digital em camadas** (Matcher escolhe o sinal mais forte disponível):
+  1. **Nº de série do corpo** — se for real. Único por câmera física. **Regra de ouro: ignorar
+     placeholder** `4294967295` (0xFFFFFFFF), `0` ou vazio (senão todas as câmeras do mesmo modelo
+     colidem — pior que o bug do Joe).
+  2. **Modelo + lente + prefixo + faixa de numeração** (assinatura que a C1 já extrai). Caso comum.
+  3. **Código na ficha** (campo novo) e/ou **prefixo customizado** (ex. `CAD_` = iniciais do Cadu na
+     câmera) → âncora humana na 1ª entrega; o Matcher amarra código ↔ assinatura.
+  4. **Operador casa card↔ficha na mão** → último recurso, só nos empates reais (decisão: confirmar
+     só quando há dúvida, não sempre).
+- **Validado com exiftool em material real:** Sony FX3 (Joe) → modelo+lente OK, mas serial MASCARADO
+  (`4294967295`). Nikon Z6_3 (Cadu) → serial REAL (`3003572`) + lente + Shutter Count (contador do
+  corpo que nunca zera). **Conclusão: serial varia por marca** — por isso o desenho em camadas.
+- **Status:** desenho aprovado, NÃO implementado. Construção futura: lógica de identidade em camadas
+  no `matcher.py` + campo de código na ficha (Tally) + chave de identidade da C3. Memória:
+  `identidade-cartao-camadas` e `banco-reuso-registro-volume`.
+
+**⏭️ PRÓXIMO PASSO concreto:** passar o cartão **`CADU_03`** (Nikon, foto, serial válido — hoje solto
+na raiz de `TESTE LOGAGEM/` sem a estrutura `DATA/TIPO/NOME/`) pelo **fluxo real de ponta a ponta**.
+Seria o 2º teste real do sistema (o 1º foi a Sony do Joe), exercitando vídeo→foto, outra marca, e o
+serial válido — base prática pra implementar a identidade em camadas.
+
+**✅ Sessão 16 (2026-06-09) — TESTE DE CICLO COMPLETO com cartão real (Sony "Joe"):**
+
+Primeiro teste de ponta a ponta com cartão físico real, exercitando todas as funções operacionais.
+Cartão Sony (`PRIVATE/SONY` + `M4ROOT`), 57 arquivos de mídia / 1,6 GB (17 clipes MP4 `joe0258`–`joe0274`
++ XMLs + thumbnails), gravação real 2025-08-05.
+
+**Ciclo executado (tudo funcionou na prática):**
+1. **Porteiro** detectou o cartão (Sony, via `pasta:PRIVATE`) após desmontar/remontar (ele ignora
+   volumes já montados na largada — por isso o `diskutil unmount`+`mount` para simular reconexão).
+2. **Leitor** analisou: detectou Sony, extraiu assinatura (prefixo `joe`, faixa 1–274), e disparou
+   **alerta multi-dia** correto (3 datas: 1980 sem-data, 2025-08-05 real, 2026-06-09 da remontagem).
+3. **Formulário** (JOE/Sony/VIDEO/2025-08-05, via curl no Flask) → **Matcher** casou (score 3, câmera
+   Sony +3), perfil do JOE aprendido.
+4. **Transferência**: contador deu JOE_001, destino `TESTE LOGAGEM/20250805/VIDEO/JOE/JOE_001`,
+   `copiador.py` copiou 57 arquivos com MD5 OK, tamanho 0,00% de diferença, `.sppo` + PDF gerados.
+   (Alerta benigno "57 vs 58": 1 arquivo de sistema/oculto que o copiador conta mas pula — política
+   mídia-vs-sistema funcionando.)
+5. **Extrator de frames** (rodado manual, pós-cópia): 34 mídias, 187 frames, `manifesto.json` gravado.
+6. **Camada 4**: pré-check GMA (57 arq / tamanho OK) → `parashoot check` (`check_complete`) →
+   `parashoot erase` (`erase_complete`) → **cartão embaralhado e ejetado de fato** ✅.
+
+**Bug real pego pelo teste (e corrigido na hora):** o `parashoot --machine-readable` emite **JSON
+Lines** (um objeto por linha, streaming). O parser da sessão 15 fazia `json.loads` do texto inteiro
+→ quebrava no `erase` multi-linha (`erase_start`+`erase_complete`) → marcava `erase_falhou` mesmo
+com o cartão embaralhado de verdade. Parser reescrito para ler NDJSON e decidir pelo último status
+terminal (`check_complete`/`erase_complete` = ok; `error` = falha; intermediários ignorados;
+sem sucesso reconhecido = falha segura). Validado contra os 5 formatos reais. Status do JOE_001
+corrigido para `concluido` no banco. **Formatos JSON reais agora documentados** (ver §Camada 4).
+
+**Restore validado (fecha o ciclo de vida do cartão):** após o erase, o idealizador restaurou o
+cartão Joe pela GUI do Parashoot — voltou a montar em `/Volumes/Untitled` com os 17 clipes intactos
+(`NORMAL DISK (has valid MBR)`). Provou na prática que o embaralhamento é 100% reversível.
+- **Mecanismo:** restore = inverter os mesmos 2 MB de novo (simétrico). Exige root (escrever em
+  `/dev/rdiskN`, que é `root:operator`). O GMA NÃO faz isso sozinho — delega ao Parashoot (que tem
+  Full Disk Access). O socket de API do Parashoot só expõe `check`/`erase`, sem `restore`; o restore
+  hoje é só pela GUI. Design do "botão de restore" do GMA registrado na memória `restore-cartao-parashoot`.
+
+**Pendências reveladas pelo teste (próximos passos — em novas sessões):**
+- **Camada 7 (Marca & Design) PRIMEIRO:** o idealizador achou a entrega do PDF abaixo do esperado
+  (sem padrão, layout fraco). Definir identidade visual (logo, paleta, tipografia, grid) antes de
+  reescrever o gerador de PDF.
+- **PDF Overview:** reescrever o gerador no estilo Overview (briefing na §13.4) lendo o
+  `manifesto.json` + `.sppo`, já aplicando o padrão visual da C7.
+- **`extrator_frames.py` + PDF no fluxo automático** do `transferencia.py` — hoje rodados manualmente.
+- **Reuso de registro no banco:** cartão Joe gravou no `db_id=1` (mesmo volume "Untitled" do teste
+  GoPro). Resultado final correto, mas revisar consistência da Camada 3 quando dois cartões físicos
+  montam com o mesmo nome de volume (usar UUID em vez do nome). Ver memória `banco-reuso-registro-volume`.
+- Loop automático da `auditoria.py` (via `inicializar_gma.py`) ainda não exercitado — o teste rodou
+  a C4 manualmente para controlar a ordem (frames antes do erase).
+
+**✅ Sessão 15 (2026-06-09) — Camada 4 reescrita: integração automática com o CLI do Parashoot:**
+
+Duas entregas: (A) primeiro teste de ciclo integrado da C4; (B) reescrita do `auditoria.py` depois
+que a investigação do Parashoot revelou um CLI completo e automatizável.
+
+**(A) Teste de ciclo integrado (versão antiga do auditoria.py):** registro `transferencia_ok` no
+banco → detectado → auditado (106 arq / 8,25 GB do material da sessão 7) → `concluido` → eventos.
+Reprovação também testada (contagem errada → bloqueou). Banco limpo depois.
+
+**(B) Investigação do Parashoot + reescrita (mudança de design):**
+- **Descoberto:** o Parashoot tem CLI documentado (`check`/`erase` com `--machine-readable` JSON),
+  o `check` verifica arquivo por arquivo (mais forte que contagem+tamanho), e o **fake-format é
+  REVERSÍVEL** (inverte 2 MB do MBR; footage intacto; recuperável). Detalhes na §Camada 4 abaixo.
+- **`auditoria.py` reescrito:** fluxo `transferencia_ok` → pré-check GMA → `parashoot check` →
+  `verificado_parashoot` → `parashoot erase` → `concluido`. TOTALMENTE AUTOMÁTICO, sem confirmação
+  do operador no caminho feliz (o `check` é a confirmação do processo). Operador só é notificado em
+  ocasiões vitais (check com faltando / erase falhou). Degrada sem crashar se o Parashoot não estiver
+  instalado. Novos status: `verificado_parashoot`, `verificacao_falhou`, `erase_falhou`.
+- **Bug corrigido na revisão:** o JSON de erro do Parashoot sai no **stderr** (não stdout) — o
+  parser foi ajustado para tentar os dois. Testado contra o erro real do CLI (captura o `status:error`).
+- Import + parse defensivo testados nesta máquina (Parashoot 2.3.5 instalado).
+
+**Pendências remanescentes da C4:**
+- **Teste com cartão REAL** (físico + material em destino) — valida formato exato do JSON de
+  sucesso de `check`/`erase`, o nome do volume em `/Volumes/`, e o exit code de sucesso. PRÓXIMO PASSO.
+- Loop de polling real (`loop_auditoria()` via `inicializar_gma.py`) ainda não exercitado ponta a ponta.
+- Dependência do extrator de frames (esperar frames antes do erase quando a fonte for o cartão) —
+  TODO já marcado no ponto certo do código.
+
+**✅ Sessão 14 (2026-06-08) — agente da Camada 4 (`auditoria-gma`) criado:**
+
+Criado o subagente especialista da Camada 4 em `.claude/agents/auditoria-gma.md`, no mesmo
+padrão dos três existentes (checkin-gma, transferencia-gma, banco-dados-gma). Ele cobre a
+auditoria estrutural independente (contagem + tamanho, tolerância 0,5%), a mudança de status
+para `concluido` e o acionamento do Parashoot (`open -a ParaShoot` — o operador confirma o
+embaralhamento/ejeção; o GMA nunca formata sozinho). Registra a regra de ouro: nunca liberar
+cartão cuja contagem/tamanho não bate; nunca sugerir ejeção antes da auditoria. Lista de
+subagentes no `CLAUDE.md` atualizada (transferencia-gma e banco-dados-gma deixaram de figurar
+como "futuros").
+
+**✅ Sessão 13 (2026-06-08) — Sessão A: fichas de check-in personalizáveis (C1 + C3):**
+
+Expandido o formulário de check-in para capturar **5 campos editoriais novos** (opcionais, além
+dos 4 obrigatórios do matching), pensados para ajudar tanto o sistema quanto os editores:
+`modelo_camera`, `tipo_conteudo` (B-ROLL/ENTREVISTA/PALCO/COBERTURA/ABERTURA/ENCERRAMENTO/OUTRO),
+`local_cena`, `prioridade` (NORMAL/URGENTE), `observacoes`.
+
+- **C3 (`banco_dados.py`):** `gravar_formulario()` recebe os 5 campos; nova função
+  `migrar_schema_formularios(conn)` (ALTER TABLE seguro, não-destrutivo) chamada por
+  `inicializar_banco()`; DDL de `formularios` atualizado (bancos novos já nascem completos).
+  Tabela `formularios` agora tem 14 colunas. `gma.db` existente migrado com sucesso.
+- **C3 (`exportador_sheets.py`):** `CABECALHO` ampliado de 16 → **21 colunas** (inclui modelo,
+  tipo de conteúdo, local/cena, prioridade e separa Obs. Operador de Obs. Formulário); SELECT e
+  montagem de linhas atualizados.
+- **C1 (`flask_gma.py`):** `_processar_e_salvar_formulario()` captura e repassa os 5 campos ao
+  banco; painel HTML ganhou coluna "Conteúdo" (tipo + local) e "Prioridade" (URGENTE em vermelho).
+- **Guia novo (`guia_tally_gma.md`):** passo a passo para montar o formulário no Tally (labels
+  exatos, tipos de campo, opções dos dropdowns, webhook via ngrok, teste com curl, verificação
+  no banco). Resolve a pendência "formulário Tally nunca criado".
+- **Teste ponta a ponta OK:** curl → Flask → validação → JSON → banco, com os 5 campos chegando
+  íntegros na tabela `formularios`.
+- **Pendente (Sessão A):** o operador ainda precisa **criar de fato o formulário no Tally**
+  seguindo o `guia_tally_gma.md` e testar o webhook real (ngrok → Tally → Flask).
+
+**Decisão de design da ficha (conversa de 2026-06-08, após o idealizador trazer uma ficha real):**
+
+A ficha de check-in foi repensada para ser **enxuta e personalizável por trabalho** (o pedido
+original da Sessão A). Princípio do idealizador: **não complicar** — começar pelo contexto e pelas
+informações iniciais, e deixar o processo automático crescer depois.
+
+- **Ficha concreta fechada:** `NOME ★ · DATA ★ · TIPO DE MATERIAL ★ (VIDEO/FOTO/AUDIO) ·
+  [lacunas de contexto, ex. PALCO · ARTISTA/SHOW] · INFORMAÇÕES ADICIONAIS`.
+- **Câmera/modelo saem da ficha** — o sistema detecta do cartão (assinatura + exiftool + extensões).
+  **Tipo de material fica** (o profissional sabe na hora; resolve o caso da entrevista: card de
+  áudio marcado `AUDIO` = gravador).
+- **Lacunas de contexto = configuráveis por trabalho.** O sistema é **agnóstico ao rótulo** —
+  guarda `rótulo: valor` como veio do Tally. A mesma programação serve a festival, congresso,
+  entrevista; troca-se só os rótulos ao iniciar um trabalho. Próximo trabalho-alvo = **festival
+  de música** (por isso "sala/palestra" não serve — precisa ser configurável).
+- **O NOME é a chave de aprendizado:** o sistema memoriza a assinatura de cada profissional
+  (câmera/modelo, estrutura de pastas, padrão de nomes) e constrói um **perfil por nome** que
+  fortalece o match ao longo do tempo (começa manual → vira automático).
+- **Evolução futura (em segundo plano):** conceito de **gabarito** — o profissional seleciona
+  caixas pré-montadas (line-up do festival conhecido de antemão) em vez de digitar. Exige Tally
+  mais elaborado por evento; adiado para não travar o ponto concreto.
+
+**✅ Passo 1 do Matcher seguro — CONCLUÍDO E TESTADO (2026-06-08, sessão 13):**
+
+Decidiu-se MANTER a câmera na ficha (como seleção/dropdown), porque ela é um dos poucos sinais
+que aparece nos DOIS lados (o cartão revela via exiftool; a ficha declara) — é peça-chave do
+casamento. O `matcher.py` foi reescrito para ser **seguro contra ambiguidade**:
+- **Pontuação:** câmera +3 · data +2 · **tipo de material +1** (NOVO — lê `contagem_tipo` do
+  material gravado pelo Leitor) · nome na pasta de entrada +2.
+- **Trava anti-ambiguidade (`MARGEM_SEGURANCA = 1`):** só casa automático quando o vencedor é
+  estritamente melhor que qualquer concorrente por ≥1 ponto, **dos dois lados** (a ficha não
+  pode estar dividida entre cartões, nem o cartão disputado entre fichas). Em empate/dúvida →
+  `status: "aguardando_confirmacao"` + campo `candidatos_match` (lista as opções p/ o operador) +
+  evento `match_ambiguo` no banco. **Nunca chuta** — prefere perguntar a arriscar trocar material.
+- **Painel (`flask_gma.py`):** nova seção "Aguardando confirmação" lista os ambíguos (só leitura).
+- **Testado:** (1) câmeras diferentes → casam certo; (2) empate total (3 fichas + 3 cartões Canon
+  idênticos) → nenhum casa, todos aguardando_confirmacao com 3 candidatos cada; (3) desempate
+  pelo tipo (vídeo vs foto) → casa o correto. Validado pelo agente E por teste independente.
+
+**✅ Passo 3 — Perfil do profissional, FASE 1 (aprender) — CONCLUÍDA E TESTADA (2026-06-08, sessão 13):**
+
+O sistema agora **aprende a assinatura de cada profissional** a cada match confirmado (sem ainda
+mudar o comportamento do match — Fase 1 é só observar e guardar). A assinatura tem 4 ingredientes:
+marca · modelo (exiftool) · prefixo do nome de arquivo · **faixa de numeração** (num_min/num_max).
+A numeração é insight do idealizador: câmeras têm contador contínuo entre cartões, então a faixa
+liga cartões da mesma pessoa e distingue duas pessoas com câmera idêntica.
+
+- **`banco_dados.py`:** tabela `perfis` (11 colunas) + `atualizar_perfil(conn, nome, assinatura)`
+  (upsert acumulativo: soma câmeras/modelos/prefixos, guarda `ultimo_num_max`, faz append das
+  faixas, conta cartões) + `consultar_perfil(conn, nome)`.
+- **`ler_cartao.py`:** `extrair_prefixo_e_numero()` e `extrair_assinatura()` (Python puro — separa
+  prefixo e número sequencial dos nomes; monta câmera/prefixos/num_min/num_max).
+- **`leitor_midia.py`:** `detectar_modelo_camera()` via exiftool (máx. 3 arquivos, não estressa o
+  cartão) + grava `dados["assinatura"]` no JSON do material.
+- **`matcher.py`:** ao confirmar match, chama `atualizar_perfil(nome_do_form, assinatura_do_material)`
+  (aditivo, try/except). Só nos matches CONFIRMADOS, nunca nos ambíguos. TODO marcado para o Passo 2
+  também alimentar o perfil ao resolver ambíguos.
+- **Testado:** extração (GoPro 1-200, casos de borda de prefixo/número) + **ciclo integrado**:
+  2 cartões do mesmo João (faixas 1-200 e 201-400) → perfil acumulou `total_cartoes=2`,
+  `ultimo_num_max=400`, `faixas=[[1,200],[201,400]]`, câmeras/modelos/prefixos somados. Continuidade
+  detectada. Registros de teste removidos do banco.
+
+**⏭️ Próximas etapas da Camada 1 (em ordem):**
+1. **Passo 3 — Fase 2 (usar):** o Matcher consulta o perfil para desempatar matches ambíguos
+   (cartão cujo prefixo/modelo/faixa de numeração bate com o perfil de um nome → +pontos →
+   desempata sozinho). Reduz a frequência com que o operador é chamado.
+   > **REGRA DE OURO DA NUMERAÇÃO (insight do idealizador, 2026-06-08):** a numeração não é
+   > contínua de forma estrita — fotógrafos testam fotometria e apagam os primeiros frames, mas o
+   > contador da câmera não volta (ex.: card 2 termina em 2021, card 3 começa em 2030 = gap de 9).
+   > Na Fase 2 **a numeração só ADICIONA confiança, nunca pune:** gap pequeno/moderado (dentro de
+   > uma TOLERÂNCIA configurável) = continuidade plena; gap grande = só ignora o sinal e se apoia
+   > em câmera/modelo/prefixo. Um gap **jamais** aciona o operador sozinho.
+2. **Passo 2 — tela de confirmação no painel:** rota POST no Flask para o operador resolver, com um
+   clique, os ambíguos que sobrarem (escolhe entre os `candidatos_match`, mostra os nomes dos
+   arquivos como pista). É a rede de segurança final; deve também chamar `atualizar_perfil`.
+
+**⚠️ CORREÇÃO da sessão 12 (2026-06-08) — C3 e C4 foram declaradas fechadas prematuramente:**
+
+**Camada 3 — PARCIAL. Buracos pendentes:**
+- `exportador_sheets.py` escrito, mas a planilha Google real nunca foi criada, credenciais
+  nunca configuradas, e o fluxo banco → Sheets nunca testado de ponta a ponta.
+- **Janela de monitoramento (Acesso 2 — Kanban):** não existe como código. É a tela que
+  videomakers/fotógrafos acessam para ver em que etapa está cada cartão deles.
+  A fonte de dados (SQLite) está pronta; a rota Flask + HTML não foi construída.
+- **Formulário Tally (entrada de dados):** endpoint Flask `/forms/tally` existe e `ngrok_gma.sh`
+  existe, mas o formulário no Tally nunca foi criado. Sem isso o ciclo inteiro não tem entrada.
+
+**Camada 4 — PARCIAL. Buracos pendentes:**
+- `auditoria.py` escrito. O que foi "testado": contar arquivos numa pasta existente com dados
+  já no banco. Isso NÃO é teste de ciclo integrado.
+- Teste real exige: check-in → transferência → `transferencia_ok` no banco → auditoria detecta
+  automaticamente → audita → muda para `concluido` → Parashoot abre. Nunca foi executado.
+
+**Plano de sessões para fechar os buracos (em ordem):**
+1. **Sessão A** (`checkin-gma`): Formulário Tally + teste webhook → Flask → banco
+2. **Sessão B** (`banco-dados-gma`): Google Sheets real — criar planilha, credenciais, teste
+3. **Sessão C** (`banco-dados-gma`): Janela de monitoramento Kanban no Flask (rota `/monitor`)
+4. **Sessão D**: Teste de ciclo integrado C4 (pode ser com dados simulados)
+
+**Decisões da sessão 11 (2026-06-08) — scripts criados (mas não validados como entrega):**
+- **`exportador_sheets.py` criado (Camada 3):** exportação offline-first para Google Sheets.
+  Sincroniza a cada 60 s quando há internet. Reescreve a aba 'GMA' completa (sem append).
+  Sem credenciais no .env → aguarda silenciosamente sem travar o sistema.
+  Loop inicia como 6º processo no `inicializar_gma.py`.
+- **`auditoria.py` criado (Camada 4):** polling a cada 10 s por cartões `transferencia_ok`.
+  3 verificações: pasta existe · contagem de arquivos · tamanho total (± 0,5%).
+  Ao aprovar: status → `concluido` + abre Parashoot + notificação macOS.
+- **Filtro de arquivos GMA** (auditoria): exclui `.sppo`, `*_relatorio.pdf`, `*_manifesto.json`
+  e a pasta `_GMA_frames/` da contagem — apenas material copiado do cartão entra.
+- **Parashoot:** integrado via `open -a ParaShoot` (operador confirma; nunca chamamos `fake_format`).
+- **`inicializar_gma.py`:** sobe 6 processos (adicionados Auditoria + Sheets).
+- **`encerrar_gma.py`:** lista de kill inclui `auditoria.py` e `exportador_sheets.py`.
+- **`gspread` + `google-auth` instalados** via pip.
+
+**Decisões da sessão 10 (2026-06-07) — mapa vivo (reorientação do idealizador):**
+- O idealizador sinalizou sensação de estar perdido com o volume de decisões (9 sessões em 2 dias).
+  Sessão dedicada a **parar e olhar o todo** — sem código novo.
+- **`organograma_GMA.md` reescrito como "Mapa Vivo"**: agora abre com o quadro de orientação
+  rápida (prédio de 7 andares com barra de progresso · fluxo do cartão em linguagem de set ·
+  linha do tempo das decisões · regras de ouro) e só depois traz a parte técnica (3 zonas,
+  3 acessos, organograma de processos e de desenvolvimento). Estava parado em 06/06 e
+  desatualizado (citava "Ejetado" e o ShotPutPro no fluxo).
+- **Board visual criado no Miro** — "GMA — Mapa Vivo do Projeto":
+  https://miro.com/app/board/uXjVHI0rvt4=/ — com 3 diagramas: (1) fluxo do cartão colorido por
+  status e agrupado por andar; (2) prédio de 7 andares; (3) linha do tempo das 10 sessões
+  (verde = teste real, laranja = decisão grande, amarelo = trabalho normal). Cumpre o
+  "Organograma no Miro" que estava em §13.1.
+- **Combinado de método de trabalho** (a manter pelo orquestrador): antes de cada sessão, ler o
+  documento mestre, apontar riscos e propor o objetivo do dia; durante, confirmar entendimento
+  antes de codar; depois, atualizar os mapas (documento mestre + organograma + Miro).
+
+
 
 | Camada | Nome | Status |
 |---|---|---|
-| 1 | Check-in e identificação | ✅ Concluída |
-| 2 | Transferência | ✅ Concluída (PDF rico entregue na sessão 8) |
-| 3 | Controle e segurança das informações | 🔧 Pronta para teste — SQLite integrado em todos os processos; falta exportação para Google Sheets |
-| 4 | Auditoria estrutural e liberação do cartão | 📋 Planejada |
-| 5 | Interface (GUI) e multi-máquina | 📋 Futura |
+| 1 | Check-in e identificação | ⚠️ Parcial — ficha PRÓPRIA no GMA ✅ (gabarito + edição + online c/ senha + link de câmera só-ficha + QR, sessão 21); Tally vira reserva; falta domínio fixo do túnel e o mural dos câmeras |
+| 2 | Transferência | ✅ Concluída e testada com cartão real |
+| 3 | Controle e segurança das informações | ⚠️ Parcial — SQLite + telas Kanban/Planilha locais prontas (sessão 19); Google Sheets real pendente |
+| 4 | Auditoria estrutural e liberação do cartão | ✅ Concluída — código pronto + ciclo integrado testado (aprovação + reprovação) |
+| 5 | Plataforma (produto profissional) + interface + multi-máquina | 🔧 EM PLANEJAMENTO (sessão 20) — agente `plataforma-gma` + blueprint criados; construção só após a fase de teste |
 | 6 | IA assíncrona | 📋 Futura |
 | 7 | Marca e design | 📋 Planejada (prazo: 2026-06-20) |
 
@@ -203,9 +643,9 @@ mesmo dado, o que impede divergência.
 
 | # | Tela | Público | Onde vive | Status |
 |---|---|---|---|---|
-| 1 | **Painel do Operador** (Centro de Comando) | Operador (base + 2ª/3ª máquina) | Flask local `:5050` — **offline-first** | Parcial (Camada 1) |
-| 2 | **Quadro de Acompanhamento** (Kanban dos cartões + post-its) | Operador + set/equipes (read-only) | Flask local — **offline-first** + espelho opcional no **Notion** | A construir (Camada 3 dados + 5 tela) |
-| 3 | **Planilha de Análise / Entrega** | Editores + cliente | **Google Sheets** (nuvem) | A construir (Camada 3) |
+| 1 | **Painel do Operador** (Centro de Comando) | Operador (base + 2ª/3ª máquina) | Flask local `:5050` — **offline-first** | No ar com barra de abas (sessão 19); ainda lê filas JSON |
+| 2 | **Quadro de Acompanhamento** (Kanban dos cartões + post-its) | Operador + set/equipes (read-only) | Flask local — **offline-first** + espelho opcional no **Notion** | ✅ Rascunho no ar (sessão 19): `/kanban` lê do banco; post-it grava no banco; visual/colunas a refinar |
+| 3 | **Planilha de Análise / Entrega** | Editores + cliente | **Google Sheets** (nuvem) | ⚠️ Espelho local no ar (sessão 19): `/planilha` lê do banco; Google Sheets real (credenciais) pendente |
 
 **Regras:**
 - Acessos 1 e 2 são **operação** → offline-first, vivem no Flask. Acesso 3 é **entrega** → nuvem.
@@ -358,7 +798,7 @@ arquivo em blocos de 1 MB origem+destino; `shutil.copy2` com fallback automátic
 nunca sobrescreve; gera `.sppo` ao final; retorna `ok`/`caminho_log`/contagens/tamanho;
 log em `logs/copiador.log`.
 
-### Camada 3 — Controle e segurança das informações `[EM BUILD 🏗️]`
+### Camada 3 — Controle e segurança das informações `[CONCLUÍDA ✅]`
 **Escopo (redefinido em 2026-06-07):** a Camada 3 é a guardiã das informações — não faz contagem
 de cartões (isso é da Camada 2) nem coordenação multi-máquina (isso é da Camada 5). Ela:
 - SQLite como banco operacional local (substitui as filas JSON) — **fonte única de verdade**
@@ -382,45 +822,72 @@ de cartões (isso é da Camada 2) nem coordenação multi-máquina (isso é da C
 - ✅ Integração SQLite em `matcher.py` — match confirmado → `matches` table (sessão 5)
 - ✅ Integração SQLite em `transferencia.py` — status `copiando` → `transferencia_ok`/`falhou` + `arquivos` table (sessão 5)
 
-**Próximos passos da Camada 3:**
+**O que foi entregue na Camada 3 (completo):**
 1. ~~Ligar os processos ao banco~~ ✅ **FEITO (sessão 5)**
 2. ~~Migração incremental das filas JSON → SQLite~~ ✅ **FEITO (integração paralela — JSONs ainda existem como backup)**
-3. Exportação para Google Sheets (assíncrona, offline-first) — **PRÓXIMO**
+3. ~~Exportação para Google Sheets (assíncrona, offline-first)~~ ✅ **FEITO (sessão 11) — `exportador_sheets.py`**
 
-### Camada 4 — Auditoria estrutural e liberação do cartão `[PLANEJADO]`
+**Para ativar a exportação (Camada 3):** preencher `GOOGLE_CREDENTIALS_JSON` e `GMA_SHEETS_ID` no `.env` (ver `.env.exemplo` para o guia de 9 passos).
 
-**Redefinido em 2026-06-07.** A Camada 4 é uma **auditoria independente** da Camada 2 — os dois
-processos verificam o mesmo material por ângulos diferentes:
+### Camada 4 — Auditoria estrutural e liberação do cartão `[CONCLUÍDA ✅]`
+
+**Entregue na sessão 11.** A Camada 4 é uma **auditoria independente** da Camada 2:
 
 - **Camada 2** verifica *arquivo por arquivo* durante a cópia (MD5 criptográfico — cada byte).
 - **Camada 4** verifica *a estrutura completa* depois da cópia:
-  - Conta pastas e arquivos no destino
-  - Compara tamanho total (destino vs. cartão)
-  - Confirma que a árvore de destino é estruturalmente idêntica à de origem
+  - Conta arquivos no destino (excluindo arquivos adicionados pelo GMA)
+  - Compara tamanho total com o registrado pela Camada 2
+  - Tolerância de 0,5% no tamanho (variação de filesystem)
   - Se tudo bate → **status do cartão: `concluido`**
 
-**Sobre o embaralhamento (Parashoot):**
-O GMA aciona o Parashoot para embaralhar e ejetar o cartão — mas **não tenta replicar** o que
-o Parashoot faz internamente. O embaralhamento é uma operação destrutiva e irreversível; feita
-errado, a câmera pode não reconhecer o cartão. O Parashoot sabe o que a câmera espera encontrar
-após o formato — o GMA só confirma que é hora de acionar e monitora o resultado.
+**Sobre o Parashoot (REINVESTIGADO na sessão 15, 2026-06-09 — descobertas que mudam o design):**
+- **O Parashoot TEM CLI completo e automatizável** em
+  `/Applications/ParaShoot.app/Contents/MacOS/cli/parashoot` (a decisão antiga de "só abrir a GUI
+  e o operador confirma" está OBSOLETA):
+  - `parashoot check --card <mount> --destinations <dest> --machine-readable` → verifica
+    **arquivo por arquivo** (gera assinaturas e compara cartão vs. destino — mais forte que
+    contagem+tamanho).
+  - `parashoot erase --card <mount> --destinations <dest> --machine-readable` → embaralha + ejeta.
+    Só apaga se o material estiver em ≥ `min-destinations`.
+  - Também: `parashoot is-card <mount>`, `parashoot settings`.
+  - **Formato de saída (validado com cartão real, sessão 16):** é **JSON Lines (NDJSON)** — um
+    objeto JSON por linha, em streaming. NÃO é um único JSON.
+    - `check` sucesso (stdout): `{"status":"check_complete","message":"Card is successfully backed up to all destinations"}`
+    - `erase` (stdout, 2+ linhas): `{"status":"erase_start",...}` → `{"status":"erase_complete","message":"Card has been successfully erased"}`
+    - erro (stderr): `{"status":"error","error":"unknown_error","message":"..."}`
+    - O JSON de sucesso NÃO traz contagem (missing/found/total) — só status + message.
+    - O parser do GMA lê todas as linhas (stdout+stderr) e decide pelo último status TERMINAL
+      (`check_complete`/`erase_complete` = ok; `error` = falha; intermediários ignorados; sem
+      sucesso reconhecido = falha segura).
+- **O fake-format é REVERSÍVEL:** `fake_format v2.0.2` só inverte os primeiros 2 MB (cabeçalho/MBR);
+  o footage nunca é tocado; inverter de novo restaura (`fake_format --check`: exit 0 = "restorable").
+  Liberar o cartão NÃO destrói material — é recuperável pelo próprio Parashoot.
+- Também há uma API JSON-RPC interna (socket `~/Library/Application Support/ParaShoot/api.sock`,
+  `ping` → capabilities `check`/`erase.non_interactive`), mas o CLI é mais simples e foi o escolhido.
+- O GMA NUNCA chama `fake_format` diretamente — sempre via `parashoot erase`.
 
-**Fluxo da Camada 4:**
-1. Detecta cartão com `status = transferencia_ok`
-2. Faz auditoria estrutural (contagem + tamanho)
-3. Se confirmado → atualiza status para `concluido` no banco
-4. Aciona o Parashoot para embaralhamento/ejeção
-5. Registra o evento de conclusão na tabela `eventos`
+**Fluxo da Camada 4 (reescrito em `auditoria.py`, sessão 15 — TOTALMENTE AUTOMÁTICO):**
+1. Polling a cada 10 s por cartões com `status = 'transferencia_ok'`
+2. Pré-check GMA (barato): pasta existe; contagem bate; tamanho bate (± 0,5%)
+3. Descobre o mountpoint (`/Volumes/<volume>`). Cartão não montado → evento `cartao_nao_montado`, pula
+4. `parashoot check` (arquivo a arquivo). `missingFiles == 0` → `status = 'verificado_parashoot'`.
+   Faltando ou erro → `status = 'verificacao_falhou'` + notifica operador (ocasião vital), NÃO embaralha
+5. `parashoot erase` → embaralha + ejeta. Sucesso → `status = 'concluido'`.
+   Falha → `status = 'erase_falhou'` + notifica operador
+6. SEM confirmação do operador no caminho feliz — o `check` do Parashoot É a confirmação do processo
+   (diretriz: operador é último recurso). Novos status: `verificado_parashoot`, `verificacao_falhou`,
+   `erase_falhou`.
+
+> **Validado no teste com cartão real (sessão 16):** formato JSON do `check`/`erase` (JSON Lines,
+> ver acima); o campo `volume` do banco bate com `/Volumes/<volume>`; exit code 0 = sucesso. O ciclo
+> `check → erase → ejeta` rodou de ponta a ponta com o cartão Sony "Joe". Falta: integrar ao loop
+> automático da `auditoria.py` e exercitar via `inicializar_gma.py`.
 
 > **Dependência da fonte de frames (decisão 2026-06-07):** quando o extrator
-> estiver configurado para ler os frames do **cartão** (caso de destino em servidor
-> de rede — ver sessão 9), a Camada 4 **deve esperar os frames terminarem** antes de
-> acionar o Parashoot (que ejeta/embaralha e torna o cartão ilegível). Ordem segura:
-> cópia → verificação → frames do cartão → auditoria C4 → Parashoot. Se os frames já
-> saíram do **destino**, essa restrição não se aplica.
-
-> **A analisar:** como o Parashoot expõe sua interface para ser acionado pelo GMA
-> (CLI, AppleScript, URL scheme). Investigar antes de codar a integração.
+> estiver configurado para ler os frames do **cartão** (destino em servidor de rede),
+> a Camada 4 deve esperar os frames terminarem antes de acionar o Parashoot.
+> Ordem segura: cópia → verificação → frames do cartão → auditoria C4 → Parashoot.
+> A implementar quando o extrator for integrado ao fluxo (próxima fase).
 
 ### Camada 5 — Interface (GUI), multi-máquina e terceirização `[FUTURO]`
 - Interface visual para operador (substitui o terminal)
@@ -799,7 +1266,9 @@ Configurações do Sistema → Privacidade e Segurança → Acesso Total ao Disc
 6. **Fichas online (entrada de dados):** ✅ Endpoint `/forms/tally` pronto no Flask. Pendente
    (→ **Camada 5**): ngrok por máquina, autenticação, webhook e `.env` em cada máquina.
 
-7. **Organograma no Miro:** desenvolver o organograma (hoje em `organograma_GMA.md`) no **Miro**.
+7. ~~**Organograma no Miro**~~ ✅ **FEITO (sessão 10):** board "GMA — Mapa Vivo do Projeto"
+   em https://miro.com/app/board/uXjVHI0rvt4=/ (fluxo do cartão + prédio de 7 andares + linha
+   do tempo). Manter sincronizado com o `organograma_GMA.md` a cada decisão grande.
 
 ---
 

@@ -16,6 +16,11 @@ gma.db-wal
 fila_forms/*.json
 fila_material/*.json
 logs/*.log
+logs/*.out
+logs/backup_*
+
+# Config local do Claude Code (específica desta máquina — não versionar)
+.claude/settings.local.json
 
 # Contadores (estado operacional por profissional)
 contadores/*.json
