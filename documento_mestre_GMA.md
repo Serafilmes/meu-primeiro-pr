@@ -73,6 +73,11 @@ tela para inserção de informações" + deixá-la online.
 - **Testado:** envio válido/inválido pela ficha; gravação em fila JSON + banco; gabarito do histórico;
   edição livre vs. travada; portão de senha; **escopo remoto (câmera só-ficha) pela internet real**.
   Registros de teste limpos do banco.
+- **Fecho da sessão:** mapas atualizados (este documento, `organograma_GMA.md`, `plano_camada5_GMA.md`)
+  e memória (`ficha-canais-decisao`, `multi-projeto-por-trabalho`). **Versão salva no git** (commit
+  `06de4a0` — também passou a versionar o restante do sistema, antes não rastreado). **README próprio
+  do GMA** escrito, substituindo o placeholder de aprendizado (commit `d6953ee`, fecha a branch
+  `melhoria/readme`). **Sem PR/push** — ficou para depois, por opção do idealizador.
 
 **🔧 Sessão 20 (2026-06-10) — VIRADA protótipo → produto: planejamento da Camada 5:**
 

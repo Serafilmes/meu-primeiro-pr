@@ -162,6 +162,7 @@ Nenhuma decisão foi à toa. Cada uma resolveu um problema que apareceu
            📷 QR da ficha na tela de Acompanhamento (auto-detecta a URL do ngrok)
            🔶 REPORTADO ao C5: cada trabalho = um novo projeto de sistema
            📋 DESENHO: mural dos câmeras (2º monitor, status em linguagem de set)
+           💾 Versão salva no git (1ª foto do sistema inteiro) + README próprio do GMA
 ```
 
 ---
