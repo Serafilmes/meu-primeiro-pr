@@ -9,7 +9,7 @@
 > O sistema guarda o dado em um lugar só; as telas são jeitos diferentes de LER
 > esse mesmo dado. Nada diverge.
 >
-> Última atualização: 2026-06-10 (sessão 21 — ficha própria no GMA: entrada com gabarito/edição, online com senha, link de câmera só-ficha e QR na tela de Acompanhamento)
+> Última atualização: 2026-06-12 (sessão 21 + achado pós-teste — ficha própria no GMA: entrada com gabarito/edição, online com senha, link de câmera só-ficha e QR na tela de Acompanhamento; + Leitor agora trata cartão SEM MÍDIA em dois níveis: sem_midia × revisar)
 
 ---
 
@@ -24,7 +24,8 @@ ANDAR                                       PROGRESSO
 ──────────────────────────────────────────────────────────────────
 1 · Check-in (identificar o cartão)         ████████████  PRONTO ✅
         └─ Matcher seguro + perfil que aprende cada pessoa
-        └─ NOVO: ficha PRÓPRIA no GMA (gabarito + edição) · online c/ senha · QR
+        └─ ficha PRÓPRIA no GMA (gabarito + edição) · online c/ senha · QR
+        └─ NOVO: cartão SEM MÍDIA tratado em 2 níveis (ignora × chama operador)
 2 · Transferência (copiar com segurança)    ████████████  PRONTO ✅
 3 · Banco de dados (guardar tudo)           ██████████░░  QUASE
                                                           (Kanban + Planilha no ar; falta Google Sheets real)
@@ -51,7 +52,11 @@ Quando um cartão chega na base, isto acontece **sozinho**, sem operador clicand
         │
         ▼
   🔍 LEITOR            "É uma GoPro, 106 arquivos, gravado dia 7.
-        │               Atenção: tem material de 2 dias diferentes."
+        │               Atenção: tem material de 2 dias diferentes.
+        │               Se NÃO houver mídia nenhuma, eu decido:
+        │                · só config/lixo  → 'sem mídia, ignoro' (não copia)
+        │                · arquivos grandes que não reconheço → 'verificar!'
+        │                  (chamo o operador — pode ser footage estranho)."
         ▼
   🔗 MATCHER           "Esse cartão é do João — bate com a ficha.
         │               Se dois empatam, eu NÃO chuto: pergunto ao operador.
@@ -163,6 +168,15 @@ Nenhuma decisão foi à toa. Cada uma resolveu um problema que apareceu
            🔶 REPORTADO ao C5: cada trabalho = um novo projeto de sistema
            📋 DESENHO: mural dos câmeras (2º monitor, status em linguagem de set)
            💾 Versão salva no git (1ª foto do sistema inteiro) + README próprio do GMA
+
+12/06  S21+ 🐛 Teste pós-commit pegou um cartão ARRI só de CONFIGURAÇÃO (0 mídia)
+              passando reto pelo fluxo → 2 falhas: Porteiro decidia a marca só pelo
+              nome da pasta; Leitor via "sem mídia" mas deixava seguir.
+           🔧 CORREÇÃO (Camada 1): quando o cartão tem 0 mídia, o Leitor classifica
+              em DOIS níveis — 'sem_midia' (config/lixo → ignora, não copia) e
+              'revisar' (tem arquivo grande não reconhecido → chama o operador).
+           🛡️ A lista EXTENSOES é a guardiã; em dúvida prefere 'revisar' a pular footage.
+              ⚠️ mudanças ainda NÃO commitadas (leitor_midia.py, flask_gma.py)
 ```
 
 ---

@@ -3,9 +3,40 @@
 
 > Documento de arquitetura e estado do projeto. Serve como contexto completo para
 > continuar o desenvolvimento (inclusive em sessões do Claude Code).
-> Última atualização: 2026-06-10 (sessão 21 — ficha local no GMA: porta de entrada própria + gabarito/edição + portão de senha)
+> Última atualização: 2026-06-12 (sessão 22 — consulta à Camada 5: estimativa de construção, configuração externa, ampliação de escopo (janelas/SSE/2º monitor/porta de IA) e segurança/licenciamento)
 
-## Estado atual (2026-06-10)
+## Estado atual (2026-06-12)
+
+**🗺️ Sessão 22 (2026-06-12) — Consulta à Camada 5: estimativa, configuração, ampliação de escopo e segurança/licenciamento:**
+
+Sessão de **PLANEJAMENTO** (sem código de produto). O idealizador consultou o agente `plataforma-gma`
+sobre quatro frentes; decisões tomadas e registradas nos mapas (`plano_camada5_GMA.md` §1.2, §4 e §6.1).
+
+- **(1) Estimativa de construção (Fases 0→4):** ~**13–24 sessões** de trabalho e ~**2,2M–4,5M tokens**
+  no total, quebrado por fase no `plano_camada5_GMA.md`. Premissa-chave: **migrar** ~12.650 linhas já
+  validadas ≠ escrever do zero; teste e idas-e-voltas consomem mais token que código novo. Maior
+  incerteza: **Fase 4 (multi-máquina com escrita)**. São faixas, não promessa de precisão.
+- **(2) Configuração pós-pronto:** modelo de **configuração externa** (separar cérebro/config/dados).
+  O idealizador edita dois arquivos de texto — `evento.toml` (nome do evento, pasta destino, banco do
+  trabalho, porta, rótulos da ficha, 2º monitor) e `.env` (senha, credenciais) — **sem tocar no
+  código**. Iniciar novo trabalho = copiar a config, trocar 3–4 linhas, apontar banco novo (zera só).
+- **(3) Ampliação de escopo da C5 [DECIDIDO]:** a C5 passa a ser dona também das **janelas/abas** —
+  abre as telas via **pywebview** (janela nativa), entrega **tempo real** via **SSE** (cópia e edições
+  atualizando só o card que muda, sem recarregar), abre o **2º monitor** (Mural dos Câmeras) e é a
+  **porta de despacho** para a IA da Camada 6 (enfileira manifesto + miniaturas; **mídia bruta nunca
+  sai da máquina**). Fronteira mantida: lógica é das camadas 1–4/6; orquestração/janelas/portas é da C5.
+- **(4) Segurança & licenciamento [DECIDIDO — honestidade técnica]:** Python é interpretado → **não há
+  proteção de código inviolável**. O que **protege de verdade**: licença por máquina + separação
+  cérebro/dados (+ Nuitka se houver venda ampla). O que é **teatro**: senha no `.app`, "criptografar" o
+  Python. **Keygen por tempo limitado = FUTURO (Fase 4+)**, chave assinada com verificação
+  **offline-first** (não trava o ciclo por falta de Wi-Fi). **Integração com APIs**: sempre por **fila
+  assíncrona**, credenciais no `.env`, **mídia nunca viaja**. Detalhado em `plano_camada5_GMA.md` §6.1.
+- **Decisões do idealizador nesta sessão:** **perfis dos profissionais ZERAM a cada evento**
+  (isolamento total — coerente com "cada trabalho é um novo projeto"; resolve o "Aberto" do
+  `plano_camada5_GMA.md` §1.1.A). **Distribuição (produto p/ terceiros × ferramenta interna):
+  INDECISO** → keygen/licença ficam como possibilidade futura, sem comprometer o roteiro agora.
+- **Estado:** segue **PLANEJAMENTO** — produto não iniciado; laboratório ativo. Próximo passo de produto
+  permanece: rodar **2–3 cartões simultâneos** e fechar alinhamentos antes da Fase 0.
 
 **✅ Sessão 21 (2026-06-10) — Ficha de check-in DENTRO do GMA (entrada própria, gabarito, edição, online):**
 
@@ -924,6 +955,15 @@ de cartões (isso é da Camada 2) nem coordenação multi-máquina (isso é da C
 - **Processos internos e integração de ferramentas (decisão 2026-06-07):** decisões sobre
   qual ferramenta de formulário usar (Tally, Google Forms ou outra futura) e como ela se
   integra ao Flask são da **Camada 3** — guardiã do fluxo de informação que entra no banco.
+- **Janelas e tempo real (decisão 2026-06-12):** a C5 abre as telas como **janela nativa**
+  (pywebview) e entrega atualização em **tempo real** (SSE — cópia e edições atualizam só o card
+  que muda, sem recarregar). Inclui o **2º monitor** (Mural dos Câmeras em tela cheia).
+- **Porta de despacho para a IA (Camada 6):** a C5 **enfileira** tarefas de análise (manifesto +
+  miniaturas) de forma assíncrona — nunca executa a IA e **nunca expõe mídia bruta**.
+- **Segurança e licenciamento do produto (decisão 2026-06-12):** proteção honesta (licença por
+  máquina + separação cérebro/dados; ofuscação/Nuitka só se houver venda ampla). **Keygen** por
+  tempo limitado = futuro (Fase 4+), verificação offline-first. Integração com APIs sempre por
+  **fila assíncrona**, credenciais no `.env`, **mídia nunca viaja**. Detalhe em `plano_camada5_GMA.md` §6.1.
 
 ### Camada 6 — IA assíncrona (opcional) `[FUTURO]`
 - Gemini API — análise visual de conteúdo
@@ -1097,6 +1137,15 @@ usar Wi-Fi público do evento; rodar sem senha em rede compartilhada; guardar cr
 
 **Acesso da segunda máquina:** trocar `host="127.0.0.1"` por `host="0.0.0.0"` em `flask_gma.py`
 apenas na rede local confiável do evento. Nunca em Wi-Fi público.
+
+### Proteção do software e dos dados (nota da Camada 5 — 2026-06-12)
+**Honestidade técnica:** Python é interpretado — **não há proteção de código-fonte inviolável**; um
+`.app` pode ser revertido por alguém técnico. O que **protege de verdade**: **licença por máquina**
+(impressão digital do hardware) + **separação cérebro/config/dados** (quem copia o app não leva
+credenciais, banco nem destino). O que é **teatro**: senha embutida no `.app`, "criptografar" o
+Python. Compilar com **Nuitka** só compensa com venda ampla. **Keygen por tempo limitado** (chave
+assinada, validação **offline-first**) e **licença por máquina** ficam como item **FUTURO** da
+Camada 5 (Fase 4+); distribuição para terceiros ainda **indecisa**. Detalhe em `plano_camada5_GMA.md` §6.1.
 
 ---
 

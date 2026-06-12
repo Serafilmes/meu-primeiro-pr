@@ -1,7 +1,7 @@
 # Plano da Camada 5 — A Plataforma GMA
 
 > Blueprint da construção do GMA como **software profissional**. Documento de planejamento.
-> Criado na sessão 20 (2026-06-10). Referência do agente `plataforma-gma`.
+> Criado na sessão 20 (2026-06-10). Atualizado na sessão 22 (2026-06-12). Referência do agente `plataforma-gma`.
 > **Estado: PLANEJAMENTO.** Não há construção de produto em curso — seguimos no laboratório.
 
 ---
@@ -51,8 +51,10 @@ recompilação):
   ver [[modelo-ficha-por-trabalho]]), senha e túnel daquele evento.
 - **Isolamento entre trabalhos:** um evento não contamina o outro (numeração, perfis, planilha).
 - Conecta com a config externa já prevista (seção 2) e com a memória `camada5-escopo-configuracao`.
-- **Aberto:** os perfis aprendidos por nome ([[perfil-do-profissional]]) são por-trabalho ou
-  acumulam entre trabalhos do mesmo profissional? A decidir no desenho da C5.
+- **DECIDIDO (sessão 22, 2026-06-12):** os perfis aprendidos por nome ([[perfil-do-profissional]])
+  **zeram a cada evento** (isolamento total — coerente com "cada trabalho é um novo projeto"). O
+  banco de perfis é por-trabalho; não cruza eventos. Pode ser **reaberto** se um profissional
+  recorrente justificar perfil persistente (campo `importar_perfis` no `evento.toml` como evolução).
 
 ### B) Acesso remoto **por papel** (dois links com escopos diferentes)
 
@@ -87,6 +89,25 @@ Disparado pelo teste do túnel (ficha online). Régua: **a operação completa f
   - **2º monitor automático** (abrir em tela cheia no display certo ao ligar) = empacotamento da C5.
 - **Pré-requisito atravessado:** ir para a internet exige `GMA_SENHA` (Basic Auth) — princípio
   inegociável "nunca expor o Flask sem autenticação".
+
+### 1.2. Ampliação de escopo confirmada (sessão 22, 2026-06-12) — janelas, tempo real e porta de IA
+
+O idealizador confirmou que a C5 é dona também das **abas/janelas** e da orquestração em tempo real.
+Tudo isto é responsabilidade da plataforma (não das camadas operacionais, que só produzem dados):
+
+- **Quem abre as janelas:** o ponto de entrada sobe o Flask e abre as telas via **pywebview**
+  (janela nativa do Mac — o operador vê um programa, não um navegador). O **supervisor** reergue o
+  que cair.
+- **Tempo real (cópia + edições) por SSE:** trocar o auto-refresh por **Server-Sent Events** — o
+  servidor avisa a tela só quando algo muda e atualiza **só o card afetado** (sem recarregar a
+  página); o progresso da cópia chega à tela a cada segundo. *(Candidato à Fase 2 — Robustez.)*
+- **2º monitor:** índice no `evento.toml`; abre o **Mural dos Câmeras** em tela cheia. Sem 2º
+  monitor → avisa e segue, **não trava**.
+- **Porta de despacho para a IA (Camada 6):** ao concluir a cópia, a C5 **enfileira** uma tarefa
+  (caminho do manifesto + miniaturas). A IA roda assíncrona, no ritmo dela. **A IA nunca recebe
+  mídia bruta** — só miniaturas e metadados; o material jamais sai da máquina. Chave da IA no `.env`.
+- **Fronteira:** lógica (match, cópia, banco, liberação, análise) continua das camadas 1–4/6;
+  **orquestração, janelas, tempo real, acesso por papel, túnel e despacho** são da C5.
 
 ---
 
@@ -149,6 +170,10 @@ GMA-TESTE/                      (nome provisório; final com a Camada 7)
 | 3 | **Empacotamento** | `GMA-TESTE.app` clicável + janela nativa + guia de instalação | Fase 2 |
 | 4 | **Multi-máquina + integrações** | Modelo cliente-servidor na rede; Google Sheets real; Forms/Tally em produção | Fase 3 |
 
+> **Licenciamento (Fase 4+ / futura — decisão 2026-06-12):** keygen por tempo limitado + licença por
+> máquina entram **depois** do produto estável, e **só se** a distribuição for para terceiros (ainda
+> indeciso). Não comprometem o roteiro agora. Ver §6.1.
+
 ---
 
 ## 5. O "sem falhas" — o que significa robustez aqui
@@ -177,6 +202,41 @@ A parte mais difícil e ainda não resolvida. Perguntas em aberto:
 Recomendação inicial: **começar simples** — 1 máquina servidora sólida + 2ª/3ª máquinas como
 **monitoração (read-only)** pela rede. Multi-máquina-com-escrita (cada uma conectando cartões)
 fica para depois, com desenho dedicado.
+
+---
+
+## 6.1. Segurança e licenciamento (proteção do software + dos dados)
+
+> Decisão/registro da sessão 22 (2026-06-12). Honestidade técnica acima de marketing.
+
+**Proteção contra cópia e uso não autorizado.** Python é interpretado: mesmo dentro de um `.app`, o
+código é executado por um interpretador e **pode ser revertido** por alguém técnico e determinado.
+**Não existe proteção de código Python inviolável** — então o desenho separa o que protege de verdade
+do que é só teatro:
+
+- **Protege de verdade:**
+  - **Licença por máquina** — o app gera uma "impressão digital" do hardware (série do Mac); copiar o
+    `.app` para outra máquina não funciona sem nova ativação.
+  - **Separação cérebro / config / dados** — quem copia o app não leva credenciais (`.env`), banco
+    nem pasta de destino; o programa não roda sem a configuração correta daquela máquina.
+  - **Nuitka** (compilar Python → C) — eleva bastante o esforço de reversão; só compensa com **venda
+    ampla**.
+- **É teatro (não protege):** senha embutida no `.app`; "criptografar" o Python dentro do pacote;
+  confiar só em ofuscação contra um concorrente sério.
+
+**Keygen / licença por tempo limitado (FUTURO — Fase 4+).** Uma **chave assinada** contendo validade +
+identificador da máquina, verificável **offline** (respeita o offline-first). Risco: mudar o relógio do
+computador. Mitigação honesta: validar com o relógio local + **alerta de relógio manipulado**
+(comparando com timestamps da última inicialização) e, **quando há internet**, confirmar com um servidor
+de licença e gravar localmente. Sem internet, fica em **aviso** mas **não bloqueia** — um evento não pode
+parar por falta de Wi-Fi. **Posição no roteiro:** depois da Fase 4, e **só se** a distribuição for para
+terceiros (decisão de distribuição ainda **indecisa** — 2026-06-12).
+
+**Integração com outras APIs.** Regra: o **ciclo crítico nunca depende de API externa**. Toda integração
+passa por uma **fila assíncrona** (se a API cai, a fila acumula e reprocessa), com **credenciais no
+`.env`** (nunca no código) e **mídia nunca viaja**. Vale para Google Sheets, Tally/Forms, Gemini/Claude
+(Camada 6) e APIs futuras (entrega, portal, notificações). Mantém o princípio "o Flask controla o
+processo, nunca o conteúdo".
 
 ---
 
@@ -217,3 +277,7 @@ Outros já mapeados (dívidas que a C5 deve carregar):
 - **Agente responsável:** `plataforma-gma` (criado na sessão 20).
 - **Próximo passo concreto:** rodar o teste de 2–3 cartões simultâneos no laboratório e fechar os
   alinhamentos pendentes. Só então a Fase 0 (Fundação) começa.
+- **Sessão 22 (2026-06-12):** consulta do idealizador — registrados: estimativa (~13–24 sessões /
+  ~2,2M–4,5M tokens), modelo de **configuração externa**, **ampliação de escopo** (§1.2:
+  janelas/SSE/2º monitor/porta de IA) e **segurança/licenciamento** (§6.1). Perfis **zeram por
+  evento** (§1.1.A); distribuição p/ terceiros **indecisa**. Segue em PLANEJAMENTO.
