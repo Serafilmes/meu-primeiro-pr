@@ -3,9 +3,76 @@
 
 > Documento de arquitetura e estado do projeto. Serve como contexto completo para
 > continuar o desenvolvimento (inclusive em sessões do Claude Code).
-> Última atualização: 2026-06-12 (sessão 22 — consulta à Camada 5: estimativa de construção, configuração externa, ampliação de escopo (janelas/SSE/2º monitor/porta de IA) e segurança/licenciamento)
+> Última atualização: 2026-06-14 (sessão 24 — DESENHO: Passo 2 do Matcher fechado: botão de resolução de empate, tela de confirmação com destino previsto, candidatos descartados auditáveis; referência em `desenho_passo2_matcher_GMA.md`)
 
 ## Estado atual (2026-06-12)
+
+**📐 Sessão 24 (2026-06-14) — DESENHO: Passo 2 do Matcher (botão de resolução de empate):**
+
+Sessão de **desenho** (sem build), conduzida pelo orquestrador com o idealizador. Objetivo: fechar
+o desenho do **Passo 2 do Matcher** — o botão que permite ao operador resolver empates de match com
+1 clique no painel. Pendência aberta desde a sessão 13 e explicitamente adiada na sessão 23.
+
+- **O que já existia:** Passo 1 (sessão 13) entregou a lógica de empate segura — cartão marcado
+  como `aguardando_confirmacao`, candidatos salvos em `match_candidatos`, evento `match_ambiguo`
+  no banco, seção no painel só leitura. O operador via o empate mas não conseguia resolver.
+- **O que o operador vê:** para cada cartão ambíguo, o painel exibe cabeçalho (volume · nº arquivos
+  · câmera detectada) + lista de candidatos, cada um com nome · câmera da ficha · **3–4 primeiros
+  nomes de arquivo do cartão** (ex: `joe0258.mp4`) como pista de identificação + botão
+  "Confirmar [NOME]". A pista dos nomes de arquivo é o que desempata na prática de set.
+- **Fluxo de confirmação (2 passos, decisão do idealizador):** (1) operador clica "Confirmar JOAO"
+  → sistema mostra **tela de resumo enxuta**: nome · câmera · nº arquivos · **pasta de destino
+  prevista** (ex: `JOAO_002`) — confirmação do destino considerada útil pelo idealizador;
+  (2) operador clica "Iniciar transferência" → sistema registra match, descarta candidatos, dispara
+  fluxo normal. Motivo do passo extra: match errado gera pasta errada no HD; custo de 1 clique a
+  mais é baixo, custo de erro é alto.
+- **Candidatos descartados:** ficam na tabela `match_candidatos` com status `descartado` —
+  auditável, rastreável. Fichas voltam a `aguardando_match`, livres para o próximo cartão.
+  Tabela `match_candidatos` já foi desenhada na sessão 18 com este campo — build só usa o que existe.
+- **Perfil:** ao confirmar, chama `atualizar_perfil(nome, assinatura)` — já previsto na sessão 13.
+- **Arquivos tocados no build:** `flask_gma.py` (rota `POST /match/<id>/confirmar` + telas),
+  `matcher.py` (função de confirmação manual), `banco_dados.py` (função `confirmar_match` atômica).
+- **Status:** desenho aprovado, **NÃO implementado**. Referência: `desenho_passo2_matcher_GMA.md`.
+- **⏭️ PRÓXIMO PASSO (próxima sessão de build):** implementar o Passo 2 via agentes `checkin-gma`
+  + `banco-dados-gma`. Sem bloqueios — pode iniciar direto. Fatia 1 da Nova Ficha v2 (tabela
+  `profissionais`) permanece como alternativa de build igualmente desbloqueada.
+
+**📐 Sessão 23 (2026-06-12) — DESENHO: Nova Ficha v2 (duas caras, ordem tipo→nome, câmera pelo Leitor):**
+
+Sessão de **desenho** (sem build), conduzida pelo orquestrador com o idealizador. Objetivo entregue:
+fechar o desenho da **Nova Ficha v2** e gravá-lo em `desenho_nova_ficha_v2_GMA.md` (referência para o
+build da próxima sessão). Disparada pelo pedido de "adicionar botões com funções e melhorias nas janelas".
+
+- **Duas caras da ficha (mesma rota `/ficha`):** cara **CÂMERA** (remoto/túnel) vs. cara **OPERADOR**
+  (base/localhost), com regras diferentes de campo — aprofunda o portão por papel da sessão 21.
+- **NOME:** câmera usa **dropdown fechado** (não digita, não cria) — acaba a bagunça de nomenclatura;
+  operador cria/edita. Dropdown de nome **filtrado pelo tipo** marcado.
+- **CÂMERA/MODELO:** sai da ficha — **detectada pelo Leitor de Mídia (C1)**; só vira pergunta (com
+  **aviso ao operador**) se o Leitor não detectar. **Resolve a tensão da sessão 13** (câmera segue
+  dos dois lados do match, mas o câmera-pessoa não digita).
+- **TIPO DE MATERIAL:** vira **multi-seleção** (Áudio/Foto/Vídeo) — material misto.
+- **Ordem de preenchimento (insight do idealizador):** 1º tipo, depois nome. Foto/Vídeo → 1 dropdown
+  de nome; Foto/Vídeo **+ Áudio** → **2 dropdowns** (o áudio quase sempre é outra pessoa — gravador).
+- **Cadastro de profissional (Operação):** só por **tipo (F/A/V)** — nome + caixinhas. Câmera e
+  materiais **variam**, não se amarram à pessoa (o perfil aprendido segue acumulando por baixo).
+- **Decisões batidas:** (1) **login multiusuário** = ❌ agora, **radar da C5**; (2) **câmera pelo
+  Leitor** = ✅; (3) **encoding da multi-seleção** = **FECHADO** — *conjunto fixo pequeno (Tipo A/F/V)
+  = colunas booleanas (tem_audio/tem_foto/tem_video); lista aberta (marcas) = lista estruturada (JSON),
+  exibida com `·`; **nunca por espaço***. Booleanos facilitam contar na planilha, ajudam o Matcher e
+  são iguais ao cadastro de profissional (consistência); (4) **cadastro só por tipo** = ✅.
+- **Ponta solta resolvida (JSON×banco×IA):** caminho recomendado = **unificar a leitura no banco**
+  (Operação ainda lê filas JSON; Kanban/Planilha já leem o banco). IA lê **banco + planilha +
+  manifesto**, nunca os JSON espalhados, nunca a mídia bruta. Fica no radar junto do encoding.
+- **Adiado para próxima sessão (a pedido do idealizador):** Mural dos câmeras (2º monitor) + revisão
+  das demais janelas; **menu de funções na Operação + botão do Matcher** (resolver ambíguo com 1
+  clique — Passo 2 do Matcher).
+- **Status:** desenho aprovado, **NÃO implementado**. Referência: `desenho_nova_ficha_v2_GMA.md`
+  (inclui o plano de build em fatias, §11). Memória: `nova-ficha-v2-desenho`.
+- **⏭️ PRÓXIMO PASSO (próxima sessão) = FATIA 1 do build:** tabela `profissionais` por tipo (nome +
+  colunas booleanas `tem_foto`/`tem_audio`/`tem_video`) + funções criar/listar/filtrar — em C3, via
+  `banco-dados-gma`. É a fundação do dropdown de nome filtrado e usa o mesmo mecanismo do §7. Livre
+  (sem bloqueios). Teste: criar 3 profissionais e listar "só áudio". Demais fatias (2–5) em
+  `desenho_nova_ficha_v2_GMA.md` §11.
 
 **🗺️ Sessão 22 (2026-06-12) — Consulta à Camada 5: estimativa, configuração, ampliação de escopo e segurança/licenciamento:**
 

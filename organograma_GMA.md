@@ -9,7 +9,7 @@
 > O sistema guarda o dado em um lugar só; as telas são jeitos diferentes de LER
 > esse mesmo dado. Nada diverge.
 >
-> Última atualização: 2026-06-12 (sessão 21 + achado pós-teste — ficha própria no GMA: entrada com gabarito/edição, online com senha, link de câmera só-ficha e QR na tela de Acompanhamento; + Leitor agora trata cartão SEM MÍDIA em dois níveis: sem_midia × revisar)
+> Última atualização: 2026-06-14 (sessão 24 — DESENHO: Passo 2 do Matcher fechado: botão de resolução de empate no painel, tela de confirmação com destino previsto, candidatos descartados ficam auditáveis; referência em `desenho_passo2_matcher_GMA.md`)
 
 ---
 
@@ -168,6 +168,16 @@ Nenhuma decisão foi à toa. Cada uma resolveu um problema que apareceu
            🔶 REPORTADO ao C5: cada trabalho = um novo projeto de sistema
            📋 DESENHO: mural dos câmeras (2º monitor, status em linguagem de set)
            💾 Versão salva no git (1ª foto do sistema inteiro) + README próprio do GMA
+
+14/06  S24 📐 DESENHO: Passo 2 do Matcher — botão de resolução de empate
+           🔶 DECISÃO: operador vê nome + câmera + 3–4 primeiros nomes de arquivo
+              → clica "Confirmar" → tela de resumo (nome · câmera · nº arq · destino previsto)
+              → "Iniciar transferência" registra match, descarta candidatos, dispara cópia
+           🔶 DECISÃO: candidatos descartados ficam com status 'descartado' na tabela
+              match_candidatos (auditável); fichas voltam a aguardando_match
+           🔶 DECISÃO: confirmação chama atualizar_perfil (perfil acumula assinatura)
+           📄 Referência: desenho_passo2_matcher_GMA.md · Status: aprovado, NÃO implementado
+           ⏭️ Build: agente checkin-gma + banco-dados-gma (sem bloqueios)
 
 12/06  S21+ 🐛 Teste pós-commit pegou um cartão ARRI só de CONFIGURAÇÃO (0 mídia)
               passando reto pelo fluxo → 2 falhas: Porteiro decidia a marca só pelo
