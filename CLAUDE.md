@@ -12,10 +12,12 @@ sentido. Você mantém a visão geral; os subagentes cuidam dos detalhes de cada
 
 ## Primeiro passo de toda sessão
 
-Antes de qualquer trabalho, leia o arquivo `documento_mestre_GMA.md` na raiz do projeto. Ele
-contém a arquitetura completa, as decisões tomadas, o estado atual e os próximos passos. Sempre
-que uma decisão importante for tomada numa sessão, atualize o documento mestre (ou delegue ao
-agente de documentação).
+Leia SEMPRE estes dois arquivos antes de qualquer coisa:
+1. `contexto_atual_GMA.md` — estado atual, próximos passos, decisões recentes
+2. `arquitetura_GMA.md` — princípios, camadas, fluxo, estrutura técnica
+
+Só carregue `historico_GMA.md` se precisar consultar o raciocínio
+de uma sessão específica (ex: "por que a câmera saiu da ficha?").
 
 ## Sobre o idealizador
 
@@ -41,9 +43,9 @@ programação**. Por isso:
 
 - **SQLite local** — banco operacional na máquina GMA (offline, rápido, gratuito).
 - **Google Sheets** — espelho de entrega na nuvem (acesso dos editores).
-- **Google Forms** — entrada de dados do check-in (substituiu a ideia de ficha física + OCR).
-- **Flask local** — recebe o formulário e serve o painel da segunda máquina (rede local apenas).
-- **ShotPutPro** (transferência + checksum), **Parashoot** (embaralhamento).
+- **Flask local** — recebe o formulário e serve o painel (porta 5050, rede local apenas).
+- **copiador.py** — motor oficial de cópia (MD5 por arquivo + log `.sppo`). ShotPutPro foi descartado.
+- **Parashoot** — embaralhamento e ejeção do cartão após auditoria.
 - **Notion** — opcional, só para visualização rica.
 
 Regra de segurança central: **o Flask controla o processo, nunca o conteúdo.** Arquivos de mídia
@@ -52,23 +54,15 @@ nunca trafegam pela rede nem vão para a nuvem.
 ## Os subagentes (em .claude/agents/)
 
 Delegue para o subagente certo conforme a camada da tarefa:
-- `checkin-gma` — Camada 1: leitura de cartão, Google Forms, numeração sequencial, verificação de data.
+- `checkin-gma` — Camada 1: leitura de cartão, ficha de check-in, Matcher, perfil do profissional.
 - `transferencia-gma` — Camada 2: cópia, checksum MD5, log `.sppo`, PDF, numeração do cartão.
 - `banco-dados-gma` — Camada 3: schema do SQLite, consistência entre processos, exportação Sheets.
 - `auditoria-gma` — Camada 4: auditoria estrutural (contagem + tamanho), status `concluido`, acionamento do Parashoot.
-- `plataforma-gma` — Camada 5: a plataforma profissional (empacotar como app, configuração externa, supervisor, robustez, 3 telas integradas, multi-máquina). EM FASE DE PLANEJAMENTO — não constrói o produto até sair da fase de teste.
+- `plataforma-gma` — Camada 5: plataforma profissional (app, configuração externa, multi-máquina). EM PLANEJAMENTO.
 - (futuros) `testes`, `documentacao`.
 
 Quando uma tarefa pertencer claramente a uma camada com subagente, delegue. Para decisões de
 arquitetura, planejamento e conversa com o idealizador, conduza você mesmo.
-
-## Estado atual do roadmap
-
-- **Camada 1 (check-in)** — EM BUILD. Foco atual.
-- **Camada 2 (transferência)** — PRÓXIMO.
-- **Camadas 3–6** — planejadas/futuras (ver documento mestre).
-
-Scripts já prontos: `ler_cartao.py`, `gma_correcao.py`, `gma_relatorio_pdf.py`.
 
 ## Ritmo de trabalho
 
@@ -77,6 +71,7 @@ Scripts já prontos: `ler_cartao.py`, `gma_correcao.py`, `gma_relatorio_pdf.py`.
 - Antes de codar, proponha um plano curto e espere confirmação.
 - Depois de cada entrega, diga exatamente como testar (o comando a rodar).
 - Não faça mudanças grandes sem avisar. Trabalhe em passos pequenos e verificáveis.
+- **Ao fim de cada sessão:** atualize `contexto_atual_GMA.md` com o que foi feito, decisões tomadas e próximo passo.
 
 ## Limites de segurança no desenvolvimento
 

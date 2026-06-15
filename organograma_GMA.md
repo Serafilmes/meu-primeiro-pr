@@ -9,7 +9,7 @@
 > O sistema guarda o dado em um lugar só; as telas são jeitos diferentes de LER
 > esse mesmo dado. Nada diverge.
 >
-> Última atualização: 2026-06-15 (sessão 30 — BUILD da Fatia 5, a ÚLTIMA: a ficha passou a GRAVAR a forma nova de verdade — multi-tipo como booleanos (tem_foto/tem_audio/tem_video) + 2º nome (nome_audio) em `formularios`; o Matcher entende multi-tipo no +1; Planilha e fichas recentes exibem multi-tipo (·) e o 2º nome. **Nova Ficha v2 COMPLETA (Fatias 1-5).** Testado ponta a ponta; sem commit ainda.)
+> Última atualização: 2026-06-15 (sessão 31 — DESENHO da Planilha de Entrega (4 blocos: identificação · classificação · técnicas · futuro), do rumo da IA (Missão A → transcrição local → imagem) e da Central de Entrada (2 modos: aba "Listas" ao vivo + importação de fontes, com revisão do operador). BUILD: aba "Listas" (Fatia 1 da gestão de vocabulário). Sem commit ainda.)
 
 ---
 
@@ -33,6 +33,8 @@ ANDAR                                       PROGRESSO
 2 · Transferência (copiar com segurança)    ████████████  PRONTO ✅
 3 · Banco de dados (guardar tudo)           ██████████░░  QUASE
                                                           (Kanban + Planilha no ar; falta Google Sheets real)
+        └─ NOVO (s31): aba "Listas" (vocabulário do operador) + desenho da Planilha
+           de Entrega (4 blocos) e da Central de Entrada (ao vivo + importação)
 4 · Auditoria + devolver o cartão           ████████████  PRONTO ✅
         └─ embaralha · ejeta · RESTAURA pelo Parashoot — testado com cartão real
 5 · Tela bonita + várias máquinas           █░░░░░░░░░░░  EM PLANEJAMENTO
@@ -240,6 +242,25 @@ Nenhuma decisão foi à toa. Cada uma resolveu um problema que apareceu
            🧪 Testado ponta a ponta: Foto+Áudio → 2 fichas; Foto+Vídeo → 1; só Áudio → 1 ✅
            🎉 Nova Ficha v2 COMPLETA (Fatias 1-5)
            💾 Sem commit ainda (a critério do idealizador)
+
+15/06  S31 📊 DESENHO da Planilha de Entrega — a partir da "Loggagem" (RIO2C) + 5 planilhas
+              antigas. Núcleo: BLOCO POR PROFISSIONAL com cartão sequencial (= o NOME_NNN do GMA).
+              4 blocos: identificação · classificação · técnicas (o sistema gera) · futuro.
+           🔶 DECISÃO: a CLASSIFICAÇÃO (palco/marca/pauta/tags) é preenchida pelo PROFISSIONAL
+              na ficha, por chips de listas prontas; operador revisa opcional. Ficha objetiva.
+           🔶 DECISÃO: listas de contexto DINÂMICAS, geridas só pelo operador; numeração
+              NOME_NNN independente e contínua (a ficha muda de um dia pro outro, o nº não).
+           🔶 DECISÃO: bloco de PÓS (editor/edição/upload) incluído, mas VARIÁVEL por evento —
+              editores preenchem após a entrega; blocos/colunas ligam-desligam por evento.
+           🔶 DECISÃO (IA): Missão A (busca conversacional) + transcrição de áudio LOCAL
+              (Whisper, offline/grátis) primeiro; análise de imagem (Missão B) por último.
+           🛠️ BUILD Fatia 1: aba "Listas" no painel (tabela listas_contexto + add/ativar/excluir,
+              só na base). Testado ponta a ponta. Sem commit.
+           🔶 ALINHAMENTO (no papel): Central de Entrada — 2 modos para a MESMA lista:
+              (a) ao vivo (aba Listas) · (b) importar fontes (colar/CSV/PDF/print-OCR) →
+              Extração → Revisão do operador (gate) → listas_contexto. Nada entra cru.
+           ⏭️ A fazer: a "ponte" chips→ficha→planilha (faz tudo aparecer); depois a importação.
+           💾 Sem commit ainda (a critério do idealizador)
 ```
 
 ---
@@ -278,6 +299,10 @@ Em ordem de impacto:
    linguagem de set + QR fixo (desenho pronto na sessão 21; layout em aberto).
 7. 🌐 **Endereço fixo do túnel** (opcional) — hoje a ficha online usa URL temporária
    do ngrok (o QR se auto-atualiza). Um domínio fixo deixa o link estável.
+8. 🧩 **Ponte chips→ficha→planilha** — ligar os itens das "Listas" como chips na ficha e
+   fazê-los aparecer na planilha (foi o que faltou no teste da s31). Próxima fatia natural.
+9. 📥 **Central de Entrada (importação)** — montar as listas a partir de planilha remota/CSV,
+   colar texto, PDF e print (OCR). Desenho alinhado na s31; começar pela planilha/CSV.
 
 > ✅ Resolvido na S21: a **entrada de dados** não depende mais do Tally — a ficha própria
 > do GMA é o canal principal (Tally vira reserva opcional). Guia do Tally segue válido
@@ -397,6 +422,20 @@ vitrine espelhada, nunca o operacional.
 - 🖥️ **Mural dos câmeras (a desenhar):** a **metade read-only do Acesso 2**, para um **2º monitor**,
   com status em linguagem de set ("Material salvo ✅", "Copiando… não retire"). É a tela que
   comunica aos câmeras se o cartão deles já foi copiado.
+
+**Novidades da sessão 31 (a Planilha de Entrega — Acesso 3 — toma forma):**
+
+- 📊 **Planilha de Entrega = ficha do profissional + colunas técnicas do sistema**, em 4 blocos:
+  **identificação** (data · nome/fonte · material F/A/V · nº cartão) · **classificação** (conteúdo ·
+  tags · palco · marca · pauta — chips escolhidos na ficha) · **técnicas** (nº arquivos · tamanho ·
+  íntegro? · status, que o sistema gera) · **futuro** (transcrição do áudio).
+- 🧩 **Listas de contexto** (palco/marca/pauta/tags): vocabulário controlado, gerido pelo operador,
+  dinâmico por evento. Os itens viram **chips na ficha**; nada entra na planilha sem essa ponte.
+- 🧱 **Blocos variáveis por evento:** o operador "monta o molde" — classificação e pós-produção
+  (editor/edição/upload, preenchida pelos editores) ligam-desligam conforme o trabalho.
+- 📥 **Duas portas de entrada do vocabulário:** ao vivo (aba "Listas") + importação de fontes
+  (planilha/CSV · colar · PDF · print-OCR), com revisão do operador antes de gravar.
+- 🗂️ Referências reais: Notion "Loggagem" (RIO2C) + 5 planilhas Google antigas.
 
 ---
 

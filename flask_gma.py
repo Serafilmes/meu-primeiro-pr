@@ -1339,7 +1339,8 @@ CSS_ABAS = """
 
 
 def barra_abas(ativa):
-    """Barra de navegação entre as telas. 'ativa' = ficha|operacao|kanban|planilha|profissionais."""
+    """Barra de navegação entre as telas.
+    'ativa' = ficha|operacao|kanban|planilha|profissionais|listas"""
     def classe(nome):
         return "aba ativa" if nome == ativa else "aba"
     return f"""
@@ -1349,6 +1350,7 @@ def barra_abas(ativa):
         <a class="{classe('kanban')}" href="/kanban">Acompanhamento</a>
         <a class="{classe('planilha')}" href="/planilha">Planilha de Entrega</a>
         <a class="{classe('profissionais')}" href="/profissionais">Profissionais</a>
+        <a class="{classe('listas')}" href="/listas">Listas</a>
     </nav>"""
 
 
@@ -3350,6 +3352,393 @@ def _pagina_profissionais(
     </div>"""
 
     return _pagina("Profissionais", "profissionais", corpo)
+
+
+# ── ROTA: GESTÃO DE LISTAS DE CONTEXTO ───────────────────────────────────────
+#
+# A aba "Listas" permite ao operador cadastrar e gerir os valores das listas de
+# classificação usadas na ficha (palcos, marcas, pautas, serviços, tags).
+#
+# Acesso: somente base (localhost). O portão _portao_de_acesso já bloqueia
+# qualquer rota fora de /ficha e /forms quando o acesso é remoto — portanto
+# /listas e /listas/* recebem 403 automaticamente para o papel câmera.
+#
+# Padrão espelhado do cadastro de profissionais:
+#   - Listar agrupado por tipo na ordem: Palcos, Marcas, Pautas, Serviços, Tags
+#   - Adicionar item (tipo + valor)
+#   - Ativar/Desativar (soft-delete — preserva histórico; reversível)
+#   - Excluir definitivo (só se não em uso — por ora sempre libera, pois chips
+#     ainda não foram conectados à ficha; ver comentário em itens_lista_em_uso)
+
+
+@app.route("/listas", methods=["GET", "POST"])
+def listas():
+    """
+    GET  /listas → exibe os itens agrupados por tipo + formulário de novo item.
+    POST /listas → cadastra um item e redireciona de volta.
+
+    Acesso: somente base (localhost). Remoto recebe 403 pelo portão existente.
+    """
+    # ── POST: adicionar novo item ─────────────────────────────────────────────
+    if request.method == "POST":
+        tipo_raw  = (request.form.get("tipo")  or "").strip().lower()
+        valor_raw = (request.form.get("valor") or "").strip()
+
+        erro_lista = None
+
+        if not tipo_raw:
+            erro_lista = "Escolha um tipo antes de adicionar."
+        elif not valor_raw:
+            erro_lista = "O valor não pode ser vazio."
+        elif not BANCO_DISPONIVEL:
+            erro_lista = "Banco de dados indisponível. Verifique banco_dados.py."
+        else:
+            try:
+                _conn = bd.obter_conexao()
+                bd.adicionar_item_lista(_conn, tipo_raw, valor_raw)
+                _conn.close()
+                logger.info(
+                    f"LISTAS | Adicionado: tipo={tipo_raw} valor={valor_raw}"
+                )
+                return redirect("/listas")
+            except Exception as _err:
+                import sqlite3 as _sqlite3
+                if isinstance(_err, _sqlite3.IntegrityError):
+                    # Unicidade (tipo, valor) violada — item já existe
+                    erro_lista = (
+                        f"'{valor_raw}' já existe na lista de "
+                        f"{bd.ROTULOS_LISTA_CONTEXTO.get(tipo_raw, tipo_raw)}."
+                    )
+                else:
+                    erro_lista = str(_err)
+                logger.warning(f"LISTAS | Erro ao adicionar item: {_err}")
+
+        # Houve erro → re-renderiza preservando o que foi digitado
+        return _pagina_listas(
+            erro=erro_lista,
+            tipo_digitado=tipo_raw,
+            valor_digitado=valor_raw,
+        )
+
+    # ── GET: exibir a aba de listas ───────────────────────────────────────────
+    return _pagina_listas()
+
+
+@app.route("/listas/<int:item_id>/ativo", methods=["POST"])
+def listas_ativo(item_id):
+    """
+    Ativa ou desativa um item de lista (soft-delete). O campo 'ativo' do form
+    indica o estado desejado: "1" = ativar, "0" = desativar. Desativar não apaga
+    o item — apenas o retira das próximas seleções da ficha. Volta para a lista.
+
+    Acesso: somente base (localhost). Remoto recebe 403 pelo portão existente.
+    """
+    if not BANCO_DISPONIVEL:
+        return _pagina_listas(erro="Banco de dados indisponível.")
+
+    novo_estado = (request.form.get("ativo") == "1")
+    try:
+        _conn = bd.obter_conexao()
+        ok = bd.definir_ativo_item_lista(_conn, item_id, novo_estado)
+        _conn.close()
+        if ok:
+            logger.info(
+                f"LISTAS | id={item_id} → {'ATIVADO' if novo_estado else 'DESATIVADO'}"
+            )
+        else:
+            logger.warning(
+                f"LISTAS | id={item_id} não encontrado ao alternar 'ativo'"
+            )
+    except Exception as _err:
+        logger.error(f"LISTAS | Erro ao alternar 'ativo' (id={item_id}): {_err}")
+        return _pagina_listas(erro=f"Erro ao mudar a situação: {_err}")
+
+    return redirect("/listas")
+
+
+@app.route("/listas/<int:item_id>/excluir", methods=["POST"])
+def listas_excluir(item_id):
+    """
+    Exclui um item de lista DEFINITIVAMENTE — só se não estiver em uso por fichas.
+    Se estiver em uso, recusa e orienta a desativar.
+
+    Hoje, como os chips ainda não foram conectados à ficha, todos os itens passam
+    no check de "em uso" (itens_lista_em_uso retorna conjunto vazio). Quando a
+    integração com a ficha for construída, o guard passará a funcionar de verdade.
+
+    Acesso: somente base (localhost). Remoto recebe 403 pelo portão existente.
+    """
+    if not BANCO_DISPONIVEL:
+        return _pagina_listas(erro="Banco de dados indisponível.")
+
+    try:
+        _conn = bd.obter_conexao()
+        resultado = bd.excluir_item_lista(_conn, item_id)
+        _conn.close()
+    except Exception as _err:
+        logger.error(f"LISTAS | Erro ao excluir (id={item_id}): {_err}")
+        return _pagina_listas(erro=f"Erro ao excluir: {_err}")
+
+    if resultado == "em_uso":
+        logger.warning(
+            f"LISTAS | Exclusão recusada (id={item_id}): item em uso por fichas"
+        )
+        return _pagina_listas(
+            erro="Não dá para excluir: este item já aparece em alguma ficha. "
+                 "Use Desativar (reversível) no lugar."
+        )
+
+    if resultado == "inexistente":
+        logger.warning(f"LISTAS | Exclusão: id={item_id} não encontrado")
+        return redirect("/listas")
+
+    logger.info(f"LISTAS | id={item_id} EXCLUÍDO")
+    return redirect("/listas")
+
+
+def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
+    """
+    Renderiza a aba de Listas de Contexto.
+
+    Exibe os itens agrupados por tipo na ordem fixada (Palcos, Marcas, Pautas,
+    Serviços, Tags), com botões de ativar/desativar e excluir em cada linha.
+    À direita, um formulário para adicionar novos itens.
+
+    Separada da lógica da rota para facilitar reuso em caso de erro no POST.
+    """
+    # ── Carrega todos os itens do banco ──────────────────────────────────────
+    todos_itens = []
+    aviso_banco = ""
+
+    if BANCO_DISPONIVEL:
+        try:
+            _conn = bd.obter_conexao()
+            todos_itens = bd.listar_itens_lista(_conn)
+            _conn.close()
+        except Exception as _err_lista:
+            aviso_banco = f"Não foi possível carregar as listas: {_err_lista}"
+    else:
+        aviso_banco = "Banco de dados indisponível."
+
+    # ── Agrupa os itens por tipo ──────────────────────────────────────────────
+    # Monta um dicionário tipo → lista_de_itens
+    grupos = {t: [] for t in bd.ORDEM_TIPOS_LISTA}
+    for item in todos_itens:
+        t = item["tipo"]
+        if t in grupos:
+            grupos[t].append(item)
+
+    # ── Monta os blocos HTML de cada grupo ────────────────────────────────────
+    blocos_grupos = ""
+    for tipo in bd.ORDEM_TIPOS_LISTA:
+        rotulo = bd.ROTULOS_LISTA_CONTEXTO[tipo]
+        itens_do_tipo = grupos[tipo]
+        total = len(itens_do_tipo)
+
+        # Monta as linhas da tabela deste grupo
+        if itens_do_tipo:
+            linhas_tipo = ""
+            for item in itens_do_tipo:
+                ativo = item["ativo"]
+
+                # Estilo da linha: "apagadinha" quando inativo
+                estilo_linha = "" if ativo else "opacity:0.5"
+
+                # Selo "inativo" e botão que alterna o estado
+                if ativo:
+                    selo = ""
+                    botao_ativo = (
+                        f'<form action="/listas/{item["id"]}/ativo" method="post" style="margin:0">'
+                        '<button type="submit" name="ativo" value="0" '
+                        'style="background:#fff;border:1px solid #ced4da;color:#c0392b;'
+                        'border-radius:5px;padding:3px 10px;font-size:0.82em;cursor:pointer;'
+                        'font-family:inherit">Desativar</button>'
+                        '</form>'
+                    )
+                else:
+                    selo = ('<span style="background:#e9ecef;color:#6c757d;border-radius:4px;'
+                            'padding:1px 7px;font-size:0.74em;font-weight:600;margin-right:6px">'
+                            'inativo</span>')
+                    botao_ativo = (
+                        f'<form action="/listas/{item["id"]}/ativo" method="post" style="margin:0">'
+                        '<button type="submit" name="ativo" value="1" '
+                        'style="background:#1a1a2e;border:1px solid #1a1a2e;color:#fff;'
+                        'border-radius:5px;padding:3px 10px;font-size:0.82em;cursor:pointer;'
+                        'font-family:inherit">Ativar</button>'
+                        '</form>'
+                    )
+
+                # Botão excluir: disponível para todos os itens nesta fatia
+                # (chips ainda não conectados à ficha → nenhum item "em uso" ainda).
+                # O comentário abaixo lembra que o guard muda quando os chips entrarem.
+                valor_esc = _esc(item["valor"])
+                botao_excluir = (
+                    f'<form action="/listas/{item["id"]}/excluir" method="post" '
+                    f'style="margin:0" '
+                    f'onsubmit="return confirm(\'Excluir {valor_esc} de vez? Não tem volta.\')">'
+                    '<button type="submit" '
+                    'style="background:none;border:none;color:#adb5bd;font-size:0.82em;'
+                    'cursor:pointer;text-decoration:underline;font-family:inherit;padding:0">'
+                    'excluir</button>'
+                    '</form>'
+                )
+
+                linhas_tipo += f"""
+                <tr style="{estilo_linha}">
+                    <td style="font-weight:600">{selo}{valor_esc}</td>
+                    <td style="color:#adb5bd;font-size:0.82em">{_esc(item['criado_em'][:10])}</td>
+                    <td>
+                        <div style="display:flex;gap:10px;align-items:center">
+                            {botao_ativo}
+                            {botao_excluir}
+                        </div>
+                    </td>
+                </tr>"""
+        else:
+            linhas_tipo = """
+                <tr>
+                    <td colspan="3" style="text-align:center;color:#adb5bd;
+                                           padding:14px;font-size:0.85em">
+                        Nenhum item cadastrado ainda.
+                    </td>
+                </tr>"""
+
+        blocos_grupos += f"""
+        <div style="margin-bottom:28px">
+            <h3 style="font-size:0.92em;font-weight:700;color:#1a1a2e;margin-bottom:10px;
+                       display:flex;align-items:center;gap:10px">
+                {_esc(rotulo)}
+                <span style="background:#e9ecef;color:#6c757d;border-radius:12px;
+                             padding:1px 10px;font-size:0.82em;font-weight:700">
+                    {total}
+                </span>
+            </h3>
+            <table style="width:100%;border-collapse:collapse;background:#fff;
+                          border-radius:8px;overflow:hidden;
+                          box-shadow:0 1px 4px rgba(0,0,0,0.08);font-size:0.88em">
+                <thead>
+                    <tr>
+                        <th style="padding:8px 12px;text-align:left;background:#f8f9fa;
+                                   color:#6c757d;text-transform:uppercase;font-size:0.78em;
+                                   letter-spacing:0.4px;border-bottom:1px solid #dee2e6">
+                            Valor
+                        </th>
+                        <th style="padding:8px 12px;text-align:left;background:#f8f9fa;
+                                   color:#6c757d;text-transform:uppercase;font-size:0.78em;
+                                   letter-spacing:0.4px;border-bottom:1px solid #dee2e6;
+                                   width:110px">
+                            Criado em
+                        </th>
+                        <th style="padding:8px 12px;text-align:left;background:#f8f9fa;
+                                   color:#6c757d;text-transform:uppercase;font-size:0.78em;
+                                   letter-spacing:0.4px;border-bottom:1px solid #dee2e6;
+                                   width:180px">
+                            Ação
+                        </th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {linhas_tipo}
+                </tbody>
+            </table>
+        </div>"""
+
+    # ── Bloco de erro (POST com problema) ─────────────────────────────────────
+    bloco_erro = ""
+    if erro:
+        bloco_erro = f"""
+        <div style="background:#fdecea;border:1px solid #f5c6cb;color:#c0392b;
+                    border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:0.9em">
+            <strong>Erro:</strong> {_esc(erro)}
+        </div>"""
+
+    # ── Bloco de aviso de banco ────────────────────────────────────────────────
+    bloco_aviso = ""
+    if aviso_banco:
+        bloco_aviso = f"""
+        <div style="background:#fff3cd;border:1px solid #ffc107;color:#856404;
+                    border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:0.9em">
+            {_esc(aviso_banco)}
+        </div>"""
+
+    # Monta as <option> do select de tipo no formulário de adição
+    opcoes_tipo = ""
+    for t in bd.ORDEM_TIPOS_LISTA:
+        sel = " selected" if t == tipo_digitado else ""
+        opcoes_tipo += f'<option value="{t}"{sel}>{bd.ROTULOS_LISTA_CONTEXTO[t]}</option>'
+
+    # ── Corpo da página ────────────────────────────────────────────────────────
+    corpo = f"""
+    <div style="display:grid;grid-template-columns:1fr 300px;gap:24px;align-items:start">
+
+        <!-- Listas agrupadas por tipo -->
+        <div>
+            <p style="color:#6c757d;font-size:0.9em;margin-bottom:20px;line-height:1.5">
+                Estas listas fornecem as opções de classificação da ficha de check-in
+                (palcos, marcas, pautas, serviços e tags). O profissional escolhe
+                da lista — nunca digita livremente. Itens desativados preservam o
+                histórico mas somem das próximas fichas.
+            </p>
+            {bloco_aviso}
+            {blocos_grupos}
+        </div>
+
+        <!-- Formulário de novo item -->
+        <div style="background:#fff;border-radius:8px;padding:20px 22px;
+                    box-shadow:0 1px 4px rgba(0,0,0,0.08);position:sticky;top:20px">
+            <h2 style="font-size:1em;font-weight:700;color:#1a1a2e;margin-bottom:16px">
+                Adicionar item
+            </h2>
+            {bloco_erro}
+            <form action="/listas" method="post">
+                <div style="margin-bottom:14px">
+                    <label style="display:block;font-size:0.85em;font-weight:600;
+                                  color:#495057;margin-bottom:5px">
+                        Tipo <span style="color:#c0392b">★</span>
+                    </label>
+                    <select name="tipo"
+                            style="width:100%;padding:9px 12px;border:1px solid #ced4da;
+                                   border-radius:6px;font-size:0.9em;font-family:inherit">
+                        <option value="">— escolha —</option>
+                        {opcoes_tipo}
+                    </select>
+                </div>
+
+                <div style="margin-bottom:18px">
+                    <label style="display:block;font-size:0.85em;font-weight:600;
+                                  color:#495057;margin-bottom:5px">
+                        Valor <span style="color:#c0392b">★</span>
+                    </label>
+                    <input type="text" name="valor"
+                           value="{_esc(valor_digitado)}"
+                           placeholder="Ex.: RedBull, Palco Principal"
+                           autocomplete="off"
+                           style="width:100%;padding:9px 12px;border:1px solid #ced4da;
+                                  border-radius:6px;font-size:0.9em;font-family:inherit">
+                    <p style="color:#adb5bd;font-size:0.78em;margin-top:5px">
+                        Aparece como opção na ficha de check-in.
+                    </p>
+                </div>
+
+                <button type="submit"
+                        style="width:100%;background:#1a1a2e;color:#fff;border:none;
+                               border-radius:6px;padding:10px;font-weight:700;
+                               font-size:0.9em;cursor:pointer;letter-spacing:0.3px">
+                    Adicionar
+                </button>
+            </form>
+
+            <p style="color:#adb5bd;font-size:0.78em;margin-top:18px;line-height:1.5">
+                Itens desativados somem das fichas mas ficam no banco (proteção do
+                histórico). Para remover de vez, use o botão "excluir" na linha.
+                Enquanto a ficha nao registra chips selecionados, qualquer item
+                pode ser excluido — quando essa integracao for construida, itens
+                usados em fichas anteriores passarao a ser protegidos.
+            </p>
+        </div>
+    </div>"""
+
+    return _pagina("Listas de Contexto", "listas", corpo)
 
 
 # ── TRATAMENTO DE ERROS GLOBAIS ───────────────────────────────────────────────

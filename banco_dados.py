@@ -589,6 +589,11 @@ def inicializar_banco():
     # não existir. Guarda nome + tipos de material + letra sequencial imutável.
     migrar_schema_profissionais(conn)
 
+    # Migração incremental: cria a tabela listas_contexto (Gestão de Listas) se
+    # ainda não existir. Guarda as opções de classificação dinâmicas do evento
+    # (palco, marca, pauta, serviço, tag) geridas pelo operador.
+    migrar_schema_listas_contexto(conn)
+
     return conn
 
 
@@ -1869,6 +1874,242 @@ def camera_do_profissional(conn, nome):
         (nome,),
     ).fetchone()
     return row[0] if row else None
+
+
+# ── LISTAS DE CONTEXTO (Classificação dinâmica por evento) ───────────────────
+#
+# As opções de classificação da ficha (palco, marca, serviço, pauta, tags) são
+# geridas aqui pelo operador. Ele cria/ativa/desativa itens durante o evento;
+# a ficha lê em tempo real apenas os itens ativos.
+#
+# Tabela: listas_contexto
+#   tipo  : categoria do item — conjunto fixo: palco, marca, pauta, servico, tag
+#   valor : o texto do item (ex: "RedBull", "Palco Principal")
+#   ativo : 1 = aparece na ficha / 0 = desativado (soft-delete, preserva histórico)
+#   ordem : inteiro para ordenação manual (não implementada na ficha ainda; default 0)
+#
+# Padrão idêntico ao de profissionais:
+#   - Soft-delete via campo `ativo` (desativar é reversível)
+#   - Excluir definitivo SÓ se o item não estiver "em uso"
+#   - Unicidade: não permite dois itens com o mesmo (tipo, valor)
+#
+# NOTA FUTURA: quando os chips entrarem na ficha (fatia futura), a coluna
+# "em_uso" passará a verificar se o item aparece em formulários. Por ora,
+# a verificação sempre retorna "não em uso" — o guard já existe, mas é
+# "transparente" até a integração com a ficha ser construída.
+
+# Tipos válidos de lista. Conjunto fixo nesta fatia — extensível no futuro.
+TIPOS_LISTA_CONTEXTO = {"palco", "marca", "pauta", "servico", "tag"}
+
+# Rótulos legíveis para exibição na aba Listas.
+ROTULOS_LISTA_CONTEXTO = {
+    "palco":   "Palcos",
+    "marca":   "Marcas",
+    "pauta":   "Pautas",
+    "servico": "Serviços",
+    "tag":     "Tags",
+}
+
+# Ordem de exibição na aba Listas (a mesma descrita no briefing).
+ORDEM_TIPOS_LISTA = ["palco", "marca", "pauta", "servico", "tag"]
+
+
+def migrar_schema_listas_contexto(conn):
+    """
+    Cria a tabela `listas_contexto` se ainda não existir.
+
+    Usa CREATE TABLE IF NOT EXISTS — não-destrutivo. Seguro chamar
+    quantas vezes quiser em bancos existentes. Bancos novos também
+    recebem a tabela via inicializar_banco() que chama esta função.
+
+    Unicidade: (tipo, valor) — o mesmo palco não pode ser cadastrado
+    duas vezes, mas o mesmo valor pode existir em tipos diferentes
+    (ex: "Sala VIP" como palco e como tag não colide).
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS listas_contexto (
+            -- Identificador único gerado automaticamente
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            -- Categoria do item: palco | marca | pauta | servico | tag
+            tipo       TEXT NOT NULL,
+
+            -- Texto do item (ex: "RedBull", "Palco Principal")
+            valor      TEXT NOT NULL,
+
+            -- 1 = ativo (aparece na ficha) / 0 = desativado (soft-delete)
+            ativo      INTEGER NOT NULL DEFAULT 1,
+
+            -- Ordem de exibição manual (reservado para uso futuro; default 0)
+            ordem      INTEGER NOT NULL DEFAULT 0,
+
+            -- Timestamp de criação (nunca editado após inserção)
+            criado_em  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+
+            -- Um mesmo (tipo + valor) não pode aparecer duas vezes
+            UNIQUE(tipo, valor)
+        )
+    """)
+    conn.commit()
+
+
+def adicionar_item_lista(conn, tipo, valor):
+    """
+    Adiciona um item novo à tabela listas_contexto.
+
+    Args:
+        conn:  conexão SQLite aberta.
+        tipo:  categoria do item (ex: "palco"). Deve estar em TIPOS_LISTA_CONTEXTO.
+        valor: texto do item (ex: "Palco Principal").
+
+    Returns:
+        dict com id, tipo, valor, ativo, ordem, criado_em.
+
+    Raises:
+        ValueError: se o tipo for inválido ou o valor estiver vazio.
+        sqlite3.IntegrityError: se já existir (tipo, valor) idêntico.
+    """
+    tipo = (tipo or "").strip().lower()
+    if tipo not in TIPOS_LISTA_CONTEXTO:
+        raise ValueError(
+            f"Tipo '{tipo}' inválido. Use: {', '.join(sorted(TIPOS_LISTA_CONTEXTO))}"
+        )
+
+    valor = (valor or "").strip()
+    if not valor:
+        raise ValueError("O valor não pode ser vazio.")
+
+    conn.execute(
+        "INSERT INTO listas_contexto (tipo, valor) VALUES (?, ?)",
+        (tipo, valor),
+    )
+    conn.commit()
+
+    row = conn.execute(
+        "SELECT id, tipo, valor, ativo, ordem, criado_em "
+        "FROM listas_contexto WHERE tipo = ? AND valor = ?",
+        (tipo, valor),
+    ).fetchone()
+
+    return {
+        "id":        row[0],
+        "tipo":      row[1],
+        "valor":     row[2],
+        "ativo":     bool(row[3]),
+        "ordem":     row[4],
+        "criado_em": row[5],
+    }
+
+
+def listar_itens_lista(conn, tipo=None, apenas_ativos=False):
+    """
+    Retorna itens da tabela listas_contexto, agrupáveis por tipo.
+
+    Args:
+        conn:         conexão SQLite aberta.
+        tipo:         filtra por tipo específico (ex: "palco"). None = todos.
+        apenas_ativos: True = só retorna ativos; False = retorna todos.
+
+    Returns:
+        Lista de dicts com id, tipo, valor, ativo, ordem, criado_em.
+        Ordenada por tipo (na ordem de ORDEM_TIPOS_LISTA), depois por valor.
+    """
+    condicoes = []
+    params = []
+
+    if tipo is not None:
+        condicoes.append("tipo = ?")
+        params.append(tipo)
+
+    if apenas_ativos:
+        condicoes.append("ativo = 1")
+
+    where = (" WHERE " + " AND ".join(condicoes)) if condicoes else ""
+    sql = f"SELECT id, tipo, valor, ativo, ordem, criado_em FROM listas_contexto{where} ORDER BY tipo, valor"
+
+    rows = conn.execute(sql, params).fetchall()
+
+    return [
+        {
+            "id":        r[0],
+            "tipo":      r[1],
+            "valor":     r[2],
+            "ativo":     bool(r[3]),
+            "ordem":     r[4],
+            "criado_em": r[5],
+        }
+        for r in rows
+    ]
+
+
+def definir_ativo_item_lista(conn, item_id, ativo):
+    """
+    Ativa (ativo=True) ou desativa (ativo=False) um item — soft-delete.
+
+    Desativar NÃO apaga o registro: o item apenas para de aparecer nas
+    seleções da ficha. Reativar traz de volta. O histórico é preservado.
+
+    Args:
+        conn:    conexão SQLite aberta.
+        item_id: id do item.
+        ativo:   True (ativar) ou False (desativar).
+
+    Returns:
+        True se algum registro foi alterado; False se o id não existe.
+    """
+    cursor = conn.execute(
+        "UPDATE listas_contexto SET ativo = ? WHERE id = ?",
+        (int(bool(ativo)), item_id),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def itens_lista_em_uso(conn):
+    """
+    Devolve o conjunto de ids de itens que estão referenciados por fichas.
+
+    NOTA: Nesta fatia, os chips ainda NÃO foram conectados à ficha — a ficha
+    não armazena quais itens de lista foram selecionados. Por isso, esta função
+    sempre devolve um conjunto vazio. O guard já existe para quando a integração
+    com a ficha for construída (fatia futura): basta adicionar aqui a consulta
+    na tabela que registrar os chips escolhidos por formulário.
+    """
+    # TODO (fatia futura): quando os chips entrarem na ficha, implementar o JOIN
+    # entre listas_contexto e a tabela que guardar as seleções por formulário.
+    # Ex: SELECT DISTINCT item_id FROM formularios_chips
+    return set()  # por ora, nenhum item está "em uso"
+
+
+def excluir_item_lista(conn, item_id):
+    """
+    Exclui um item DEFINITIVAMENTE — só se não estiver em uso por fichas.
+
+    Princípio 2 do projeto: nunca destruir o que está em uso. Para tirar
+    de circulação um item que já aparece em fichas, use
+    `definir_ativo_item_lista` (desativar — reversível).
+
+    Returns:
+        "excluido"    — apagado com sucesso.
+        "em_uso"      — recusado: o item aparece em ao menos uma ficha.
+        "inexistente" — não havia item com esse id.
+    """
+    row = conn.execute(
+        "SELECT id FROM listas_contexto WHERE id = ?", (item_id,)
+    ).fetchone()
+
+    if row is None:
+        return "inexistente"
+
+    # Verifica se o item está em uso por alguma ficha.
+    # Por ora este conjunto sempre é vazio (ver itens_lista_em_uso).
+    em_uso = itens_lista_em_uso(conn)
+    if item_id in em_uso:
+        return "em_uso"
+
+    conn.execute("DELETE FROM listas_contexto WHERE id = ?", (item_id,))
+    conn.commit()
+    return "excluido"
 
 
 # ── PONTO DE ENTRADA (INICIALIZAÇÃO DIRETA) ───────────────────────────────────
