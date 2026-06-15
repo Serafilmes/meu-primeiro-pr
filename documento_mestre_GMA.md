@@ -3,9 +3,36 @@
 
 > Documento de arquitetura e estado do projeto. Serve como contexto completo para
 > continuar o desenvolvimento (inclusive em sessões do Claude Code).
-> Última atualização: 2026-06-15 (sessão 27 — BUILD: Fatias 1+2 da Nova Ficha v2. Tabela `profissionais` (nome + booleanos foto/áudio/vídeo + letra sequencial imutável) em `banco_dados.py`, com migração não-destrutiva `migrar_schema_profissionais`; rota `/profissionais` (cadastro + lista + aba) em `flask_gma.py`. Testado via test client Flask, 13/13 incluindo bloqueio de acesso remoto (403).)
+> Última atualização: 2026-06-15 (sessão 28 — BUILD: Fatia 3 da Nova Ficha v2 (TIPO em caixinhas multi-seleção + NOME em dropdown fechado filtrado por tipo, com 2º dropdown de áudio); ativar/desativar profissional (soft-delete, coluna `ativo`) e excluir definitivo só de sobra real (nome sem nenhuma ficha); decisão de conceito da "fonte de material" (PGM/online) e da origem cartão×pasta satélite — `desenho_nova_ficha_v2_GMA.md` §12. Commit `bc904bb`.)
 
 ## Estado atual (2026-06-15)
+
+**✅ Sessão 28 (2026-06-15) — BUILD: Fatia 3 + gestão de profissionais (ativar/desativar/excluir):**
+
+Sessão de **build** conduzida pelo orquestrador, sobre `flask_gma.py` e `banco_dados.py`.
+
+- **Fatia 3 — ficha (`flask_gma.py`, `_bloco_tipo_nome_ficha` + `_profissionais_para_ficha`):** o
+  campo TIPO virou **caixinhas multi-seleção** (Foto/Áudio/Vídeo) e o NOME virou **dropdown fechado**
+  filtrado pelo tipo marcado (sem digitação livre). Foto/Vídeo + Áudio → **2 dropdowns** (o 2º é o
+  nome do áudio, normalmente outra pessoa). JavaScript roda offline no navegador. O envio fica
+  **compatível com o backend atual** via campos hidden (`tipo_material` tipo "FOTO+AUDIO", `nome`,
+  `nome_audio`) — **gravar a forma nova de verdade é a Fatia 5.** O campo Câmera segue intacto (Fatia 4).
+- **Ativar/Desativar (soft-delete):** coluna `ativo` em `profissionais` (migração não-destrutiva);
+  `definir_ativo_profissional`; `listar_profissionais(apenas_ativos=)`. A ficha carrega **só ativos**;
+  `/profissionais` lista todos com botão Desativar/Ativar; a letra não muda ao desativar.
+- **Excluir definitivo:** `excluir_profissional` + `nomes_em_uso`; rota `/profissionais/<id>/excluir`.
+  Só exclui **sobra real** — nome que **não aparece em nenhuma ficha** (`formularios.nome`). Em uso →
+  recusa e orienta a desativar. Princípio 2 (não destruir o que está em uso); confirmação no front.
+- **Conceito (decisão, não construído):** a aba é uma **fonte/origem de material** — quase sempre uma
+  pessoa, mas pode ser um feed/sistema (PGM, online), gerido pelo operador. A **origem do material**
+  (`cartão de memória` × `pasta satélite/link`) **mora no cadastro** (padrão, útil p/ fontes
+  sempre-online) **mas funciona no check-in** (escolha por entrega, sobrescreve o padrão). Encaixe:
+  `copiador.py` (C2) copia de **um caminho** — "via link" = apontar p/ a pasta satélite; localização da
+  pasta = C5. Documentado em `desenho_nova_ficha_v2_GMA.md` §12.
+- **Operação Flask:** servidor em `127.0.0.1:5050`, **sem reload automático** (parar/subir após editar);
+  matar com `pkill -f "flask_gma.py"` (o padrão "python3 ..." não casa — processo roda com caminho cheio).
+- **Próximo passo:** Fatia 4 — câmera vem do Leitor (não se digita); depois Fatia 5 (gravar a forma
+  nova: multi-tipo + 2 nomes). Origem do material (cartão × pasta satélite) = fatia futura.
 
 **✅ Sessão 27 (2026-06-15) — BUILD: Fatias 1 e 2 da Nova Ficha v2:**
 

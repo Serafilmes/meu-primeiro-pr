@@ -9,7 +9,7 @@
 > O sistema guarda o dado em um lugar só; as telas são jeitos diferentes de LER
 > esse mesmo dado. Nada diverge.
 >
-> Última atualização: 2026-06-15 (sessão 26 — Passo 2 do Matcher APROVADO no teste ponta a ponta com o sistema inteiro no ar; produto OK, 3 ajustes no script de teste; nota da letra sequencial por profissional para as câmeras de identificação, em `desenho_nova_ficha_v2_GMA.md` §5.1)
+> Última atualização: 2026-06-15 (sessão 28 — BUILD da Nova Ficha v2 chegou na Fatia 3: TIPO em caixinhas + NOME em dropdown fechado filtrado; aba Profissionais ganhou ativar/desativar (some dos dropdowns sem perder a letra) e excluir só de sobra real; decidido que a aba é "fonte de material" (pode ser PGM/online) e a origem cartão×pasta satélite mora no cadastro mas funciona no check-in — `desenho_nova_ficha_v2_GMA.md` §12. Commit `bc904bb`.)
 
 ---
 
@@ -26,6 +26,9 @@ ANDAR                                       PROGRESSO
         └─ Matcher seguro + perfil que aprende cada pessoa
         └─ ficha PRÓPRIA no GMA (gabarito + edição) · online c/ senha · QR
         └─ NOVO: cartão SEM MÍDIA tratado em 2 níveis (ignora × chama operador)
+        └─ Nova Ficha v2 em build: Fatias 1-3 ✅ (aba Profissionais com
+           ativar/desativar/excluir; TIPO em caixinhas + NOME dropdown fechado).
+           Falta Fatia 4 (câmera vem do Leitor) e 5 (gravar multi-tipo + 2 nomes)
 2 · Transferência (copiar com segurança)    ████████████  PRONTO ✅
 3 · Banco de dados (guardar tudo)           ██████████░░  QUASE
                                                           (Kanban + Planilha no ar; falta Google Sheets real)
@@ -204,7 +207,12 @@ Nenhuma decisão foi à toa. Cada uma resolveu um problema que apareceu
            🔶 NOTA: cada profissional cadastrado ganha uma LETRA (A,B,C…) p/ as câmeras
               de identificação — pista visual, NUNCA autoridade de identidade
               (a "câmera B" do set pode não ser a B). Em desenho_nova_ficha_v2 §5.1
+           🔶 NOTA (sessão 28): a aba "Profissionais" é, na verdade, uma FONTE DE
+              MATERIAL — quase sempre uma pessoa, mas pode ser um feed/sistema (PGM,
+              online), gerido pelo operador. A origem (cartão × pasta satélite/link)
+              mora no cadastro mas funciona no check-in. Em desenho_nova_ficha_v2 §12
            💾 Commitado (sessão 26): teste + nota da ficha
+           💾 Commitado (sessão 28): Fatia 3 + ativar/desativar/excluir profissional + §12
 ```
 
 ---
