@@ -263,7 +263,7 @@ Outros já mapeados (dívidas que a C5 deve carregar):
 ## 8. Princípio de migração (segurança)
 
 - A pasta `/Users/serafa/GMA/` (laboratório) fica **intocada** durante toda a migração —
-  protótipo validado + documento mestre + organograma.
+  protótipo validado + contexto atual + arquitetura + organograma.
 - O produto nasce na pasta nova (`GMA-TESTE`), **copiando camada por camada**, com refatoração e
   testes.
 - **Nada que funciona é apagado** até o produto estar provado tão robusto quanto o protótipo.

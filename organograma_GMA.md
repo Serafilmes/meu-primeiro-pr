@@ -3,7 +3,7 @@
 
 > Este é o **mapa do processo**. Sempre que bater a sensação de "estou perdido,
 > o que já fizemos?", abra este arquivo: ele mostra o quadro inteiro de uma vez.
-> Para os detalhes técnicos e o histórico completo, ver `documento_mestre_GMA.md`.
+> Para os detalhes técnicos, ver `arquitetura_GMA.md`; para o histórico completo, `historico_GMA.md`.
 >
 > Princípio central de tudo: **UMA fonte de verdade → TRÊS vistas.**
 > O sistema guarda o dado em um lugar só; as telas são jeitos diferentes de LER
@@ -287,7 +287,7 @@ Em ordem de impacto:
    ficou abaixo do esperado (sem padrão, layout fraco). Definir logo, paleta,
    tipografia e grid ANTES de refazer o PDF, pra ele nascer bonito e consistente.
 2. 📄 **PDF Overview** — refazer o gerador no estilo dashboard + folha de contato
-   (briefing pronto na §13.4 do documento mestre, material de teste já gerado),
+   (briefing pronto na §12 do `arquitetura_GMA.md`, material de teste já gerado),
    já aplicando o padrão visual do andar 7.
 3. 🔌 **Ligar frames + PDF ao fluxo automático** — hoje o extrator de frames roda
    à mão depois da cópia; falta plugá-lo dentro da transferência.
@@ -542,4 +542,4 @@ vitrine espelhada, nunca o operacional.
 | Offline-first | Funciona sem internet; nuvem só sincroniza depois |
 | Fonte única de verdade | Um banco alimenta todas as telas — nada diverge |
 
-> Para a arquitetura completa, decisões e estado detalhado, ver `documento_mestre_GMA.md`.
+> Para a arquitetura completa e specs, ver `arquitetura_GMA.md`; para o estado e o histórico, `contexto_atual_GMA.md` e `historico_GMA.md`.

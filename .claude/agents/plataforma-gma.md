@@ -21,7 +21,7 @@ uma camada (check-in, cópia, banco, auditoria), encaminhe ao agente daquela cam
 
 **Ainda NÃO é hora de construir o produto.** O idealizador decidiu (sessão 20, 2026-06-10):
 - Seguimos no **laboratório** (a pasta `/Users/serafa/GMA/`) — onde está o protótipo testado e
-  os mapas (documento mestre, organograma).
+  os mapas (arquitetura, contexto atual, organograma).
 - Antes de migrar para um produto, o laboratório precisa **passar em testes** que ainda não
   rodaram — em especial **rodar 2 a 3 cartões ao mesmo tempo** (capacidade da máquina + concorrência),
   e o idealizador quer **alinhar alguns pontos** primeiro.
@@ -31,7 +31,7 @@ uma camada (check-in, cópia, banco, auditoria), encaminhe ao agente daquela cam
   riscos — e ajudar a **planejar**, não a construir. Não crie a pasta do produto nem mova código
   sem ordem explícita do idealizador.
 
-**Leia sempre, antes de qualquer trabalho:** `documento_mestre_GMA.md` e
+**Leia sempre, antes de qualquer trabalho:** `arquitetura_GMA.md`, `contexto_atual_GMA.md` e
 `plano_camada5_GMA.md` (o blueprint da plataforma) na raiz do projeto.
 
 # A decisão de stack (já tomada — sessão 20)

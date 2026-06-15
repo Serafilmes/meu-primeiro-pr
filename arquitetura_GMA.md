@@ -196,7 +196,7 @@ Fluxo **totalmente automático:**
 ├── contadores/              ← <NOME>.json: próximo nº por profissional
 ├── logs/                    ← porteiro · leitor · flask · matcher · transferencia · copiador
 ├── TESTE LOGAGEM/           ← destino de teste local
-├── documento_mestre_GMA.md  ← arquivo original (referência histórica)
+├── _arquivo/                ← documento_mestre_GMA.md (congelado, referência histórica)
 ├── organograma_GMA.md       ← mapa visual do projeto
 ├── contexto_atual_GMA.md    ← estado atual + próximos passos (CARREGAR SEMPRE)
 ├── arquitetura_GMA.md       ← este arquivo (CARREGAR SEMPRE)

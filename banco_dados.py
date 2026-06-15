@@ -321,7 +321,7 @@ def inicializar_banco():
         #   - Camada 2 (copiador.py) → campos de integridade
         #
         # É o que alimenta as 3 telas (Acessos 1–3) e os 3 relatórios
-        # (TXT/CSV/PDF), conforme spec §13.2 do documento mestre.
+        # (TXT/CSV/PDF), conforme spec §12 do arquitetura_GMA.md.
         #
         # Os campos de mídia (codec, resolucao, etc.) podem ficar NULL até que
         # a Camada 1 enriqueça o arquivo com ffprobe/exiftool — isso acontece

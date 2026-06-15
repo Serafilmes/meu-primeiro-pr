@@ -85,7 +85,9 @@ telas de gestão ficam restritas à máquina da base.
 
 ## Onde ler mais
 
-- **`documento_mestre_GMA.md`** — arquitetura completa, decisões e histórico de cada sessão.
+- **`contexto_atual_GMA.md`** — estado atual e próximos passos (a fonte viva do dia a dia).
+- **`arquitetura_GMA.md`** — referência técnica estável: camadas, fluxo, specs.
+- **`historico_GMA.md`** — log sessão a sessão.
 - **`organograma_GMA.md`** — o "Mapa Vivo": onde estamos, o que fizemos e para onde vamos, em
   linguagem de set.
 - **`plano_camada5_GMA.md`** — o blueprint da plataforma (Camada 5).

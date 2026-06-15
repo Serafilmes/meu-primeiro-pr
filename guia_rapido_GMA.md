@@ -28,7 +28,7 @@ A sessão que abrir é o seu **orquestrador**. Ele lê o `CLAUDE.md` automaticam
 
 Cole algo assim para o orquestrador se situar antes de agir:
 
-> "Leia o documento mestre e me diga, com suas palavras, o estado atual do projeto e
+> "Leia o contexto atual e a arquitetura e me diga, com suas palavras, o estado atual do projeto e
 > qual deve ser o próximo passo. Não escreva código ainda — quero alinhar o plano primeiro."
 
 Depois de concordar no plano:
@@ -40,7 +40,7 @@ Depois de concordar no plano:
 1. **Alinhar** — o orquestrador propõe um plano curto, você confirma.
 2. **Executar** — o orquestrador ou o subagente faz o trabalho.
 3. **Testar** — você roda o comando que ele te passar e confere o resultado.
-4. **Registrar** — peça para atualizar o `documento_mestre_GMA.md` com o que mudou.
+4. **Registrar** — peça para atualizar o `contexto_atual_GMA.md` (e o `historico_GMA.md`) com o que mudou.
 5. **Salvar** — antes de fechar, peça "faça um commit" (salva um ponto de restauração).
 
 Regra de ouro: **um objetivo por sessão, sempre terminando com algo funcionando.**
@@ -57,7 +57,9 @@ Regra de ouro: **um objetivo por sessão, sempre terminando com algo funcionando
 | Arquivo | Função |
 |---|---|
 | `CLAUDE.md` | Instruções do orquestrador (lido automaticamente) |
-| `documento_mestre_GMA.md` | Arquitetura, decisões e estado do projeto |
+| `contexto_atual_GMA.md` | Estado atual e próximos passos (fonte viva) |
+| `arquitetura_GMA.md` | Referência técnica estável (camadas, fluxo, specs) |
+| `historico_GMA.md` | Log sessão a sessão |
 | `.claude/agents/checkin-gma.md` | Subagente da Camada 1 (check-in) |
 | `ler_cartao.py` | Leitura e classificação de cartão |
 | `gma_correcao.py` | Correção de registros com auditoria |

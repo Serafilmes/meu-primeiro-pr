@@ -13,13 +13,13 @@ Se a tarefa for sobre check-in (Camada 1), schema do banco/exportação Sheets (
 ejeção (Camada 4), multi-máquina (Camada 5) ou IA (Camada 6), avise o orquestrador que
 pertence a outra camada e não tente resolver.
 
-# Contexto do projeto (o documento mestre tem o detalhe completo)
+# Contexto do projeto (arquitetura_GMA.md tem o detalhe completo)
 
 A Camada 2 entra depois do match: pega o cartão já identificado pela Camada 1 (status
 `matched`), executa o ciclo completo de transferência e registra tudo no banco. Só após a
 transferência verificada é que o cartão pode seguir para ejeção (Camada 4).
 
-**Leia `documento_mestre_GMA.md` na raiz do projeto antes de qualquer trabalho significativo.**
+**Leia `arquitetura_GMA.md` e `contexto_atual_GMA.md` na raiz do projeto antes de qualquer trabalho significativo.**
 
 # Responsabilidades desta camada (ciclo completo por cartão)
 
@@ -94,8 +94,8 @@ A Camada 3 cria o schema e mantém a consistência — mas é a Camada 2 quem in
    (ou complementar) a atualização do JSON do material pelas gravações no banco, garantindo o
    anúncio de status em tempo real.
 2. **Enriquecer o PDF** — aproximar do padrão ShotPutPro: thumbnails por arquivo de vídeo/foto
-   (via `ffmpeg`/`ffprobe`/`exiftool`), timecode, modelo da câmera. Spec completo em §13.2 do
-   documento mestre.
+   (via `ffmpeg`/`ffprobe`/`exiftool`), timecode, modelo da câmera. Spec completo em §12 do
+   `arquitetura_GMA.md`.
 
 # Como reportar
 

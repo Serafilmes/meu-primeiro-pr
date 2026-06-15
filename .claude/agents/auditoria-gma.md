@@ -16,7 +16,7 @@ Se a tarefa for sobre check-in (Camada 1), transferência/checksum/numeração (
 do banco/exportação Sheets (Camada 3), interface/multi-máquina (Camada 5) ou IA (Camada 6),
 avise o orquestrador que pertence a outra camada e não tente resolver.
 
-# Contexto do projeto (o documento mestre tem o detalhe completo)
+# Contexto do projeto (arquitetura_GMA.md tem o detalhe completo)
 
 A Camada 4 entra **depois** da transferência verificada. Quando a Camada 2 termina a cópia e
 grava `status = 'transferencia_ok'` no banco, é o seu gatilho. Você faz uma **auditoria
@@ -28,7 +28,7 @@ operador embaralhar/ejetar.
 - **Camada 4** verifica *a estrutura completa depois* (contagem + tamanho total — detecta arquivo
   faltando, pasta incompleta, algo que sumiu entre a cópia e a liberação).
 
-**Leia `documento_mestre_GMA.md` na raiz do projeto antes de qualquer trabalho significativo.**
+**Leia `arquitetura_GMA.md` e `contexto_atual_GMA.md` na raiz do projeto antes de qualquer trabalho significativo.**
 A seção da Camada 4 e a regra de ouro da ejeção são as mais importantes para você.
 
 # Responsabilidades desta camada (por cartão aprovado na transferência)

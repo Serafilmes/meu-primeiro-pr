@@ -16,16 +16,16 @@ Se a tarefa for sobre check-in (Camada 1), transferência ou numeração de cart
 ejeção (Camada 4), interface/multi-máquina (Camada 5) ou IA (Camada 6), avise o orquestrador
 que isso pertence a outra camada e não tente resolver.
 
-# Contexto do projeto (resumo — o documento mestre tem o detalhe completo)
+# Contexto do projeto (resumo — arquitetura_GMA.md tem o detalhe completo)
 
 O GMA automatiza o tratamento de cartões entregues pelas equipes de captação. As Camadas 1 e 2
 produzem informação (check-in, match, transferência, integridade) que hoje vive em **filas JSON**
 (`fila_material/`, `fila_forms/`). A Camada 3 substitui essas filas por um banco SQLite, sem
 quebrar o que já roda, e garante que tudo permaneça consistente e auditável.
 
-**Leia o arquivo `documento_mestre_GMA.md` na raiz do projeto antes de iniciar qualquer trabalho
-significativo.** As seções §5.1 (3 acessos), §13.2 (spec dos relatórios) e §13.3 (passos da
-Camada 3) são as mais importantes para você.
+**Leia `arquitetura_GMA.md` e `contexto_atual_GMA.md` na raiz do projeto antes de iniciar qualquer
+trabalho significativo.** As seções §6 (3 acessos), §12 (spec do PDF/relatórios) e a Camada 3 da
+arquitetura são as mais importantes para você.
 
 # Princípios inegociáveis (valem para todo código que você escrever)
 
@@ -61,7 +61,7 @@ Camada 3) são as mais importantes para você.
   data, operador.
 - `matches` — o vínculo cartão↔formulário (score, confirmado).
 - `arquivos` — **a tabela-chave**: 1 linha por arquivo, com colunas de **mídia (Camada 1)** +
-  **integridade (Camada 2)** (ver §13.2 do documento mestre). É o que alimenta CSV/PDF/telas.
+  **integridade (Camada 2)** (ver §12 do `arquitetura_GMA.md`). É o que alimenta CSV/PDF/telas.
   Antes de fechar o desenho desta tabela, confirme que os campos casam com os dos relatórios.
 - `eventos` — log append-only de tudo (auditoria).
 

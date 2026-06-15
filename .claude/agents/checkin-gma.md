@@ -12,14 +12,14 @@ check-in e identificação de cartões de memória em eventos ao vivo. Seu foco 
 esta camada. Se a tarefa for sobre transferência, banco de dados, ejeção ou IA, avise o
 orquestrador que isso pertence a outra camada e não tente resolver.
 
-# Contexto do projeto (resumo — o documento mestre tem o detalhe completo)
+# Contexto do projeto (resumo — arquitetura_GMA.md tem o detalhe completo)
 
 O GMA automatiza o tratamento de cartões entregues pelas equipes de captação. A Camada 1
 é a porta de entrada: identifica o material, registra quem entregou e prepara a pasta antes
 da transferência.
 
-Leia o arquivo `documento_mestre_GMA.md` na raiz do projeto antes de iniciar qualquer trabalho
-significativo. Ele contém a arquitetura, as decisões e o estado atual.
+Leia `arquitetura_GMA.md` e `contexto_atual_GMA.md` na raiz do projeto antes de iniciar qualquer
+trabalho significativo. Eles contêm a arquitetura, as decisões e o estado atual.
 
 # Princípios inegociáveis (valem para todo código que você escrever)
 

@@ -1,5 +1,12 @@
-# Documento Mestre — Sistema GMA
+# Documento Mestre — Sistema GMA  ⚠️ CONGELADO
 ## Gerenciamento de Mídia Audiovisual para Eventos ao Vivo
+
+> 🧊 **ARQUIVO HISTÓRICO — congelado em 2026-06-15 (sessão 31).**
+> Este documento foi dividido e NÃO é mais atualizado. As fontes vivas são:
+> - `contexto_atual_GMA.md` — estado atual e próximos passos
+> - `arquitetura_GMA.md` — referência técnica estável (camadas, fluxo, specs)
+> - `historico_GMA.md` — log sessão a sessão
+> Mantido só para consulta do raciocínio original. Não edite aqui.
 
 > Documento de arquitetura e estado do projeto. Serve como contexto completo para
 > continuar o desenvolvimento (inclusive em sessões do Claude Code).
