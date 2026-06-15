@@ -449,10 +449,10 @@ def tentar_match():
                 # do formulário. NÃO altera o resultado do match — só registra
                 # para uso futuro na Fase 2 (desempatar matches ambíguos).
                 #
-                # TODO (Passo 2): quando existir confirmação manual de ambíguos,
-                # a rota POST que resolve o par também deverá chamar atualizar_perfil()
-                # aqui, para que perfis ambíguos confirmados pelo operador também
-                # alimentem o aprendizado.
+                # Passo 2 IMPLEMENTADO: a confirmação manual de empates também
+                # chama atualizar_perfil() — ver função confirmar_par_manual()
+                # neste mesmo arquivo. Matches automáticos e manuais alimentam
+                # o aprendizado pelo mesmo mecanismo.
                 try:
                     _assinatura = (
                         _dados_material_relido.get("assinatura")
@@ -518,6 +518,10 @@ def tentar_match():
     # confirmados na Fase 1 (não queremos marcar como ambíguo quem já foi casado).
     forms_ambiguos_marcados = set()     # controla quem já recebeu o status
     materiais_ambiguos_marcados = set()
+    # Sentinela SEPARADA para a persistência dos candidatos (Tarefa A do Passo 2).
+    # NÃO reutilizar 'materiais_ambiguos_marcados': ela já é preenchida ao marcar o
+    # JSON (logo acima), o que zeraria a condição e impediria registrar_candidatos().
+    materiais_candidatos_persistidos = set()
 
     for nome_form, nome_material, score, detalhes in pares_ambiguos:
         # Se algum dos dois já foi casado na Fase 1, ignora
@@ -585,13 +589,19 @@ def tentar_match():
             })
             forms_ambiguos_marcados.add(nome_form)
 
-        # ── Integração Camada 3: registra evento de match ambíguo no banco ────
+        # ── Integração Camada 3: registra evento de match ambíguo e persiste candidatos ──
         # Este bloco é ADITIVO — se o banco falhar, o fluxo JSON continua.
+        # O caso que interessa para a resolução do painel é:
+        #   1 cartão com N fichas candidatas (material_disputado).
+        # Nesse caso, persistimos os candidatos na tabela match_candidatos para que
+        # o Flask possa exibi-los no painel e o operador resolva com 1 clique.
         try:
             import banco_dados as _bd
             _db_cartao_id = dados_material.get("db_cartao_id")
             _db_formulario_id = dados_form.get("db_formulario_id")
             _conn_ambiguo = _bd.inicializar_banco()
+
+            # Registra evento de auditoria (sempre, mesmo sem IDs do banco)
             _bd.registrar_evento(
                 _conn_ambiguo,
                 tipo="match_ambiguo",
@@ -608,6 +618,64 @@ def tentar_match():
                     "nome_material": nome_material,
                 }
             )
+
+            # ── Persistência dos candidatos (Tarefa A do Passo 2) ─────────────
+            # Só persiste quando este material acaba de ser marcado como ambíguo
+            # (primeira vez que chegamos nele neste loop). Isso evita chamar
+            # registrar_candidatos() repetidamente para o mesmo cartão.
+            # A tabela match_candidatos usa INSERT OR IGNORE, então chamar mais
+            # de uma vez é inofensivo, mas desnecessário.
+            if nome_material not in materiais_candidatos_persistidos:
+                materiais_candidatos_persistidos.add(nome_material)
+                # Só persiste se temos o ID do cartão no banco
+                if _db_cartao_id:
+                    # Monta a lista de candidatos para este cartão:
+                    # cada candidato é uma ficha (formulário) que compete pelo mesmo material.
+                    # Precisamos do db_formulario_id de cada ficha — ele vem do JSON do form.
+                    candidatos_para_banco = []
+                    for (f_nome, m_nome), (s, d) in scores.items():
+                        if m_nome != nome_material:
+                            continue  # só candidatos deste cartão
+
+                        # Pega o ID do banco do formulário candidato
+                        _dados_form_candidato = mapa_forms.get(f_nome, {})
+                        _db_form_id_candidato = _dados_form_candidato.get("db_formulario_id")
+
+                        if not _db_form_id_candidato:
+                            # Sem ID no banco, este candidato não pode ser gravado na tabela
+                            logger.warning(
+                                f"BANCO | Candidato sem db_formulario_id — não gravado | "
+                                f"Form: {f_nome} | Material: {nome_material}"
+                            )
+                            continue
+
+                        candidatos_para_banco.append({
+                            "formulario_id": _db_form_id_candidato,
+                            "nome":          _dados_form_candidato.get("nome", ""),
+                            "camera_ficha":  _dados_form_candidato.get("camera"),
+                            "score":         s,
+                            "criterios":     d,
+                        })
+
+                    if candidatos_para_banco:
+                        _inseridos = _bd.registrar_candidatos(
+                            _conn_ambiguo, _db_cartao_id, candidatos_para_banco
+                        )
+                        logger.info(
+                            f"BANCO | Candidatos persistidos | Cartão: {_db_cartao_id} "
+                            f"| Inseridos: {_inseridos} | Total: {len(candidatos_para_banco)}"
+                        )
+                    else:
+                        logger.warning(
+                            f"BANCO | Nenhum candidato com ID válido para persistir "
+                            f"(material: {nome_material})"
+                        )
+                else:
+                    logger.warning(
+                        f"BANCO | db_cartao_id ausente — candidatos não persistidos "
+                        f"(fluxo JSON continua) | Material: {nome_material}"
+                    )
+
             _conn_ambiguo.close()
         except Exception as _err_bd:
             logger.error(
@@ -625,6 +693,241 @@ def tentar_match():
     )
 
     return matches_confirmados
+
+
+# ── CONFIRMAÇÃO MANUAL DE EMPATE (PASSO 2 DO MATCHER) ────────────────────────
+
+def confirmar_par_manual(cartao_id, nome_escolhido):
+    """
+    Resolve um empate de match manualmente, confirmando o par cartão ↔ profissional.
+
+    Esta função é chamada pelo Flask (flask_gma.py) quando o operador clica em
+    "Iniciar transferência" na tela de confirmação do empate.
+
+    Ela espelha o caminho automático de tentar_match(): basta marcar o JSON do
+    material como status="matched" para que a Camada 2 (Transferência) detecte
+    e inicie a cópia.
+
+    Parâmetros:
+      cartao_id      — ID do cartão no banco (int) — o db_cartao_id do JSON do material
+      nome_escolhido — nome do profissional escolhido pelo operador (ex: "JOAO")
+                       deve corresponder exatamente ao campo 'nome' do candidato
+
+    Retorna um dicionário:
+      Caso de sucesso:
+        {
+          "ok":            True,
+          "nome":          "JOAO",                    # profissional confirmado
+          "formulario_id": 3,                          # ID da ficha escolhida no banco
+          "material":      "material_20260614.json",   # nome do arquivo JSON do cartão
+          "descartados":   [5, 7]                      # IDs de fichas liberadas de volta
+        }
+
+      Caso de "já resolvido" (empate resolvido por outro processo antes deste clique):
+        {"ok": False, "motivo": "empate_ja_resolvido"}
+
+      Caso de erro (banco falhou, arquivo não encontrado, etc.):
+        {"ok": False, "motivo": "<descrição do erro>"}
+
+    Segurança:
+      A transferência SÓ é disparada (material marcado "matched") se a confirmação
+      no banco der certo (bd.confirmar_match retornar um resultado não-None).
+      Se o banco falhar ou retornar None, o material NÃO é marcado e nenhuma
+      cópia é iniciada.
+    """
+    logger = configurar_logger()
+
+    logger.info(
+        f"CONFIRMAÇÃO MANUAL | Iniciando | Cartão: {cartao_id} | Escolhido: {nome_escolhido}"
+    )
+
+    # ── Passo 1: abre conexão com o banco e confirma o empate atomicamente ────
+    try:
+        import banco_dados as bd
+        conn = bd.inicializar_banco()
+    except Exception as _err_conn:
+        _msg = f"falha_ao_abrir_banco: {_err_conn}"
+        logger.error(f"CONFIRMAÇÃO MANUAL | {_msg}")
+        return {"ok": False, "motivo": _msg}
+
+    try:
+        resultado = bd.confirmar_match(conn, cartao_id, nome_escolhido)
+    except Exception as _err_confirmar:
+        _msg = f"falha_ao_confirmar_match: {_err_confirmar}"
+        logger.error(f"CONFIRMAÇÃO MANUAL | {_msg}")
+        conn.close()
+        return {"ok": False, "motivo": _msg}
+
+    # Se resultado for None, o empate já foi resolvido (ou o nome não existia)
+    if resultado is None:
+        logger.info(
+            f"CONFIRMAÇÃO MANUAL | Empate já resolvido ou candidato não encontrado "
+            f"| Cartão: {cartao_id} | Nome: {nome_escolhido}"
+        )
+        conn.close()
+        return {"ok": False, "motivo": "empate_ja_resolvido"}
+
+    # A partir daqui, o banco já foi atualizado com sucesso.
+    # Agora sincronizamos os JSONs das filas para que a Camada 2 e o painel
+    # vejam o mesmo estado que o banco.
+
+    formulario_id_escolhido  = resultado["formulario_id"]
+    ids_descartados          = resultado["descartados"]
+
+    # ── Passo 2: localiza o JSON do material na fila_material/ ────────────────
+    # Percorre todos os JSONs da pasta procurando o que tem db_cartao_id == cartao_id.
+    nome_arquivo_material = None
+    dados_material        = None
+
+    if os.path.isdir(PASTA_FILA_MATERIAL):
+        for _nome in sorted(os.listdir(PASTA_FILA_MATERIAL)):
+            if not _nome.endswith(".json"):
+                continue
+            _caminho = os.path.join(PASTA_FILA_MATERIAL, _nome)
+            try:
+                with open(_caminho, "r", encoding="utf-8") as _f:
+                    _dados = json.load(_f)
+            except (OSError, json.JSONDecodeError):
+                continue
+            if _dados.get("db_cartao_id") == cartao_id:
+                nome_arquivo_material = _nome
+                dados_material        = _dados
+                break
+
+    if not nome_arquivo_material:
+        _msg = (
+            f"json_material_nao_encontrado: "
+            f"nenhum arquivo em fila_material/ com db_cartao_id={cartao_id}"
+        )
+        logger.error(f"CONFIRMAÇÃO MANUAL | {_msg}")
+        conn.close()
+        return {"ok": False, "motivo": _msg}
+
+    # ── Passo 3: localiza o JSON da ficha escolhida na fila_forms/ ───────────
+    # Percorre todos os JSONs da pasta procurando o que tem
+    # db_formulario_id == formulario_id_escolhido.
+    nome_arquivo_form_escolhido = None
+
+    if os.path.isdir(PASTA_FILA_FORMS):
+        for _nome in sorted(os.listdir(PASTA_FILA_FORMS)):
+            if not _nome.endswith(".json"):
+                continue
+            _caminho = os.path.join(PASTA_FILA_FORMS, _nome)
+            try:
+                with open(_caminho, "r", encoding="utf-8") as _f:
+                    _dados = json.load(_f)
+            except (OSError, json.JSONDecodeError):
+                continue
+            if _dados.get("db_formulario_id") == formulario_id_escolhido:
+                nome_arquivo_form_escolhido = _nome
+                break
+
+    # ── Passo 4: localiza os JSONs das fichas descartadas ────────────────────
+    # Cada ficha descartada precisa ter seu JSON atualizado de volta para
+    # "aguardando_match", para ficar disponível para o próximo cartão.
+    mapa_forms_descartados = {}  # {db_formulario_id: nome_do_arquivo_json}
+
+    if ids_descartados and os.path.isdir(PASTA_FILA_FORMS):
+        for _nome in sorted(os.listdir(PASTA_FILA_FORMS)):
+            if not _nome.endswith(".json"):
+                continue
+            _caminho = os.path.join(PASTA_FILA_FORMS, _nome)
+            try:
+                with open(_caminho, "r", encoding="utf-8") as _f:
+                    _dados = json.load(_f)
+            except (OSError, json.JSONDecodeError):
+                continue
+            _fid = _dados.get("db_formulario_id")
+            if _fid in ids_descartados:
+                mapa_forms_descartados[_fid] = _nome
+            # Para quando já encontrou todos
+            if len(mapa_forms_descartados) == len(ids_descartados):
+                break
+
+    # ── Passo 5: atualiza o JSON do material → status="matched" ──────────────
+    # Este é o gatilho que faz a Camada 2 (Transferência) iniciar a cópia.
+    # Só chegamos aqui porque bd.confirmar_match() deu certo — segurança garantida.
+    sucesso_material = atualizar_json(PASTA_FILA_MATERIAL, nome_arquivo_material, {
+        "status":     "matched",
+        "form_match": nome_arquivo_form_escolhido or nome_escolhido,
+    })
+
+    if not sucesso_material:
+        logger.error(
+            f"CONFIRMAÇÃO MANUAL | Falha ao atualizar JSON do material "
+            f"| Arquivo: {nome_arquivo_material}"
+        )
+        # Não revertemos o banco — o estado do banco é correto; o JSON é quem está para trás.
+        # O operador pode perceber pelo painel (status no banco está matched,
+        # JSON ainda não). Registramos como aviso e retornamos com o que temos.
+
+    # ── Passo 6: atualiza o JSON da ficha escolhida → status="matched" ───────
+    if nome_arquivo_form_escolhido:
+        atualizar_json(PASTA_FILA_FORMS, nome_arquivo_form_escolhido, {
+            "status":         "matched",
+            "material_match": nome_arquivo_material,
+        })
+    else:
+        logger.warning(
+            f"CONFIRMAÇÃO MANUAL | JSON da ficha escolhida não encontrado em fila_forms/ "
+            f"(db_formulario_id={formulario_id_escolhido}) — banco está correto, JSON não atualizado"
+        )
+
+    # ── Passo 7: devolve as fichas descartadas à fila ─────────────────────────
+    # Remove o material_match e volta status para "aguardando_match" para que
+    # a ficha possa casar com o próximo cartão do mesmo profissional.
+    for _fid, _nome_form in mapa_forms_descartados.items():
+        atualizar_json(PASTA_FILA_FORMS, _nome_form, {
+            "status":         "aguardando_match",
+            "material_match": None,   # limpa o vínculo que ficou do empate
+        })
+        logger.info(f"CONFIRMAÇÃO MANUAL | Ficha devolvida à fila | {_nome_form}")
+
+    # Avisa se alguma ficha descartada não foi encontrada no JSON
+    _fids_nao_encontrados = set(ids_descartados) - set(mapa_forms_descartados.keys())
+    for _fid in _fids_nao_encontrados:
+        logger.warning(
+            f"CONFIRMAÇÃO MANUAL | Ficha descartada não encontrada em fila_forms/ "
+            f"(db_formulario_id={_fid}) — banco liberado, JSON pendente"
+        )
+
+    # ── Passo 8: atualiza o perfil do profissional ────────────────────────────
+    # Fecha o TODO que existia nas linhas 452-455: a confirmação manual também
+    # alimenta o aprendizado de perfil, exatamente como o caminho automático faz.
+    try:
+        _assinatura = dados_material.get("assinatura") if dados_material else None
+        if _assinatura and nome_escolhido:
+            bd.atualizar_perfil(conn, nome_escolhido, _assinatura)
+            logger.info(
+                f"PERFIL | Assinatura aprendida (confirmação manual) | {nome_escolhido}"
+            )
+        else:
+            logger.info(
+                f"PERFIL | Sem assinatura no JSON do material — perfil não atualizado "
+                f"(assinatura={bool(_assinatura)}, nome={nome_escolhido})"
+            )
+    except Exception as _err_perfil:
+        logger.error(
+            f"PERFIL | Falha ao atualizar perfil na confirmação manual "
+            f"(fluxo continua) | {_err_perfil}"
+        )
+
+    conn.close()
+
+    logger.info(
+        f"CONFIRMAÇÃO MANUAL | Concluída | Cartão: {cartao_id} "
+        f"| Nome: {nome_escolhido} | Material JSON: {nome_arquivo_material} "
+        f"| Form escolhido: {nome_arquivo_form_escolhido} "
+        f"| Descartados: {ids_descartados}"
+    )
+
+    return {
+        "ok":            True,
+        "nome":          nome_escolhido,
+        "formulario_id": formulario_id_escolhido,
+        "material":      nome_arquivo_material,
+        "descartados":   ids_descartados,
+    }
 
 
 # ── FUNÇÃO SECUNDÁRIA: VERIFICAR ÓRFÃOS ───────────────────────────────────────

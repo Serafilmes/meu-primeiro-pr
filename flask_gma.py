@@ -761,37 +761,177 @@ def painel():
             f"</tr>"
         )
 
-    def linha_confirmacao(nome_arquivo, tipo, dados):
+    def _amostra_arquivos_material(dados_json):
         """
-        Gera uma linha <tr> para um item aguardando confirmacao humana.
+        Monta uma pista de 3-4 "nomes de arquivo" do cartão para o operador
+        reconhecer de quem é o material na tela de empate (desenho §2 — a pista
+        que desempata na prática de set).
 
-        tipo — "material" (cartao) ou "form" (formulario).
-        Mostra: nome do profissional, camera, tipo do item, quantidade de candidatos.
+        IMPORTANTE: o Leitor NÃO guarda a lista completa de nomes de arquivo no
+        JSON do material — ele guarda os RADICAIS dos arquivos dentro de
+        'assinatura.prefixos' (ex.: ['joe', 'joe0258T', 'joe0259T', ...]). O
+        primeiro costuma ser o radical comum genérico ('joe'); os seguintes são
+        os radicais de cada arquivo, que é justamente a pista útil. Caso um dia
+        o Leitor passe a gravar uma lista de nomes completos, também a usamos.
         """
-        # Campos variam conforme o tipo do item
-        if tipo == "form":
-            nome = dados.get("nome", "—")
-            camera = dados.get("camera", "—")
-            tipo_exibido = "Formulario"
-        else:
-            # Para material, o nome do profissional nao esta no JSON do material —
-            # usamos o nome do volume/cartao como referencia
-            nome = dados.get("nome", "—")
-            camera = dados.get("marca_camera") or "—"
-            tipo_exibido = "Material"
-
-        # Conta os candidatos listados no campo candidatos_match
-        candidatos = dados.get("candidatos_match") or []
-        qtd_candidatos = len(candidatos)
-
-        return (
-            f"<tr>"
-            f"<td>{nome}</td>"
-            f"<td>{camera}</td>"
-            f"<td>{tipo_exibido}</td>"
-            f"<td style='color:#c0392b;font-weight:600'>{qtd_candidatos} opcao(oes)</td>"
-            f"</tr>"
+        # 1) Se algum dia existir uma lista de nomes de arquivo de fato, use-a.
+        lista = (
+            dados_json.get("arquivos_midia")
+            or dados_json.get("arquivos")
+            or dados_json.get("lista_arquivos")
+            or []
         )
+        nomes = []
+        for item in lista[:4]:
+            if isinstance(item, str):
+                nomes.append(os.path.basename(item))
+            elif isinstance(item, dict):
+                # Formato alternativo: {"nome": "...", "tamanho": ...}
+                nomes.append(os.path.basename(item.get("nome", "") or ""))
+        nomes = [n for n in nomes if n]  # remove vazios
+        if nomes:
+            return " · ".join(nomes)
+
+        # 2) Fonte real hoje: os radicais dos arquivos na assinatura do cartão.
+        assinatura = dados_json.get("assinatura") or {}
+        prefixos = assinatura.get("prefixos") or []
+        # Prioriza os radicais que parecem nome de arquivo (têm dígitos),
+        # deixando de fora o radical comum genérico (ex.: 'joe').
+        especificos = [
+            p for p in prefixos
+            if isinstance(p, str) and any(caractere.isdigit() for caractere in p)
+        ]
+        if especificos:
+            return " · ".join(especificos[:4])
+        # Sem radicais específicos: mostra os primeiros prefixos que houver.
+        genericos = [p for p in prefixos if isinstance(p, str)][:4]
+        if genericos:
+            return " · ".join(genericos)
+
+        return "(sem amostra de arquivos)"
+
+    def bloco_confirmacao_cartao(nome_arquivo, tipo, dados):
+        """
+        Gera um bloco HTML completo para um cartão aguardando confirmacao humana.
+
+        Cada bloco mostra:
+          - Cabeçalho: volume · nº de arquivos · câmera detectada
+          - Um sub-bloco por candidato com nome, câmera da ficha, amostra de
+            arquivos e botão "Confirmar [NOME]"
+
+        Para os candidatos, consulta a tabela match_candidatos no banco (fonte
+        definitiva). Se o banco não tiver candidatos (empate antigo gravado só
+        no JSON), faz fallback para o campo candidatos_match do próprio JSON.
+        """
+        # Só cartões de material têm candidatos (forms em aguardando_confirmacao
+        # são raros e não têm db_cartao_id). Exibe resumo simples para forms.
+        if tipo == "form":
+            nome = html.escape(dados.get("nome", "—"))
+            camera = html.escape(dados.get("camera", "—"))
+            return f"""
+            <div style="border:1px solid #f48fb1;border-radius:6px;padding:12px 16px;margin:8px 0;background:#fff5f7">
+                <strong>{nome}</strong> &middot; {camera}
+                <span style="color:#888;font-size:0.85em"> — formulario aguardando confirmacao</span>
+            </div>"""
+
+        # ── Cabeçalho do cartão ───────────────────────────────────────────────
+        volume = html.escape(dados.get("nome") or dados.get("volume") or "—")
+        camera_detectada = html.escape(dados.get("marca_camera") or "—")
+        # Conta arquivos: pode estar em n_arquivos, total_arquivos ou contagem_total
+        n_arquivos = (
+            dados.get("n_arquivos")
+            or dados.get("total_arquivos")
+            or dados.get("contagem_total")
+            or "?"
+        )
+        cartao_id = dados.get("db_cartao_id")
+
+        # Pista de arquivos: lista de nomes do JSON (antes da transferência)
+        amostra = html.escape(_amostra_arquivos_material(dados))
+
+        # ── Candidatos: busca no banco (fonte definitiva) ─────────────────────
+        candidatos_banco = []
+        if BANCO_DISPONIVEL and cartao_id:
+            try:
+                _conn = bd.obter_conexao()
+                candidatos_banco = _conn.execute(
+                    """SELECT nome, camera_ficha, score, formulario_id
+                       FROM match_candidatos
+                       WHERE cartao_id = ? AND status = 'pendente'
+                       ORDER BY score DESC""",
+                    (cartao_id,)
+                ).fetchall()
+                _conn.close()
+            except Exception as _err_cand:
+                logger.error(
+                    f"PAINEL | Erro ao buscar candidatos do cartão {cartao_id} | {_err_cand}"
+                )
+
+        # Fallback: usa a lista do JSON quando o banco não tem candidatos
+        # (empate antigo registrado antes desta feature entrar)
+        if not candidatos_banco:
+            candidatos_json = dados.get("candidatos_match") or []
+            # Converte para o mesmo formato de dicionário que o banco devolveria
+            candidatos_banco = [
+                {
+                    "nome":         c.get("nome", "—") if isinstance(c, dict) else str(c),
+                    "camera_ficha": c.get("camera", "—") if isinstance(c, dict) else "—",
+                    "score":        c.get("score", "?") if isinstance(c, dict) else "?",
+                }
+                for c in candidatos_json
+            ]
+
+        # Monta os sub-blocos de cada candidato
+        blocos_candidatos = ""
+        for cand in candidatos_banco:
+            nome_cand = html.escape(str(cand["nome"] if hasattr(cand, "__getitem__") else "—"))
+            cam_cand  = html.escape(str(cand["camera_ficha"] if hasattr(cand, "__getitem__") else "—"))
+            score_cand = cand["score"] if hasattr(cand, "__getitem__") else "?"
+
+            # Se cartao_id existe, monta o botão de confirmação; senão, só info
+            if cartao_id:
+                botao = f"""
+                <form action="/match/{cartao_id}/confirmar" method="post" style="display:inline">
+                    <input type="hidden" name="nome" value="{nome_cand}">
+                    <button type="submit"
+                            style="background:#27ae60;color:#fff;border:none;border-radius:5px;
+                                   padding:5px 14px;font-weight:700;font-size:0.85em;cursor:pointer;">
+                        Confirmar {nome_cand}
+                    </button>
+                </form>"""
+            else:
+                botao = "<span style='color:#888;font-size:0.82em'>(sem id de cartao — nao e possivel confirmar)</span>"
+
+            blocos_candidatos += f"""
+            <div style="background:#f8f9fa;border-radius:5px;padding:10px 14px;margin-top:8px">
+                <div style="font-weight:700;font-size:0.95em">{nome_cand}
+                    <span style="font-weight:400;color:#6c757d;font-size:0.88em">
+                        &middot; {cam_cand}
+                        &middot; <span style="font-family:monospace">score {score_cand}</span>
+                    </span>
+                </div>
+                <div style="color:#888;font-size:0.82em;margin:4px 0 8px;font-family:monospace">
+                    {amostra}
+                </div>
+                {botao}
+            </div>"""
+
+        if not blocos_candidatos:
+            blocos_candidatos = "<div style='color:#888;font-size:0.85em;margin-top:8px'>Sem candidatos registrados para este cartao.</div>"
+
+        return f"""
+        <div style="border:1px solid #f48fb1;border-radius:6px;padding:14px 18px;margin:10px 0;background:#fff5f7">
+            <div style="font-weight:700;font-size:1em;margin-bottom:2px">
+                {volume}
+                <span style="font-weight:400;color:#6c757d;font-size:0.88em">
+                    &middot; {n_arquivos} arquivos &middot; {camera_detectada}
+                </span>
+            </div>
+            <div style="color:#c0392b;font-size:0.82em;margin-bottom:6px">
+                Quem e esse cartao?
+            </div>
+            {blocos_candidatos}
+        </div>"""
 
     # Renderiza as linhas de cada seção
     linhas_material = "".join(
@@ -806,11 +946,11 @@ def painel():
         linha_match(n, d) for n, d in matches_recentes
     ) or "<tr><td colspan='4' style='color:#888;text-align:center'>Nenhum match registrado hoje</td></tr>"
 
-    # Renderiza as linhas da seção "Aguardando confirmacao"
-    linhas_confirmacao = "".join(
-        linha_confirmacao(nome_arq, tipo, dados)
+    # Renderiza os blocos da seção "Aguardando confirmacao" — cada cartão é um bloco
+    blocos_confirmacao = "".join(
+        bloco_confirmacao_cartao(nome_arq, tipo, dados)
         for nome_arq, (tipo, dados) in aguardando_confirmacao
-    ) or "<tr><td colspan='4' style='color:#888;text-align:center'>Nenhum item aguardando confirmacao</td></tr>"
+    ) or "<p style='color:#888;text-align:center;padding:18px'>Nenhum item aguardando confirmacao</p>"
 
     # Alerta de órfãos (aparece destacado se houver algum)
     if total_orfaos > 0:
@@ -831,7 +971,7 @@ def painel():
         bloco_orfaos = ""
 
     # ── Monta o HTML completo ──────────────────────────────────────────────────
-    html = f"""<!DOCTYPE html>
+    pagina_html = f"""<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
@@ -1040,23 +1180,16 @@ def painel():
             </div>
 
             <!-- Bloco: Aguardando confirmacao humana (match ambiguo — ocupa largura total) -->
-            <!-- Esta secao lista os itens que o Matcher nao conseguiu casar automaticamente -->
-            <!-- porque havia dois ou mais candidatos com pontuacoes muito proximas.          -->
-            <!-- A resolucao com clique sera implementada no Passo 2.                         -->
+            <!-- O Matcher nao conseguiu casar automaticamente porque havia dois ou mais    -->
+            <!-- candidatos com pontuacoes muito proximas. O operador escolhe aqui.        -->
             <div class="card card-full">
                 <div class="card-header header-confirmacao">
                     Aguardando confirmacao
                     <span class="badge" style="background:#fce4ec;color:#c0392b">{len(aguardando_confirmacao)}</span>
                 </div>
-                <table>
-                    <tr>
-                        <th>Nome / Volume</th>
-                        <th>Camera</th>
-                        <th>Tipo</th>
-                        <th>Candidatos</th>
-                    </tr>
-                    {linhas_confirmacao}
-                </table>
+                <div style="padding:12px 16px">
+                    {blocos_confirmacao}
+                </div>
             </div>
         </div>
 
@@ -1068,7 +1201,7 @@ def painel():
 </body>
 </html>"""
 
-    return html, 200, {"Content-Type": "text/html; charset=utf-8"}
+    return pagina_html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2119,6 +2252,233 @@ def porteiro_desativar():
     except OSError as erro:
         logger.error(f"PORTEIRO | Erro ao remover sentinela | {erro}")
         return jsonify({"ok": False, "erro": "Erro ao desativar o Porteiro."}), 500
+
+
+# ── RESOLUÇÃO DE EMPATE (Passo 2 do Matcher) ─────────────────────────────────
+#
+# Fluxo em 3 etapas:
+#   1. Painel (/) — operador vê os candidatos e clica "Confirmar NOME"
+#   2. /match/<id>/confirmar (POST) — tela de resumo ANTES de executar
+#   3. /match/<id>/iniciar  (POST) — executa de fato, chama confirmar_par_manual
+#
+# Segurança: estas rotas são ações de operação — só acessíveis na BASE (localhost).
+# O portão _portao_de_acesso já bloqueia remoto para qualquer rota fora de /ficha
+# e /forms, então /match/* recebe 403 automaticamente no acesso remoto.
+
+
+def _ler_contador(nome):
+    """
+    Lê o arquivo contadores/<NOME>.json e retorna o próximo número sequencial
+    (sem incrementar — só leitura, para calcular a pasta prevista).
+
+    Retorna um inteiro. Se o arquivo não existir ou tiver erro, retorna 1
+    (significando que seria o primeiro cartão deste profissional).
+    """
+    caminho = os.path.join(RAIZ_GMA, "contadores", f"{nome}.json")
+    try:
+        with open(caminho, "r", encoding="utf-8") as f:
+            dados = json.load(f)
+        return int(dados.get("proximo", 1))
+    except (OSError, json.JSONDecodeError, ValueError, TypeError):
+        return 1
+
+
+def _pasta_prevista(nome):
+    """
+    Calcula a pasta de destino prevista para o próximo cartão deste profissional.
+
+    Formato: NOME_NNN (zero-padded com 3 dígitos), ex: JOAO_003.
+    Lê o contador atual e usa o número "proximo" — é o que a Camada 2 vai usar
+    quando a transferência for de fato iniciada.
+    """
+    proximo = _ler_contador(nome)
+    return f"{nome}_{proximo:03d}"
+
+
+@app.route("/match/<int:cartao_id>/confirmar", methods=["POST"])
+def match_confirmar(cartao_id):
+    """
+    Tela de resumo antes de executar o match (Passo 3a do desenho).
+
+    Recebe o nome do profissional escolhido (campo 'nome' do form POST).
+    Mostra um resumo enxuto — nome, câmera, nº arquivos, pasta prevista —
+    e dois botões: "Iniciar transferência" e "Cancelar".
+
+    NAO executa a transferência ainda. Isso evita match errado por clique
+    acidental: 1 clique a mais é barato; reverter uma pasta errada no HD é caro.
+    """
+    nome_escolhido = (request.form.get("nome") or "").strip().upper()
+    if not nome_escolhido:
+        # Nome vazio — volta ao painel com aviso simples
+        return redirect("/?aviso=nome_vazio")
+
+    # Lê os dados do cartão no banco para montar o resumo
+    camera_detectada = "—"
+    n_arquivos = "?"
+    volume = f"Cartao {cartao_id}"
+
+    if BANCO_DISPONIVEL:
+        try:
+            _conn = bd.obter_conexao()
+            linha_cartao = _conn.execute(
+                "SELECT volume, marca_camera, total_arquivos_detectados FROM cartoes WHERE id = ?",
+                (cartao_id,)
+            ).fetchone()
+            _conn.close()
+            if linha_cartao:
+                volume           = linha_cartao["volume"] or volume
+                camera_detectada = linha_cartao["marca_camera"] or "—"
+                n_arquivos       = linha_cartao["total_arquivos_detectados"] or "?"
+        except Exception as _err:
+            logger.error(f"MATCH CONFIRMAR | Erro ao ler cartao {cartao_id} do banco | {_err}")
+
+    # Pasta prevista: lê o contador e calcula sem incrementar
+    pasta = _pasta_prevista(nome_escolhido)
+
+    # Monta a tela de resumo
+    corpo = f"""
+    <div style="background:#fff;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,0.08);
+                padding:24px 28px;max-width:600px;margin:0 auto">
+        <h2 style="font-size:1.15em;margin-bottom:16px;color:#1a1a2e">
+            Confirmar match — revise antes de iniciar
+        </h2>
+        <div style="background:#f8f9fa;border-radius:6px;padding:14px 18px;
+                    margin-bottom:20px;line-height:2">
+            <div>
+                <b style="display:inline-block;min-width:140px;color:#6c757d">Profissional</b>
+                {_esc(nome_escolhido)}
+            </div>
+            <div>
+                <b style="display:inline-block;min-width:140px;color:#6c757d">Camera detectada</b>
+                {_esc(camera_detectada)}
+            </div>
+            <div>
+                <b style="display:inline-block;min-width:140px;color:#6c757d">Numero de arquivos</b>
+                {_esc(str(n_arquivos))}
+            </div>
+            <div>
+                <b style="display:inline-block;min-width:140px;color:#6c757d">Pasta de destino</b>
+                <span style="font-family:monospace;font-size:1.05em;color:#1a1a2e">{_esc(pasta)}</span>
+            </div>
+        </div>
+        <p style="color:#856404;background:#fff3cd;border:1px solid #ffc107;border-radius:5px;
+                  padding:10px 14px;margin-bottom:20px;font-size:0.9em">
+            Verifique se o profissional e a pasta estao certos. Um match errado gera
+            uma pasta com nome errado no HD — e desfazer durante o evento e trabalhoso.
+        </p>
+        <div style="display:flex;gap:12px;align-items:center">
+            <form action="/match/{cartao_id}/iniciar" method="post">
+                <input type="hidden" name="nome" value="{_esc(nome_escolhido)}">
+                <button type="submit"
+                        style="background:#27ae60;color:#fff;border:none;border-radius:6px;
+                               padding:10px 24px;font-weight:700;font-size:0.95em;cursor:pointer;">
+                    Iniciar transferencia
+                </button>
+            </form>
+            <a href="/"
+               style="background:#6c757d;color:#fff;text-decoration:none;border-radius:6px;
+                      padding:10px 20px;font-weight:600;font-size:0.9em">
+                Cancelar
+            </a>
+        </div>
+    </div>"""
+
+    return _pagina(
+        f"Confirmar match — {nome_escolhido}",
+        "operacao",
+        corpo,
+    ), 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
+@app.route("/match/<int:cartao_id>/iniciar", methods=["POST"])
+def match_iniciar(cartao_id):
+    """
+    Executa o match confirmado pelo operador (Passo 3b do desenho).
+
+    Chama confirmar_par_manual(cartao_id, nome) do Matcher, que:
+      - Registra o match na tabela matches
+      - Marca o candidato escolhido como 'escolhido' e os demais como 'descartado'
+      - Atualiza o status do cartão para 'matched'
+      - Chama atualizar_perfil() para o profissional aprender com esta confirmação
+      - Marca o JSON do material como matched → a Camada 2 detecta e inicia a cópia
+
+    Trata erros defensivamente: uma falha aqui nunca derruba o servidor.
+    """
+    nome_escolhido = (request.form.get("nome") or "").strip().upper()
+    if not nome_escolhido:
+        # Nome vazio não deveria chegar aqui (a tela de resumo já valida),
+        # mas defendemos no servidor por segurança.
+        corpo = """
+        <div style="background:#fdecea;border:1px solid #f5c6cb;color:#c0392b;
+                    border-radius:6px;padding:16px 20px;max-width:540px;margin:0 auto">
+            <strong>Erro:</strong> Nome do profissional nao recebido.
+            <br><br>
+            <a href="/" style="color:#c0392b">Voltar ao painel</a>
+        </div>"""
+        return _pagina("Erro — match", "operacao", corpo), 400, \
+            {"Content-Type": "text/html; charset=utf-8"}
+
+    # ── Chama o Matcher para confirmar o par ──────────────────────────────────
+    resultado = {"ok": False, "motivo": "matcher_indisponivel"}
+    if MATCHER_DISPONIVEL:
+        try:
+            resultado = modulo_matcher.confirmar_par_manual(cartao_id, nome_escolhido)
+        except Exception as _err_exec:
+            # Captura qualquer exceção para não derrubar o servidor
+            logger.error(
+                f"MATCH INICIAR | Erro inesperado ao chamar confirmar_par_manual "
+                f"| Cartao: {cartao_id} | Nome: {nome_escolhido} | Erro: {_err_exec}"
+            )
+            resultado = {"ok": False, "motivo": f"erro_interno: {_err_exec}"}
+    else:
+        logger.error(
+            f"MATCH INICIAR | Matcher indisponivel | Cartao: {cartao_id} | Nome: {nome_escolhido}"
+        )
+
+    # ── Trata o resultado ─────────────────────────────────────────────────────
+    if resultado.get("ok"):
+        logger.info(
+            f"MATCH INICIAR | Match confirmado com sucesso "
+            f"| Cartao: {cartao_id} | Nome: {nome_escolhido}"
+        )
+        # Redireciona para o painel com mensagem de sucesso na query string
+        # (mecanismo simples — sem flash session, consistente com o resto do app)
+        mensagem = f"Match confirmado — {nome_escolhido} · transferencia iniciada"
+        return redirect(f"/?ok={mensagem}")
+
+    else:
+        # Falha conhecida (empate já resolvido, banco falhou, etc.)
+        motivo = resultado.get("motivo", "motivo_desconhecido")
+        logger.warning(
+            f"MATCH INICIAR | Match nao confirmado "
+            f"| Cartao: {cartao_id} | Nome: {nome_escolhido} | Motivo: {motivo}"
+        )
+
+        # Mensagem legível para cada tipo de falha
+        if motivo == "empate_ja_resolvido":
+            descricao = (
+                "Este empate ja foi resolvido (talvez por outra aba ou processo). "
+                "O painel vai se atualizar em instantes com o estado atual."
+            )
+        elif motivo == "matcher_indisponivel":
+            descricao = (
+                "O modulo Matcher nao esta disponivel. "
+                "Verifique se matcher.py esta na raiz do projeto e reinicie o servidor."
+            )
+        else:
+            descricao = f"Detalhe tecnico: {_esc(motivo)}"
+
+        corpo = f"""
+        <div style="background:#fdecea;border:1px solid #f5c6cb;color:#c0392b;
+                    border-radius:6px;padding:16px 20px;max-width:540px;margin:0 auto">
+            <strong>Nao foi possivel confirmar o match.</strong>
+            <br><br>
+            {descricao}
+            <br><br>
+            <a href="/" style="color:#c0392b;font-weight:600">Voltar ao painel</a>
+        </div>"""
+        return _pagina("Erro — match", "operacao", corpo), 409, \
+            {"Content-Type": "text/html; charset=utf-8"}
 
 
 # ── TRATAMENTO DE ERROS GLOBAIS ───────────────────────────────────────────────

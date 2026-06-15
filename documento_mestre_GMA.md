@@ -3,9 +3,59 @@
 
 > Documento de arquitetura e estado do projeto. Serve como contexto completo para
 > continuar o desenvolvimento (inclusive em sessões do Claude Code).
-> Última atualização: 2026-06-14 (sessão 24 — DESENHO: Passo 2 do Matcher fechado: botão de resolução de empate, tela de confirmação com destino previsto, candidatos descartados auditáveis; referência em `desenho_passo2_matcher_GMA.md`)
+> Última atualização: 2026-06-14 (sessão 25 — BUILD: Passo 2 do Matcher IMPLEMENTADO e testado ponta a ponta. Tabela `match_candidatos` (que estava só desenhada, nunca criada) construída; `confirmar_match` atômica; Matcher persiste candidatos no empate + função de confirmação manual; painel com botões, tela de resumo (destino previsto) e disparo da transferência. 2 bugs pegos pelo teste de ciclo e corrigidos.)
 
-## Estado atual (2026-06-12)
+## Estado atual (2026-06-14)
+
+**✅ Sessão 25 (2026-06-14) — BUILD: Passo 2 do Matcher (resolução de empate no painel):**
+
+Sessão de **build**, conduzida pelo orquestrador delegando aos agentes `banco-dados-gma` (banco + Flask)
+e `checkin-gma` (Matcher), seguindo o desenho aprovado na sessão 24 (`desenho_passo2_matcher_GMA.md`).
+Fecha a pendência aberta desde a sessão 13: o operador agora resolve empates de match com poucos cliques.
+
+- **Pedra no caminho corrigida na largada:** o desenho (§4) afirmava que a tabela `match_candidatos`
+  "já existia desde a sessão 18". **Não existia** — a sessão 18 foi só de desenho. O `gma.db` só tinha
+  `matches`. Primeira tarefa do build virou **criar a tabela que faltava** (DDL + migração não-destrutiva
+  `migrar_schema_match_candidatos`, chamada por `inicializar_banco`; o `gma.db` existente ganhou a tabela
+  sem perder dados). Colunas: `cartao_id, formulario_id, nome, camera_ficha, score, criterios,
+  status (pendente/escolhido/descartado), criado_em`; `UNIQUE(cartao_id, formulario_id)`.
+- **Etapa 1 — banco (`banco_dados.py`):** `registrar_candidatos(conn, cartao_id, candidatos)` (idempotente,
+  INSERT OR IGNORE) e `confirmar_match(conn, cartao_id, nome_escolhido)` **atômica** — grava o match
+  confirmado (`confirmado=1`), marca o escolhido `escolhido` e os demais `descartado`, e **libera as
+  fichas descartadas** (`formularios.status → aguardando_match`). `gravar_match` ganhou parâmetro opcional
+  `confirmado` (caminho automático intocado).
+- **Etapa 2 — Matcher (`matcher.py`):** no empate, o Matcher agora **persiste os candidatos** na tabela
+  (`registrar_candidatos`), não só no JSON. Nova função `confirmar_par_manual(cartao_id, nome_escolhido)`
+  que espelha o caminho automático (marca o JSON do material `matched` → **dispara a Transferência**),
+  chama `confirmar_match` e `atualizar_perfil` (fecha o TODO antigo do `matcher.py`).
+- **Etapa 3 — painel (`flask_gma.py`):** a seção "Aguardando confirmação" virou **blocos por cartão**
+  (cabeçalho volume · nº arquivos · câmera + sub-bloco por candidato com nome · câmera da ficha ·
+  **pista dos nomes de arquivo** + botão "Confirmar [NOME]"). Rota `POST /match/<id>/confirmar` →
+  **tela de resumo** (nome · câmera · nº arquivos · **pasta de destino prevista** `NOME_NNN`), e só então
+  `POST /match/<id>/iniciar` executa a confirmação. As rotas `/match/*` são de operação (403 no acesso
+  remoto do câmera, como manda a sessão 21).
+- **Pista dos nomes de arquivo (ajuste do orquestrador):** o desenho supunha uma lista de nomes de
+  arquivo no JSON do material — **ela não existe**. A pista real são os radicais em `assinatura.prefixos`
+  (ex.: `joe0258T · joe0259T · joe0260T`), que o Leitor já grava. O painel passou a ler de lá.
+- **2 bugs pegos pelo teste de ciclo (os autotestes isolados dos agentes não pegaram):** (1) o painel
+  quebrava (500) porque a função `painel()` tinha uma variável local `html` que sombreava o módulo
+  `html` da stdlib usado em `html.escape` nos helpers aninhados → variável de página renomeada para
+  `pagina_html`; (2) o Matcher **não gravava** os candidatos porque a Tarefa A reusava a sentinela
+  `materiais_ambiguos_marcados` (já preenchida ao marcar o JSON na mesma iteração) → criada sentinela
+  própria `materiais_candidatos_persistidos`. Lição: os autotestes injetavam linhas falsas em
+  `match_candidatos`, pulando os caminhos reais de integração; **só o teste ponta a ponta (Matcher real
+  + Flask real) revelou as falhas.**
+- **Testado ponta a ponta (21 verificações, todas OK):** empate real entre 2 fichas (JOAO×PAULO) por
+  1 cartão → Matcher marca `aguardando_confirmacao` e grava 2 candidatos `pendente` → painel mostra os
+  blocos com a pista e os botões → tela de resumo mostra destino `JOAO_001` **sem confirmar ainda** →
+  "Iniciar" grava match `confirmado=1`, JOAO `escolhido`, PAULO `descartado`, ficha do PAULO liberada,
+  JSON do material `matched` (gatilho da cópia), perfil do JOAO atualizado. **Laboratório limpo** ao fim
+  (todo registro/arquivo de teste removido; `gma.db` e filas idênticos ao estado inicial).
+- **Arquivos tocados:** `banco_dados.py`, `matcher.py`, `flask_gma.py`. **Sem commit ainda** (a critério
+  do idealizador).
+- **⏭️ PRÓXIMO PASSO:** validar a tela com um empate de cartão **real** no fluxo ao vivo (o teste foi com
+  fixtures forjadas, fiéis ao que o Matcher produz). Alternativa de build desbloqueada: Fatia 1 da Nova
+  Ficha v2 (tabela `profissionais`), ver `desenho_nova_ficha_v2_GMA.md` §11.
 
 **📐 Sessão 24 (2026-06-14) — DESENHO: Passo 2 do Matcher (botão de resolução de empate):**
 

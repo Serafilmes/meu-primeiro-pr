@@ -445,6 +445,60 @@ def inicializar_banco():
             );
         """)
 
+        # ── Tabela: match_candidatos ──────────────────────────────────────────
+        # Lista de candidatos em empate para um cartão específico.
+        #
+        # Criada quando o Matcher detecta dois ou mais formulários igualmente
+        # pontuados para o mesmo cartão. Cada linha representa um candidato.
+        # O operador resolve o empate pelo painel (botão "Confirmar [NOME]"),
+        # e a função confirmar_match() marca um como 'escolhido' e os demais
+        # como 'descartado'.
+        #
+        # IMPORTANTE: ao contrário de 'matches', NÃO há UNIQUE(cartao_id) —
+        # um cartão em empate PRECISA ter várias linhas aqui (uma por candidato).
+        # A unicidade é só no par (cartao_id, formulario_id): a mesma ficha
+        # não aparece duas vezes para o mesmo cartão.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS match_candidatos (
+                -- Identificador único gerado automaticamente pelo banco
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+
+                -- FK para o cartão que está em estado de empate
+                cartao_id       INTEGER NOT NULL REFERENCES cartoes(id),
+
+                -- FK para o formulário candidato a ser associado ao cartão
+                formulario_id   INTEGER NOT NULL REFERENCES formularios(id),
+
+                -- Nome do profissional (denormalizado para o painel exibir sem JOIN)
+                -- Ex: "JOAO", "PAULO"
+                nome            TEXT NOT NULL,
+
+                -- Câmera declarada na ficha deste candidato
+                -- Ex: "Sony FX3", "GoPro"
+                camera_ficha    TEXT,
+
+                -- Pontuação deste candidato no empate (calculada pelo Matcher)
+                score           INTEGER NOT NULL DEFAULT 0,
+
+                -- JSON com os critérios que contribuíram para o score
+                -- Ex: '["câmera:+3", "data:+2"]'
+                criterios       TEXT,
+
+                -- Estado deste candidato no processo de resolução:
+                --   pendente   : aguardando escolha do operador (estado inicial)
+                --   escolhido  : operador selecionou este candidato
+                --   descartado : operador escolheu outro; esta ficha volta para fila
+                status          TEXT NOT NULL DEFAULT 'pendente',
+
+                -- Timestamp de quando este candidato foi registrado
+                criado_em       TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+
+                -- Unicidade: um par cartão+formulário aparece UMA vez na tabela.
+                -- Não há UNIQUE(cartao_id) sozinho — um cartão TEM múltiplos candidatos.
+                UNIQUE(cartao_id, formulario_id)
+            );
+        """)
+
         # ── Tabela: perfis ────────────────────────────────────────────────────
         # Perfil acumulado de cada profissional de captação.
         #
@@ -506,6 +560,11 @@ def inicializar_banco():
     # Bancos criados do zero já têm essas colunas no DDL acima; bancos antigos recebem
     # aqui via ALTER TABLE — sem perda de dados, seguro chamar quantas vezes quiser.
     migrar_schema_formularios(conn)
+
+    # Migração incremental: cria a tabela match_candidatos se ainda não existir.
+    # Bancos criados do zero também já recebem via o DDL abaixo nesta mesma função;
+    # esta chamada explícita garante que bancos antigos sejam atualizados.
+    migrar_schema_match_candidatos(conn)
 
     return conn
 
@@ -658,6 +717,270 @@ def migrar_schema_formularios(conn):
             conn.execute(f"ALTER TABLE formularios ADD COLUMN {nome_col} {tipo_col}")
 
     conn.commit()
+
+
+def migrar_schema_match_candidatos(conn):
+    """
+    Cria a tabela 'match_candidatos' em bancos já existentes (se ainda não existir).
+
+    Usa CREATE TABLE IF NOT EXISTS — completamente não-destrutivo.
+    Seguro chamar várias vezes: se a tabela já existir, não faz nada.
+
+    Bancos criados do zero já recebem a tabela via o DDL em inicializar_banco().
+    Esta função existe para atualizar bancos antigos que ainda não têm a tabela
+    (como o gma.db que existia antes desta sessão de build).
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS match_candidatos (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            cartao_id       INTEGER NOT NULL REFERENCES cartoes(id),
+            formulario_id   INTEGER NOT NULL REFERENCES formularios(id),
+            nome            TEXT NOT NULL,
+            camera_ficha    TEXT,
+            score           INTEGER NOT NULL DEFAULT 0,
+            criterios       TEXT,
+            status          TEXT NOT NULL DEFAULT 'pendente',
+            criado_em       TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+            UNIQUE(cartao_id, formulario_id)
+        );
+    """)
+    conn.commit()
+
+
+def registrar_candidatos(conn, cartao_id, candidatos):
+    """
+    Persiste os candidatos de um empate na tabela 'match_candidatos'.
+
+    Chamada pelo Matcher (matcher.py) quando detecta dois ou mais formulários
+    empatados para o mesmo cartão. Cada candidato vira uma linha com status
+    'pendente', aguardando resolução manual pelo operador no painel.
+
+    Parâmetros:
+      conn       — conexão SQLite aberta
+      cartao_id  — ID do cartão em estado de empate
+      candidatos — lista de dicionários, um por candidato, com as chaves:
+                     formulario_id  : ID do formulário candidato (int)
+                     nome           : nome do profissional (ex: "JOAO")
+                     camera_ficha   : câmera declarada na ficha (pode ser None)
+                     score          : pontuação calculada pelo Matcher (int)
+                     criterios      : lista de strings OU string JSON com os critérios
+                                      (ex: ["câmera:+3", "data:+2"] ou já serializado)
+
+    Comportamento:
+      - Usa INSERT OR IGNORE no par único (cartao_id, formulario_id).
+      - Idempotente: se o Matcher reprocessar o mesmo empate (ex: loop de polling),
+        as linhas já existentes não são duplicadas nem sobrescritas.
+        Isso preserva qualquer 'status' que já tenha sido atualizado (ex: 'escolhido').
+      - Registra evento 'candidatos_registrados' no log de auditoria.
+
+    Retorna o número de candidatos efetivamente inseridos (0 se todos já existiam).
+    """
+    inseridos = 0
+
+    for candidato in candidatos:
+        formulario_id = candidato["formulario_id"]
+        nome          = candidato["nome"]
+        camera_ficha  = candidato.get("camera_ficha")
+        score         = candidato.get("score", 0)
+
+        # Normaliza 'criterios': aceita lista de strings ou string JSON
+        criterios_raw = candidato.get("criterios")
+        if isinstance(criterios_raw, list):
+            # Lista de strings → serializa para JSON antes de guardar
+            criterios_json = json.dumps(criterios_raw, ensure_ascii=False)
+        elif isinstance(criterios_raw, str):
+            # Já é string (JSON ou texto simples) — guarda como veio
+            criterios_json = criterios_raw
+        else:
+            # None ou tipo inesperado → grava NULL
+            criterios_json = None
+
+        cursor = conn.execute(
+            """
+            INSERT OR IGNORE INTO match_candidatos
+                (cartao_id, formulario_id, nome, camera_ficha, score, criterios, status)
+            VALUES (?, ?, ?, ?, ?, ?, 'pendente')
+            """,
+            (cartao_id, formulario_id, nome, camera_ficha, score, criterios_json)
+        )
+
+        if cursor.rowcount > 0:
+            inseridos += 1
+
+    conn.commit()
+
+    # Registra evento de auditoria com o total de candidatos persistidos
+    registrar_evento(
+        conn,
+        tipo="candidatos_registrados",
+        descricao=(
+            f"Candidatos de empate registrados | Cartão: {cartao_id} "
+            f"| Total inseridos: {inseridos} | Total recebidos: {len(candidatos)}"
+        ),
+        cartao_id=cartao_id,
+        dados={"total_inseridos": inseridos, "total_recebidos": len(candidatos)}
+    )
+
+    return inseridos
+
+
+def confirmar_match(conn, cartao_id, nome_escolhido):
+    """
+    Resolve um empate: registra o match do candidato escolhido e descarta os demais.
+
+    Esta função é chamada pelo Flask (flask_gma.py) quando o operador clica em
+    "Iniciar transferência" na tela de confirmação do empate. Toda a operação é
+    atômica — se qualquer passo falhar, NADA é gravado (rollback automático).
+
+    Fluxo interno (numa única transação):
+      1. Busca o candidato 'pendente' com o nome escolhido para este cartão.
+      2. Registra o match na tabela 'matches' com confirmado=1 (manual).
+      3. Marca o candidato escolhido como 'escolhido' em match_candidatos.
+      4. Marca todos os demais candidatos 'pendentes' do cartão como 'descartado'.
+      5. Atualiza o formulário escolhido → status 'matched'.
+      6. Libera os formulários descartados → status 'aguardando_match'
+         (ficam livres para casar com o próximo cartão do profissional).
+      7. Registra evento 'match_confirmado_manual' no log de auditoria.
+
+    Parâmetros:
+      conn           — conexão SQLite aberta
+      cartao_id      — ID do cartão que estava em empate
+      nome_escolhido — nome do profissional escolhido pelo operador (ex: "JOAO")
+                       deve corresponder exatamente ao campo 'nome' do candidato
+
+    Retorna um dicionário com:
+      {
+        "formulario_id": <ID do formulário escolhido>,
+        "nome":          <nome do profissional escolhido>,
+        "descartados":   [<lista de formulario_ids descartados>]
+      }
+
+    Retorna None se não houver candidato 'pendente' com esse nome para o cartão
+    (ex: empate já foi resolvido). Nenhum dado é gravado nesse caso.
+
+    Levanta ValueError se encontrar mais de um candidato pendente com o mesmo nome
+    (situação anômala — indica problema na inserção de candidatos).
+    """
+    # Usamos "with conn:" para garantir atomicidade:
+    # se qualquer linha falhar, todas as alterações desta transação são revertidas.
+    with conn:
+
+        # ── Passo 1: localiza o candidato pendente com o nome escolhido ───────
+        candidatos_pendentes = conn.execute(
+            """
+            SELECT id, formulario_id, score, criterios
+            FROM match_candidatos
+            WHERE cartao_id = ? AND nome = ? AND status = 'pendente'
+            """,
+            (cartao_id, nome_escolhido)
+        ).fetchall()
+
+        if not candidatos_pendentes:
+            # Empate já resolvido ou nome não encontrado — não grava nada
+            return None
+
+        if len(candidatos_pendentes) > 1:
+            # Situação anômala: nunca deveria acontecer com o UNIQUE(cartao_id, formulario_id)
+            raise ValueError(
+                f"Anomalia: {len(candidatos_pendentes)} candidatos pendentes com o nome "
+                f"'{nome_escolhido}' para o cartão {cartao_id}. "
+                f"Esperado: exatamente 1."
+            )
+
+        candidato_escolhido = candidatos_pendentes[0]
+        formulario_id_escolhido = candidato_escolhido["formulario_id"]
+        score_escolhido         = candidato_escolhido["score"]
+        criterios_json          = candidato_escolhido["criterios"]
+
+        # Converte o JSON de critérios de volta para lista (gravar_match espera lista)
+        if criterios_json:
+            try:
+                criterios_lista = json.loads(criterios_json)
+            except (json.JSONDecodeError, TypeError):
+                # Se não for JSON válido, guarda como lista com o texto bruto
+                criterios_lista = [criterios_json]
+        else:
+            criterios_lista = []
+
+        # ── Passo 2: registra o match confirmado (confirmado=1 = escolha manual) ──
+        # gravar_match também atualiza cartoes.status → 'matched' e grava evento.
+        gravar_match(
+            conn,
+            cartao_id,
+            formulario_id_escolhido,
+            score_escolhido,
+            criterios_lista,
+            confirmado=1      # marca explicitamente como confirmação manual do operador
+        )
+
+        # ── Passo 3: marca o candidato escolhido como 'escolhido' ─────────────
+        conn.execute(
+            """
+            UPDATE match_candidatos
+            SET status = 'escolhido'
+            WHERE cartao_id = ? AND formulario_id = ?
+            """,
+            (cartao_id, formulario_id_escolhido)
+        )
+
+        # ── Passo 4: descarta os demais candidatos pendentes do mesmo cartão ──
+        # Busca os formulário_ids dos candidatos que serão descartados (para retornar)
+        descartados_rows = conn.execute(
+            """
+            SELECT formulario_id
+            FROM match_candidatos
+            WHERE cartao_id = ? AND status = 'pendente'
+            """,
+            (cartao_id,)
+        ).fetchall()
+
+        ids_formularios_descartados = [row["formulario_id"] for row in descartados_rows]
+
+        # Descarta todos os candidatos ainda pendentes (exceto o escolhido, já atualizado)
+        conn.execute(
+            """
+            UPDATE match_candidatos
+            SET status = 'descartado'
+            WHERE cartao_id = ? AND status = 'pendente'
+            """,
+            (cartao_id,)
+        )
+
+        # ── Passo 5: libera os formulários descartados para o próximo match ───
+        # Cada ficha descartada volta a 'aguardando_match', ficando disponível
+        # para casar com o próximo cartão do mesmo profissional.
+        # (O formulário escolhido já foi marcado 'matched' por gravar_match acima.)
+        for fid in ids_formularios_descartados:
+            conn.execute(
+                "UPDATE formularios SET status = 'aguardando_match' WHERE id = ?",
+                (fid,)
+            )
+
+        # ── Passo 6: registra evento de auditoria ─────────────────────────────
+        registrar_evento(
+            conn,
+            tipo="match_confirmado_manual",
+            descricao=(
+                f"Empate resolvido manualmente | Cartão: {cartao_id} "
+                f"| Escolhido: {nome_escolhido} (form {formulario_id_escolhido}) "
+                f"| Descartados: {ids_formularios_descartados}"
+            ),
+            cartao_id=cartao_id,
+            formulario_id=formulario_id_escolhido,
+            dados={
+                "nome_escolhido":          nome_escolhido,
+                "formulario_id_escolhido": formulario_id_escolhido,
+                "score":                   score_escolhido,
+                "ids_descartados":         ids_formularios_descartados,
+            }
+        )
+
+    # ── Passo 7: retorna o resultado para o chamador (Flask / Matcher) ────────
+    return {
+        "formulario_id": formulario_id_escolhido,
+        "nome":          nome_escolhido,
+        "descartados":   ids_formularios_descartados,
+    }
 
 
 def gravar_cartao(conn, volume, caminho_origem, marca_camera=None, tipo_material=None,
@@ -832,7 +1155,7 @@ def atualizar_formulario(conn, formulario_id, campos):
     return True
 
 
-def gravar_match(conn, cartao_id, formulario_id, score, criterios_lista):
+def gravar_match(conn, cartao_id, formulario_id, score, criterios_lista, confirmado=None):
     """
     Registra o vínculo entre um cartão e um formulário na tabela 'matches'.
 
@@ -840,20 +1163,28 @@ def gravar_match(conn, cartao_id, formulario_id, score, criterios_lista):
     Se já existir um match para este cartão (UNIQUE(cartao_id)), usa INSERT OR IGNORE.
 
     Parâmetros:
-      conn          — conexão SQLite aberta
-      cartao_id     — ID do cartão (FK para tabela 'cartoes')
-      formulario_id — ID do formulário (FK para tabela 'formularios')
-      score         — pontuação calculada pelo Matcher (ex: 5)
+      conn            — conexão SQLite aberta
+      cartao_id       — ID do cartão (FK para tabela 'cartoes')
+      formulario_id   — ID do formulário (FK para tabela 'formularios')
+      score           — pontuação calculada pelo Matcher (ex: 5)
       criterios_lista — lista de strings descrevendo os critérios
                         (ex: ["câmera:+3", "data:+2"])
+      confirmado      — (opcional) 0 ou 1 para forçar o valor do campo 'confirmado'.
+                        Se None (padrão), o valor é calculado automaticamente:
+                        score >= 3 → confirmado=1 (regra do Matcher automático).
+                        Passe confirmado=1 explicitamente ao registrar um match manual
+                        escolhido pelo operador via botão de resolução de empate.
 
     Retorna o ID do match inserido.
     """
     # Converte a lista de critérios para JSON para armazenar na coluna TEXT
     criterios_json = json.dumps(criterios_lista, ensure_ascii=False)
 
-    # Score >= 3 = confirmado automaticamente (regra do Matcher)
-    confirmado = 1 if score >= 3 else 0
+    # Determina o valor de 'confirmado':
+    #   - caminho automático (Matcher): score >= 3 = confirmado
+    #   - caminho manual (operador): o chamador passa confirmado=1 explicitamente
+    if confirmado is None:
+        confirmado = 1 if score >= 3 else 0
 
     cursor = conn.execute(
         """
