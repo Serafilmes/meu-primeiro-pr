@@ -1559,9 +1559,18 @@ def migrar_schema_profissionais(conn):
             tem_audio INTEGER NOT NULL DEFAULT 0,
             tem_video INTEGER NOT NULL DEFAULT 0,
             letra     TEXT    NOT NULL UNIQUE,
+            ativo     INTEGER NOT NULL DEFAULT 1,
             criado_em TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
         )
     """)
+
+    # Migração para bancos que já tinham a tabela SEM a coluna 'ativo'.
+    # 'ativo' = 1 (todos começam ativos); desativar é soft-delete: o profissional
+    # some dos dropdowns da ficha mas continua no cadastro, pronto pra reativar.
+    colunas = [linha[1] for linha in conn.execute("PRAGMA table_info(profissionais)").fetchall()]
+    if "ativo" not in colunas:
+        conn.execute("ALTER TABLE profissionais ADD COLUMN ativo INTEGER NOT NULL DEFAULT 1")
+
     conn.commit()
 
 
@@ -1639,35 +1648,102 @@ def criar_profissional(conn, nome, tipos):
     }
 
 
-def listar_profissionais(conn, filtro_tipo=None):
+def definir_ativo_profissional(conn, prof_id, ativo):
+    """
+    Liga (ativo=True) ou desliga (ativo=False) um profissional — soft-delete.
+
+    Desativar NÃO apaga o registro nem mexe na letra sequencial: o profissional
+    apenas some dos dropdowns da ficha (que carrega só ativos). Reativar traz de volta.
+
+    Args:
+        conn:    conexão SQLite aberta.
+        prof_id: id do profissional.
+        ativo:   True (ativar) ou False (desativar).
+
+    Returns:
+        True se algum registro foi alterado; False se o id não existia.
+    """
+    cursor = conn.execute(
+        "UPDATE profissionais SET ativo = ? WHERE id = ?",
+        (int(bool(ativo)), prof_id),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def nomes_em_uso(conn):
+    """
+    Devolve o conjunto de nomes (MAIÚSCULAS, sem espaços nas pontas) que aparecem
+    em alguma ficha (`formularios.nome`). Usado para saber quais profissionais NÃO
+    podem ser excluídos — só os que não tocaram em material algum são sobras reais.
+    """
+    rows = conn.execute(
+        "SELECT DISTINCT UPPER(TRIM(nome)) FROM formularios "
+        "WHERE nome IS NOT NULL AND TRIM(nome) <> ''"
+    ).fetchall()
+    return {r[0] for r in rows}
+
+
+def excluir_profissional(conn, prof_id):
+    """
+    Exclui um profissional DEFINITIVAMENTE — mas só se for sobra real, ou seja, se
+    o nome não aparece em NENHUMA ficha. Princípio 2 do projeto: nunca destruir o
+    que está em uso. Para tirar de circulação algo que já tem material, use
+    `definir_ativo_profissional` (desativar — reversível).
+
+    Returns:
+        "excluido"    — apagado com sucesso.
+        "em_uso"      — recusado: o nome aparece em ao menos uma ficha.
+        "inexistente" — não havia profissional com esse id.
+    """
+    row = conn.execute("SELECT nome FROM profissionais WHERE id = ?", (prof_id,)).fetchone()
+    if row is None:
+        return "inexistente"
+
+    nome = row[0]
+    usos = conn.execute(
+        "SELECT COUNT(*) FROM formularios WHERE UPPER(TRIM(nome)) = UPPER(TRIM(?))",
+        (nome,),
+    ).fetchone()[0]
+    if usos > 0:
+        return "em_uso"
+
+    conn.execute("DELETE FROM profissionais WHERE id = ?", (prof_id,))
+    conn.commit()
+    return "excluido"
+
+
+def listar_profissionais(conn, filtro_tipo=None, apenas_ativos=False):
     """
     Retorna profissionais cadastrados, ordenados pela letra (A → Z → AA…).
 
     Args:
-        conn:         conexão SQLite aberta.
-        filtro_tipo:  "foto" | "audio" | "video" | None (todos).
-                      Filtra profissionais que têm aquele tipo marcado.
+        conn:          conexão SQLite aberta.
+        filtro_tipo:   "foto" | "audio" | "video" | None (todos).
+                       Filtra profissionais que têm aquele tipo marcado.
+        apenas_ativos: se True, devolve só os ativos (a ficha usa isto). Se False,
+                       devolve todos — incluindo desativados (a tela de cadastro usa).
 
     Returns:
-        Lista de dicts com id, nome, tem_foto, tem_audio, tem_video, letra.
+        Lista de dicts com id, nome, tem_foto, tem_audio, tem_video, letra, ativo.
     """
     COLUNAS_TIPO = {"foto": "tem_foto", "audio": "tem_audio", "video": "tem_video"}
 
+    condicoes = []
     if filtro_tipo is not None:
         coluna = COLUNAS_TIPO.get(filtro_tipo.lower())
         if coluna is None:
             raise ValueError(f"filtro_tipo inválido: '{filtro_tipo}'. Use foto, audio ou video.")
-        sql = (
-            f"SELECT id, nome, tem_foto, tem_audio, tem_video, letra "
-            f"FROM profissionais WHERE {coluna} = 1 "
-            f"ORDER BY length(letra), letra"
-        )
-        rows = conn.execute(sql).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT id, nome, tem_foto, tem_audio, tem_video, letra "
-            "FROM profissionais ORDER BY length(letra), letra"
-        ).fetchall()
+        condicoes.append(f"{coluna} = 1")
+    if apenas_ativos:
+        condicoes.append("ativo = 1")
+
+    where = (" WHERE " + " AND ".join(condicoes)) if condicoes else ""
+    sql = (
+        "SELECT id, nome, tem_foto, tem_audio, tem_video, letra, ativo "
+        f"FROM profissionais{where} ORDER BY length(letra), letra"
+    )
+    rows = conn.execute(sql).fetchall()
 
     return [
         {
@@ -1677,6 +1753,7 @@ def listar_profissionais(conn, filtro_tipo=None):
             "tem_audio": bool(r[3]),
             "tem_video": bool(r[4]),
             "letra":     r[5],
+            "ativo":     bool(r[6]),
         }
         for r in rows
     ]

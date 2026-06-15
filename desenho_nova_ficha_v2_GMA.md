@@ -219,3 +219,37 @@ Fatia 1 (C3) ──→ Fatia 2 (C1) ──→ Fatia 3 (C1) ──→ Fatia 5 (C3
 | **5** | Salvar a nova forma (multi-tipo booleano + até 2 nomes); matcher lê multi-tipo; Kanban/Planilha exibem | C3/C1 | Enviar ficha mista → grava certo; match e planilha refletem | §7 ✅ |
 
 **Próxima sessão = Fatia 1** (tabela `profissionais` por tipo, em C3, via `banco-dados-gma`).
+
+---
+
+## 12. A aba é "fonte de material", não só "profissional" (sessão 28, 2026-06-15)
+
+Estado: **decisão de conceito batida; implementação é fatia futura (não construída).**
+
+A aba hoje chamada "Profissionais" representa, na verdade, uma **fonte/origem de material**.
+Na maioria das vezes é uma pessoa (câmera, fotógrafo, operador de som), mas **nem sempre**:
+pode ser uma entrada que não vem de cartão físico — um feed/sistema, tipo **PGM**, ou captação
+online. **Regra de responsabilidade:** as entradas que chegam por métodos não-cartão são
+responsabilidade do **operador** (é ele quem cadastra e gerencia).
+
+### 12.1 Origem do material: cartão de memória × pasta satélite (link)
+
+Demanda real que originou isto: um fotógrafo foi embora **sem baixar o material**; o material
+precisou entrar depois **por link**, caindo numa **pasta satélite**, e a transferência aconteceu
+**a partir dessa pasta**, não de um cartão.
+
+**Decisão (sessão 28):** a origem (`cartão de memória` × `pasta satélite/link`) é uma propriedade
+que **mora no cadastro da fonte** (como padrão — útil para fontes sempre-online, ex.: PGM), **mas
+com a funcionalidade efetiva no check-in**: na hora da entrega, a ficha permite escolher/confirmar
+a origem (seleção única), podendo **sobrescrever** o padrão do cadastro. O mesmo profissional pode
+entregar por cartão hoje e por link amanhã — por isso a escolha final é por entrega.
+
+**Encaixe na arquitetura (elegante, sem reinventar):** o motor de cópia (`copiador.py`, Camada 2)
+copia + verifica checksum a partir de **um caminho**. "Material vindo por link" = apontar a
+transferência para a **pasta satélite** em vez do cartão montado. A segurança (checksum,
+verificação) continua idêntica. **Onde** fica a pasta satélite e como o material chega lá é
+configuração de máquina — **Camada 5**.
+
+**Fronteiras:** seleção/confirmação da origem = C1 (check-in) · ler da pasta satélite e copiar =
+C2 (transferência) · localização/config da pasta satélite = C5. Renomear a aba ("Fontes",
+"Origens"…) segue em aberto — só anotado como ideia, não decidido.

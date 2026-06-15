@@ -1740,6 +1740,15 @@ CSS_FICHA = """
     .badge-mini { border-radius:10px; padding:1px 8px; font-size:0.74em; font-weight:700; color:#fff; }
     .link-editar { color:#2196f3; text-decoration:none; font-weight:600; }
     .link-editar:hover { text-decoration:underline; }
+    /* ── Tipo multi-seleção (checkboxes) ── */
+    .tipo-checks { display:flex; gap:16px; align-items:center; flex-wrap:wrap; margin-top:2px; }
+    .tipo-checks label { font-size:0.92em; font-weight:600; color:#495057;
+                         display:flex; align-items:center; gap:6px; cursor:pointer; }
+    .tipo-checks input[type=checkbox] { width:17px; height:17px; cursor:pointer; accent-color:#27ae60; }
+    /* ── Dropdowns fechados de nome ── */
+    .campo-nome-wrapper { display:flex; flex-direction:column; gap:14px; }
+    .campo-nome-wrapper .campo { margin:0; }
+    .aviso-sem-cadastro { font-size:0.8em; color:#e67e22; margin-top:4px; }
 """
 
 
@@ -1800,6 +1809,299 @@ def _datalist(id_lista, valores):
     """Monta um <datalist> (dropdown selecionável que também aceita digitação)."""
     opcoes = "".join(f'<option value="{_esc(v)}">' for v in valores)
     return f'<datalist id="{id_lista}">{opcoes}</datalist>'
+
+
+def _profissionais_para_ficha():
+    """
+    Busca todos os profissionais cadastrados e devolve uma lista de dicts
+    prontos para serem injetados como JSON no JavaScript da ficha.
+
+    Cada item tem: nome, tem_foto (bool), tem_audio (bool), tem_video (bool).
+    Retorna lista vazia se o banco não estiver disponível — a ficha continua
+    de pé, mas os dropdowns de nome ficarão vazios (sem travar o check-in).
+    """
+    if not BANCO_DISPONIVEL:
+        return []
+    try:
+        conn = bd.obter_conexao()
+        # apenas_ativos=True: profissionais desativados somem dos dropdowns da ficha.
+        lista = bd.listar_profissionais(conn, apenas_ativos=True)
+        conn.close()
+        # Mantém só os campos que o JavaScript precisa
+        return [
+            {
+                "nome":      p["nome"],
+                "tem_foto":  p["tem_foto"],
+                "tem_audio": p["tem_audio"],
+                "tem_video": p["tem_video"],
+            }
+            for p in lista
+        ]
+    except Exception as erro:
+        logger.error(f"FICHA | Erro ao carregar profissionais | {erro}")
+        return []
+
+
+def _bloco_tipo_nome_ficha(d, trava, profissionais):
+    """
+    Monta o bloco HTML de TIPO (checkboxes) + NOME (dropdown(s) fechado(s))
+    da ficha de check-in — Nova Ficha v2, Fatia 3.
+
+    Regras implementadas:
+    - TIPO vira 3 checkboxes: Foto / Áudio / Vídeo.
+    - NOME vira dropdown fechado filtrado pelo tipo marcado.
+    - Se marcar Foto e/ou Vídeo + Áudio → aparecem 2 dropdowns (Foto/Vídeo e Áudio).
+    - O JavaScript roda no navegador, offline, sem dependência externa.
+    - Para compatibilidade com o backend atual, deriva via JS:
+        * campo hidden "nome"         → nome do Foto/Vídeo (ou do Áudio se só áudio)
+        * campo hidden "tipo_material" → tipos marcados unidos por "+" (ex: "FOTO+AUDIO")
+        * campo hidden "nome_audio"    → nome do Áudio (quando 2 dropdowns); backend ignora por ora
+    """
+    import json as _json
+
+    # Serializa a lista de profissionais como JSON puro para injetar no JS.
+    # _json.dumps garante que os valores booleanos virem true/false (JavaScript).
+    dados_js = _json.dumps(profissionais, ensure_ascii=False)
+
+    # Valores que já existem na ficha (modo editar ou reapresentação de erro).
+    # Usados para marcar as caixinhas e pré-selecionar os dropdowns.
+    tipo_atual     = d.get("tipo_material", "")    # ex: "FOTO+AUDIO" ou "VIDEO"
+    nome_atual     = d.get("nome", "")
+    nome_audio_atual = d.get("nome_audio", "")
+
+    # Descobre quais checkboxes marcar a partir do tipo já gravado.
+    foto_chk  = "checked" if "FOTO"  in tipo_atual else ""
+    audio_chk = "checked" if "AUDIO" in tipo_atual else ""
+    video_chk = "checked" if "VIDEO" in tipo_atual else ""
+
+    # Atributo que trava os controles quando a ficha já casou com material.
+    trava_chk     = " disabled" if trava.strip() else ""  # checkboxes usam "disabled" simples
+    trava_sel     = trava                                  # selects já usam o atributo gerado
+
+    bloco = f"""
+        <!-- ── TIPO: multi-seleção ─────────────────────────────── -->
+        <div class="campo largo">
+          <label>Tipo de material <span class="estrela">★</span></label>
+          <div class="tipo-checks">
+            <label>
+              <input type="checkbox" id="chk_foto"  value="FOTO"  {foto_chk}{trava_chk}
+                     onchange="gma_atualizar_ficha()">
+              Foto
+            </label>
+            <label>
+              <input type="checkbox" id="chk_audio" value="AUDIO" {audio_chk}{trava_chk}
+                     onchange="gma_atualizar_ficha()">
+              Áudio
+            </label>
+            <label>
+              <input type="checkbox" id="chk_video" value="VIDEO" {video_chk}{trava_chk}
+                     onchange="gma_atualizar_ficha()">
+              Vídeo
+            </label>
+          </div>
+          <!-- campo hidden que o backend lê: "FOTO", "AUDIO+VIDEO", "FOTO+AUDIO", etc. -->
+          <input type="hidden" id="campo_tipo_material" name="tipo_material"
+                 value="{_esc(tipo_atual)}">
+        </div>
+
+        <!-- ── NOME: dropdown(s) fechado(s), filtrados por tipo ── -->
+        <div class="campo-nome-wrapper largo" id="bloco_nomes">
+
+          <!-- Dropdown para Foto/Vídeo (visível quando Foto ou Vídeo marcados) -->
+          <div class="campo" id="div_nome_fotovideo" style="display:none">
+            <label id="label_nome_fotovideo">
+              Nome Foto/Vídeo <span class="estrela">★</span>
+            </label>
+            <select id="sel_nome_fotovideo" onchange="gma_atualizar_ficha()"{trava_sel}>
+              <option value="">— escolha —</option>
+            </select>
+          </div>
+
+          <!-- Dropdown para Áudio (visível quando Áudio marcado) -->
+          <div class="campo" id="div_nome_audio" style="display:none">
+            <label>Nome Áudio <span class="estrela">★</span></label>
+            <select id="sel_nome_audio" onchange="gma_atualizar_ficha()"{trava_sel}>
+              <option value="">— escolha —</option>
+            </select>
+            <!-- campo extra para o áudio — o backend atual ignora, a Fatia 5 vai usar -->
+            <input type="hidden" id="campo_nome_audio" name="nome_audio" value="{_esc(nome_audio_atual)}">
+          </div>
+
+          <!-- campo hidden "nome" que o backend obrigatório lê -->
+          <input type="hidden" id="campo_nome" name="nome" value="{_esc(nome_atual)}">
+
+          <!-- Aviso quando nenhum tipo está marcado ainda -->
+          <p class="aviso-sem-cadastro" id="aviso_escolha_tipo"
+             style="display:none">
+            Marque ao menos um tipo acima para ver os nomes disponíveis.
+          </p>
+          <!-- Aviso quando o tipo está marcado mas não há profissionais cadastrados -->
+          <p class="aviso-sem-cadastro" id="aviso_sem_prof" style="display:none">
+            Nenhum profissional cadastrado para este tipo.
+            Cadastre em <a href="/profissionais">Profissionais</a>.
+          </p>
+        </div>
+
+        <!-- ── JavaScript (roda offline, no próprio navegador) ─── -->
+        <script>
+        // Lista completa de profissionais cadastrados, injetada pelo servidor.
+        // Cada item: {{ nome, tem_foto, tem_audio, tem_video }}
+        var GMA_PROFISSIONAIS = {dados_js};
+
+        // Valores iniciais para pré-selecionar ao carregar (modo editar / reapresentação).
+        var GMA_NOME_INICIAL       = "{_esc(nome_atual)}";
+        var GMA_NOME_AUDIO_INICIAL = "{_esc(nome_audio_atual)}";
+
+        /**
+         * Reconstrói os dropdowns de nome e os campos hidden sempre que
+         * o operador muda as caixinhas de tipo.
+         */
+        function gma_atualizar_ficha() {{
+            var foto  = document.getElementById("chk_foto").checked;
+            var audio = document.getElementById("chk_audio").checked;
+            var video = document.getElementById("chk_video").checked;
+
+            // ── 1. Atualiza o campo hidden tipo_material ──────────────────
+            var tipos = [];
+            if (foto)  tipos.push("FOTO");
+            if (audio) tipos.push("AUDIO");
+            if (video) tipos.push("VIDEO");
+            document.getElementById("campo_tipo_material").value = tipos.join("+");
+
+            // ── 2. Decide quantos dropdowns mostrar ───────────────────────
+            // Regra do desenho §4:
+            //   só áudio             → 1 dropdown (áudio)
+            //   só foto/vídeo        → 1 dropdown (foto/vídeo)
+            //   foto/vídeo + áudio   → 2 dropdowns
+            var temFotoVideo = foto || video;
+            var temAudio     = audio;
+            var nenhum       = !temFotoVideo && !temAudio;
+
+            // ── 3. Filtra profissionais por tipo ──────────────────────────
+            // Dropdown Foto/Vídeo: mostra quem tem foto (se foto marcado)
+            //                       OU tem video (se video marcado).
+            var profFotoVideo = GMA_PROFISSIONAIS.filter(function(p) {{
+                return (foto && p.tem_foto) || (video && p.tem_video);
+            }});
+
+            // Dropdown Áudio: só quem tem tem_audio = true.
+            var profAudio = GMA_PROFISSIONAIS.filter(function(p) {{
+                return p.tem_audio;
+            }});
+
+            // ── 4. Reconstrói as <option> de cada select ──────────────────
+            gma_preencher_select("sel_nome_fotovideo", profFotoVideo, GMA_NOME_INICIAL);
+            gma_preencher_select("sel_nome_audio",     profAudio,     GMA_NOME_AUDIO_INICIAL);
+
+            // ── 5. Mostra/esconde os divs conforme a combinação ───────────
+            document.getElementById("div_nome_fotovideo").style.display =
+                temFotoVideo ? "flex" : "none";
+            document.getElementById("div_nome_audio").style.display =
+                temAudio ? "flex" : "none";
+
+            // Ajusta o label do dropdown Foto/Vídeo: se só vídeo, diz "Vídeo";
+            // se só foto, diz "Foto"; se os dois, diz "Foto / Vídeo".
+            var labelFV = document.getElementById("label_nome_fotovideo");
+            if (foto && video) {{
+                labelFV.innerHTML = 'Nome Foto / Vídeo <span class="estrela">★</span>';
+            }} else if (foto) {{
+                labelFV.innerHTML = 'Nome Foto <span class="estrela">★</span>';
+            }} else {{
+                labelFV.innerHTML = 'Nome Vídeo <span class="estrela">★</span>';
+            }}
+
+            // ── 6. Avisos ────────────────────────────────────────────────
+            document.getElementById("aviso_escolha_tipo").style.display =
+                nenhum ? "block" : "none";
+
+            // Aviso "sem profissionais": só quando há tipo marcado mas a lista está vazia.
+            var listaVazia = (
+                (temFotoVideo && profFotoVideo.length === 0) ||
+                (temAudio     && profAudio.length === 0)
+            );
+            document.getElementById("aviso_sem_prof").style.display =
+                (!nenhum && listaVazia) ? "block" : "none";
+
+            // ── 7. Atualiza campos hidden que o backend lê ────────────────
+            gma_sincronizar_hidden();
+        }}
+
+        /**
+         * Preenche um <select> com a lista de profissionais filtrada.
+         * Tenta manter o nome já selecionado anteriormente (pré-seleção).
+         */
+        function gma_preencher_select(id_select, lista, valor_inicial) {{
+            var sel = document.getElementById(id_select);
+            var anterior = sel.value || valor_inicial;  // preserva seleção atual
+
+            // Limpa e reconstrói
+            sel.innerHTML = '<option value="">— escolha —</option>';
+            lista.forEach(function(p) {{
+                var opt = document.createElement("option");
+                opt.value = p.nome;
+                opt.textContent = p.nome;
+                if (p.nome === anterior) opt.selected = true;
+                sel.appendChild(opt);
+            }});
+        }}
+
+        /**
+         * Copia os valores dos selects visíveis para os campos hidden
+         * que o backend obrigatório lê ("nome" e "nome_audio").
+         *
+         * Regra: se só áudio marcado → "nome" recebe o áudio.
+         *        se Foto/Vídeo marcado → "nome" recebe o Foto/Vídeo.
+         */
+        function gma_sincronizar_hidden() {{
+            var foto  = document.getElementById("chk_foto").checked;
+            var audio = document.getElementById("chk_audio").checked;
+            var video = document.getElementById("chk_video").checked;
+            var temFotoVideo = foto || video;
+
+            var nomeFV    = document.getElementById("sel_nome_fotovideo").value;
+            var nomeAudio = document.getElementById("sel_nome_audio").value;
+
+            // "nome" → autoridade principal: Foto/Vídeo se houver; senão Áudio.
+            document.getElementById("campo_nome").value =
+                temFotoVideo ? nomeFV : nomeAudio;
+
+            // "nome_audio" → segundo nome (a Fatia 5 vai gravar isso direito).
+            document.getElementById("campo_nome_audio").value = nomeAudio;
+        }}
+
+        // Acionado também quando o operador muda um dropdown manualmente.
+        document.getElementById("sel_nome_fotovideo").addEventListener(
+            "change", gma_sincronizar_hidden);
+        document.getElementById("sel_nome_audio").addEventListener(
+            "change", gma_sincronizar_hidden);
+
+        // Roda na carga da página para montar o estado inicial correto
+        // (importante no modo editar, quando dados já vêm preenchidos).
+        gma_atualizar_ficha();
+
+        /**
+         * Validação no submit: garante que tipo e nome estejam preenchidos
+         * antes de enviar (os campos hidden não têm atributo "required" nativo
+         * no HTML, então a conferência é feita aqui, no JavaScript).
+         */
+        document.querySelector("form.ficha-form").addEventListener("submit", function(ev) {{
+            var tipo = document.getElementById("campo_tipo_material").value;
+            var nome = document.getElementById("campo_nome").value;
+
+            if (!tipo) {{
+                ev.preventDefault();
+                alert("Marque ao menos um tipo de material (Foto, Áudio ou Vídeo).");
+                return;
+            }}
+            if (!nome) {{
+                ev.preventDefault();
+                alert("Escolha um nome no dropdown correspondente ao tipo marcado.");
+                return;
+            }}
+        }});
+        </script>
+    """
+    return bloco
 
 
 def _fichas_recentes_html(limite=12):
@@ -1876,35 +2178,29 @@ def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
         texto_botao = "Salvar alterações"
     else:
         legenda = ('Preencha a ficha do cartão que chegou na base. Campos com '
-                   '<span style="color:#c0392b">★</span> são obrigatórios. Nome e câmera '
-                   'já sugerem valores usados antes — é só escolher ou digitar um novo.')
+                   '<span style="color:#c0392b">★</span> são obrigatórios.')
         texto_botao = "Enviar ficha"
+
+    # Carrega a lista de profissionais cadastrados para o JS da ficha.
+    # Se falhar (banco indisponível), a ficha ainda abre — dropdowns ficarão vazios.
+    profissionais = _profissionais_para_ficha()
+
+    # Monta o bloco TIPO (checkboxes) + NOME (dropdowns fechados) — Nova Ficha v2 Fatia 3.
+    bloco_tipo_nome = _bloco_tipo_nome_ficha(d, trava, profissionais)
 
     corpo = f"""
     <p class="legenda">{legenda}</p>
     {bloco_erro}
     {aviso_trava}
     <form class="ficha-form" action="{action}" method="post">
-      {_datalist('lista_nomes', sug['nomes'])}
       {_datalist('lista_cameras', sug['cameras'])}
       {_datalist('lista_modelos', sug['modelos'])}
       <div class="ficha-grid">
-        <div class="campo">
-          <label>Nome <span class="estrela">★</span> <span class="dica-gabarito">(escolha ou digite)</span></label>
-          <input type="text" name="nome" list="lista_nomes" value="{_esc(d.get('nome',''))}"
-                 required autofocus placeholder="ex: JOÃO"{trava}>
-        </div>
+        {bloco_tipo_nome}
         <div class="campo">
           <label>Câmera <span class="estrela">★</span> <span class="dica-gabarito">(escolha ou digite)</span></label>
           <input type="text" name="camera" list="lista_cameras" value="{_esc(d.get('camera',''))}"
                  required placeholder="ex: Sony, GoPro, Nikon"{trava}>
-        </div>
-        <div class="campo">
-          <label>Tipo de material <span class="estrela">★</span></label>
-          <select name="tipo_material" required{trava}>
-            <option value="">— escolha —</option>
-            {_opcoes_select(OPCOES_TIPO_MATERIAL, d.get('tipo_material',''))}
-          </select>
         </div>
         <div class="campo">
           <label>Data de gravação <span class="estrela">★</span></label>
@@ -2542,6 +2838,69 @@ def profissionais():
     return _pagina_profissionais()
 
 
+@app.route("/profissionais/<int:prof_id>/ativo", methods=["POST"])
+def profissionais_ativo(prof_id):
+    """
+    Ativa ou desativa um profissional (soft-delete). O campo 'ativo' do form diz
+    o estado desejado: "1" = ativar, "0" = desativar. Desativar NÃO apaga nada —
+    o profissional só some dos dropdowns da ficha. Volta para a lista no fim.
+
+    Acesso: somente base (localhost). Remoto recebe 403 pelo portão existente.
+    """
+    if not BANCO_DISPONIVEL:
+        return _pagina_profissionais(erro="Banco de dados indisponível.")
+
+    novo_estado = (request.form.get("ativo") == "1")
+    try:
+        _conn = bd.obter_conexao()
+        ok = bd.definir_ativo_profissional(_conn, prof_id, novo_estado)
+        _conn.close()
+        if ok:
+            logger.info(
+                f"PROFISSIONAIS | id={prof_id} → {'ATIVADO' if novo_estado else 'DESATIVADO'}"
+            )
+        else:
+            logger.warning(f"PROFISSIONAIS | id={prof_id} não encontrado ao alternar 'ativo'")
+    except Exception as _err:
+        logger.error(f"PROFISSIONAIS | Erro ao alternar 'ativo' (id={prof_id}): {_err}")
+        return _pagina_profissionais(erro=f"Erro ao mudar a situação: {_err}")
+
+    return redirect("/profissionais")
+
+
+@app.route("/profissionais/<int:prof_id>/excluir", methods=["POST"])
+def profissionais_excluir(prof_id):
+    """
+    Exclui um profissional DEFINITIVAMENTE — só se for sobra real (nenhuma ficha
+    usa o nome). Se estiver em uso, recusa e orienta a desativar. Irreversível.
+
+    Acesso: somente base (localhost). Remoto recebe 403 pelo portão existente.
+    """
+    if not BANCO_DISPONIVEL:
+        return _pagina_profissionais(erro="Banco de dados indisponível.")
+
+    try:
+        _conn = bd.obter_conexao()
+        resultado = bd.excluir_profissional(_conn, prof_id)
+        _conn.close()
+    except Exception as _err:
+        logger.error(f"PROFISSIONAIS | Erro ao excluir (id={prof_id}): {_err}")
+        return _pagina_profissionais(erro=f"Erro ao excluir: {_err}")
+
+    if resultado == "em_uso":
+        logger.warning(f"PROFISSIONAIS | Exclusão recusada (id={prof_id}): nome em uso por fichas")
+        return _pagina_profissionais(
+            erro="Não dá para excluir: esse nome já aparece em alguma ficha. "
+                 "Use Desativar (reversível) no lugar."
+        )
+    if resultado == "inexistente":
+        logger.warning(f"PROFISSIONAIS | Exclusão: id={prof_id} não encontrado")
+        return redirect("/profissionais")
+
+    logger.info(f"PROFISSIONAIS | id={prof_id} EXCLUÍDO (sobra sem fichas)")
+    return redirect("/profissionais")
+
+
 def _pagina_profissionais(
     erro=None,
     nome_digitado="",
@@ -2556,11 +2915,13 @@ def _pagina_profissionais(
     """
     # ── Carrega a lista do banco ───────────────────────────────────────────────
     lista = []
+    em_uso = set()  # nomes que aparecem em alguma ficha → não podem ser excluídos
     aviso_banco = ""
     if BANCO_DISPONIVEL:
         try:
             _conn = bd.obter_conexao()
             lista = bd.listar_profissionais(_conn)
+            em_uso = bd.nomes_em_uso(_conn)
             _conn.close()
         except Exception as _err_lista:
             aviso_banco = f"Não foi possível carregar a lista: {_err_lista}"
@@ -2577,21 +2938,73 @@ def _pagina_profissionais(
     if lista:
         linhas_tabela = ""
         for p in lista:
+            ativo = p.get("ativo", True)
+            # Linha "apagadinha" quando o profissional está desativado.
+            estilo_linha = "" if ativo else "opacity:0.5"
+            # Botão que alterna o estado: desativados mostram "Ativar"; ativos, "Desativar".
+            if ativo:
+                botao = (
+                    '<button type="submit" name="ativo" value="0" '
+                    'style="background:#fff;border:1px solid #ced4da;color:#c0392b;'
+                    'border-radius:5px;padding:4px 10px;font-size:0.82em;cursor:pointer;'
+                    'font-family:inherit">Desativar</button>'
+                )
+                selo = ""
+            else:
+                botao = (
+                    '<button type="submit" name="ativo" value="1" '
+                    'style="background:#1a1a2e;border:1px solid #1a1a2e;color:#fff;'
+                    'border-radius:5px;padding:4px 10px;font-size:0.82em;cursor:pointer;'
+                    'font-family:inherit">Ativar</button>'
+                )
+                selo = ('<span style="background:#e9ecef;color:#6c757d;border-radius:4px;'
+                        'padding:1px 7px;font-size:0.74em;font-weight:600;margin-right:8px">'
+                        'inativo</span>')
+
+            # Excluir SÓ aparece para sobras reais: nome que não está em nenhuma ficha.
+            # Quem já tocou em material só pode ser desativado (princípio 2: não destruir).
+            nome_norm = (p["nome"] or "").strip().upper()
+            pode_excluir = nome_norm not in em_uso
+            if pode_excluir:
+                botao_excluir = (
+                    f'<form action="/profissionais/{p["id"]}/excluir" method="post" '
+                    f'style="margin:0" '
+                    f'onsubmit="return confirm(\'Excluir {_esc(p["nome"])} de vez? '
+                    f'Só é possível porque não há nenhuma ficha com esse nome. Não tem volta.\')">'
+                    '<button type="submit" '
+                    'style="background:none;border:none;color:#adb5bd;font-size:0.82em;'
+                    'cursor:pointer;text-decoration:underline;font-family:inherit;padding:0">'
+                    'excluir</button></form>'
+                )
+            else:
+                botao_excluir = (
+                    '<span title="Tem ficha usando este nome — só dá para desativar" '
+                    'style="color:#ced4da;font-size:0.82em;cursor:default">excluir</span>'
+                )
+
             linhas_tabela += f"""
-            <tr>
+            <tr style="{estilo_linha}">
                 <td style="font-family:ui-monospace,monospace;font-size:1.1em;
                             font-weight:700;color:#1a1a2e;letter-spacing:1px">
                     {_esc(p['letra'])}
                 </td>
-                <td style="font-weight:600">{_esc(p['nome'])}</td>
+                <td style="font-weight:600">{selo}{_esc(p['nome'])}</td>
                 <td style="text-align:center;{_cor_icone(p['tem_foto'])}">{_icone(p['tem_foto'])}</td>
                 <td style="text-align:center;{_cor_icone(p['tem_audio'])}">{_icone(p['tem_audio'])}</td>
                 <td style="text-align:center;{_cor_icone(p['tem_video'])}">{_icone(p['tem_video'])}</td>
+                <td style="text-align:center">
+                    <div style="display:flex;gap:10px;align-items:center;justify-content:center">
+                        <form action="/profissionais/{p['id']}/ativo" method="post" style="margin:0">
+                            {botao}
+                        </form>
+                        {botao_excluir}
+                    </div>
+                </td>
             </tr>"""
     else:
         linhas_tabela = """
             <tr>
-                <td colspan="5" style="text-align:center;color:#adb5bd;padding:24px">
+                <td colspan="6" style="text-align:center;color:#adb5bd;padding:24px">
                     Nenhum profissional cadastrado ainda.
                 </td>
             </tr>"""
@@ -2655,6 +3068,10 @@ def _pagina_profissionais(
                                    color:#6c757d;text-transform:uppercase;font-size:0.78em;
                                    letter-spacing:0.4px;border-bottom:1px solid #dee2e6;
                                    width:70px">Vídeo</th>
+                        <th style="padding:9px 12px;text-align:center;background:#f8f9fa;
+                                   color:#6c757d;text-transform:uppercase;font-size:0.78em;
+                                   letter-spacing:0.4px;border-bottom:1px solid #dee2e6;
+                                   width:160px">Situação</th>
                     </tr>
                 </thead>
                 <tbody>
