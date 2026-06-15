@@ -1433,6 +1433,19 @@ Configurações do Sistema → Privacidade e Segurança → Acesso Total ao Disc
 
 ## 13.1. Próximos passos
 
+> **⏱️ ESTADO ATUAL — sessão 26 (2026-06-15).** A lista numerada abaixo é histórica (era da
+> sessão 9). O foco vivo do projeto hoje é outro — ver o **organograma_GMA.md** (mapa vivo) para
+> o quadro atual. Resumo do ponto em que paramos:
+> - **Passo 2 do Matcher (resolução de empate no painel): IMPLEMENTADO e APROVADO** no teste
+>   ponta a ponta com o sistema inteiro no ar (sessão 26). Operador resolve empate → match manual
+>   gravado, candidato descartado, cartão segue pra Camada 2. Teste em `teste_passo2_matcher.py`.
+> - **Próximo build natural: a Nova Ficha v2** — começar pela **Fatia 1** (tabela `profissionais`
+>   por tipo, na Camada 3 via `banco-dados-gma`). Plano completo de fatias em
+>   `desenho_nova_ficha_v2_GMA.md` §11. Inclui agora a **letra sequencial** por profissional
+>   (A,B,C… para as câmeras de identificação — pista visual, nunca autoridade de identidade; §5.1).
+> - **No radar (não agora):** integração entrega↔planilha↔IA (fonte única), mural dos câmeras
+>   (2º monitor), login/papéis (Camada 5).
+
 1. **PDF Overview — PRÓXIMA SESSÃO:** criar o gerador de PDF no estilo **Overview** (dashboard +
    folha de contato) que **lê** o `manifesto.json` (mídia) + `.sppo` (integridade) e só **desenha**
    (não extrai nada). Briefing completo na **§13.4**. Material de teste (manifesto + 224 frames)

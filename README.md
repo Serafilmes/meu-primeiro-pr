@@ -26,7 +26,7 @@ prepara o cartão para reutilização — com **segurança absoluta do material*
 
 | # | Camada | Estado |
 |---|---|---|
-| 1 | Check-in e identificação do cartão | ✅ Pronto (ficha própria com gabarito + edição; Matcher seguro; perfil que aprende) |
+| 1 | Check-in e identificação do cartão | ✅ Pronto (ficha própria com gabarito + edição; Matcher seguro + resolução de empate no painel; perfil que aprende) |
 | 2 | Transferência (cópia + checksum MD5 + relatório) | ✅ Pronto (validado com cartão real) |
 | 3 | Banco de dados (fonte única + telas) | ⚠️ Quase (Kanban e Planilha locais no ar; Google Sheets real pendente) |
 | 4 | Auditoria e devolução do cartão (Parashoot) | ✅ Pronto (ciclo de vida completo testado) |

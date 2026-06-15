@@ -9,7 +9,7 @@
 > O sistema guarda o dado em um lugar só; as telas são jeitos diferentes de LER
 > esse mesmo dado. Nada diverge.
 >
-> Última atualização: 2026-06-14 (sessão 24 — DESENHO: Passo 2 do Matcher fechado: botão de resolução de empate no painel, tela de confirmação com destino previsto, candidatos descartados ficam auditáveis; referência em `desenho_passo2_matcher_GMA.md`)
+> Última atualização: 2026-06-15 (sessão 26 — Passo 2 do Matcher APROVADO no teste ponta a ponta com o sistema inteiro no ar; produto OK, 3 ajustes no script de teste; nota da letra sequencial por profissional para as câmeras de identificação, em `desenho_nova_ficha_v2_GMA.md` §5.1)
 
 ---
 
@@ -187,6 +187,24 @@ Nenhuma decisão foi à toa. Cada uma resolveu um problema que apareceu
               'revisar' (tem arquivo grande não reconhecido → chama o operador).
            🛡️ A lista EXTENSOES é a guardiã; em dúvida prefere 'revisar' a pular footage.
               ⚠️ mudanças ainda NÃO commitadas (leitor_midia.py, flask_gma.py)
+
+14/06  S25 🛠️ BUILD do Passo 2 do Matcher (resolução de empate no painel)
+           🐛 Teste ponta a ponta pegou 2 bugs que os autotestes dos agentes não viram:
+              Flask 500 (variável html sombreava o módulo) + Matcher não gravava candidatos
+           ✅ Corrigidos; botão "Confirmar" funcionando no painel
+
+15/06  S26 🧪 TESTE ponta a ponta do Passo 2 com o sistema INTEIRO no ar → APROVADO ✅
+              empate JOAO×PAULO: operador confirma JOAO → match manual gravado,
+              PAULO descartado e devolvido à fila, cartão segue pra Camada 2
+           🐛 O produto estava certo; o SCRIPT de teste precisou de 3 ajustes pelo
+              descompasso "cartão forjado × processos vigias rodando":
+              (1) material marcado como já analisado p/ o Leitor não rebaixar o volume falso;
+              (2) modo --verificar com len>=4 (remontava o cenário e apagava o match);
+              (3) verificador aceita "matched ou além" (Camada 2 avança o status)
+           🔶 NOTA: cada profissional cadastrado ganha uma LETRA (A,B,C…) p/ as câmeras
+              de identificação — pista visual, NUNCA autoridade de identidade
+              (a "câmera B" do set pode não ser a B). Em desenho_nova_ficha_v2 §5.1
+           💾 Commitado (sessão 26): teste + nota da ficha
 ```
 
 ---
