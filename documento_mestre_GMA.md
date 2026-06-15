@@ -3,9 +3,33 @@
 
 > Documento de arquitetura e estado do projeto. Serve como contexto completo para
 > continuar o desenvolvimento (inclusive em sessões do Claude Code).
-> Última atualização: 2026-06-14 (sessão 25 — BUILD: Passo 2 do Matcher IMPLEMENTADO e testado ponta a ponta. Tabela `match_candidatos` (que estava só desenhada, nunca criada) construída; `confirmar_match` atômica; Matcher persiste candidatos no empate + função de confirmação manual; painel com botões, tela de resumo (destino previsto) e disparo da transferência. 2 bugs pegos pelo teste de ciclo e corrigidos.)
+> Última atualização: 2026-06-15 (sessão 27 — BUILD: Fatias 1+2 da Nova Ficha v2. Tabela `profissionais` (nome + booleanos foto/áudio/vídeo + letra sequencial imutável) em `banco_dados.py`, com migração não-destrutiva `migrar_schema_profissionais`; rota `/profissionais` (cadastro + lista + aba) em `flask_gma.py`. Testado via test client Flask, 13/13 incluindo bloqueio de acesso remoto (403).)
 
-## Estado atual (2026-06-14)
+## Estado atual (2026-06-15)
+
+**✅ Sessão 27 (2026-06-15) — BUILD: Fatias 1 e 2 da Nova Ficha v2:**
+
+Sessão de **build** integrando duas fatias já desenhadas e auto-testadas (`nova-ficha-v2-desenho`,
+`letra-sequencial-profissional`), conduzida pelo orquestrador.
+
+- **Fatia 1 — banco (`banco_dados.py`):** nova tabela `profissionais` (`nome` UNIQUE, `tem_foto`,
+  `tem_audio`, `tem_video`, `letra` UNIQUE, `criado_em`). Funções `_proxima_letra` (base-26 estilo
+  Excel: A…Z, AA…), `criar_profissional` (normaliza nome p/ maiúsculas, exige ≥1 tipo, atribui letra
+  imutável), `listar_profissionais` (ordena por `length(letra), letra`; filtro opcional por tipo).
+  Migração `migrar_schema_profissionais` chamada por `inicializar_banco` — não-destrutiva.
+- **Fatia 2 — Flask (`flask_gma.py`):** rota `GET/POST /profissionais` (tabela dos cadastrados +
+  formulário de novo cadastro com erro inline e estado preservado) e auxiliar `_pagina_profissionais`.
+  Nova aba **Profissionais** em `barra_abas()`. Acesso remoto bloqueado automaticamente pelo portão
+  existente (`_portao_de_acesso` → 403), sem mudança no portão.
+- **A letra é pista visual das câmeras no set, NÃO autoridade de identidade** (a "B" do set pode não
+  ser a "B" do cadastro) — quem decide identidade segue sendo o Matcher.
+- **Testes:** 13/13 via test client Flask (banco vazio, cadastro com letra A, duplicado → erro inline
+  "já está cadastrado", sem tipo → "ao menos um tipo", remoto GET/POST → 403, aba presente).
+  ⚠️ O test client usa o `gma.db` real (caminho fixo em `CAMINHO_BANCO`, não há env var de override);
+  o "JOAO" de teste foi inserido e **removido** ao final — banco voltou limpo.
+- **Próximo passo:** Fatia 3 — dropdown de nome filtrado na `/ficha` (escolher o profissional
+  cadastrado em vez de digitar livre).
+
 
 **✅ Sessão 25 (2026-06-14) — BUILD: Passo 2 do Matcher (resolução de empate no painel):**
 

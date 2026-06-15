@@ -1232,7 +1232,7 @@ CSS_ABAS = """
 
 
 def barra_abas(ativa):
-    """Barra de navegação entre as telas. 'ativa' = ficha|operacao|kanban|planilha."""
+    """Barra de navegação entre as telas. 'ativa' = ficha|operacao|kanban|planilha|profissionais."""
     def classe(nome):
         return "aba ativa" if nome == ativa else "aba"
     return f"""
@@ -1241,6 +1241,7 @@ def barra_abas(ativa):
         <a class="{classe('operacao')}" href="/">Operação</a>
         <a class="{classe('kanban')}" href="/kanban">Acompanhamento</a>
         <a class="{classe('planilha')}" href="/planilha">Planilha de Entrega</a>
+        <a class="{classe('profissionais')}" href="/profissionais">Profissionais</a>
     </nav>"""
 
 
@@ -2479,6 +2480,250 @@ def match_iniciar(cartao_id):
         </div>"""
         return _pagina("Erro — match", "operacao", corpo), 409, \
             {"Content-Type": "text/html; charset=utf-8"}
+
+
+# ── ROTA: CADASTRO E LISTAGEM DE PROFISSIONAIS ────────────────────────────────
+
+@app.route("/profissionais", methods=["GET", "POST"])
+def profissionais():
+    """
+    GET  /profissionais → lista os profissionais cadastrados + formulário de novo cadastro.
+    POST /profissionais → cadastra um novo profissional e redireciona de volta.
+
+    Acesso: somente base (localhost). Remoto recebe 403 pelo portão existente.
+    """
+    # ── POST: cadastrar novo profissional ─────────────────────────────────────
+    if request.method == "POST":
+        nome_raw  = (request.form.get("nome") or "").strip()
+        tem_foto  = bool(request.form.get("tem_foto"))
+        tem_audio = bool(request.form.get("tem_audio"))
+        tem_video = bool(request.form.get("tem_video"))
+
+        erro_cadastro = None
+
+        if not nome_raw:
+            erro_cadastro = "O nome não pode ser vazio."
+        elif not (tem_foto or tem_audio or tem_video):
+            erro_cadastro = "Marque ao menos um tipo (Foto, Áudio ou Vídeo)."
+        elif not BANCO_DISPONIVEL:
+            erro_cadastro = "Banco de dados indisponível. Verifique banco_dados.py."
+        else:
+            try:
+                _conn = bd.obter_conexao()
+                bd.criar_profissional(
+                    _conn,
+                    nome_raw,
+                    {"foto": tem_foto, "audio": tem_audio, "video": tem_video},
+                )
+                _conn.close()
+                logger.info(
+                    f"PROFISSIONAIS | Cadastrado: {nome_raw.upper()} "
+                    f"| foto={tem_foto} audio={tem_audio} video={tem_video}"
+                )
+                return redirect("/profissionais")
+            except Exception as _err:
+                import sqlite3 as _sqlite3
+                if isinstance(_err, _sqlite3.IntegrityError):
+                    erro_cadastro = f"'{nome_raw.upper()}' já está cadastrado."
+                else:
+                    erro_cadastro = f"Erro ao cadastrar: {_err}"
+                logger.warning(f"PROFISSIONAIS | Erro no cadastro: {_err}")
+
+        # Houve erro → re-renderiza a página com a mensagem e preserva o digitado
+        return _pagina_profissionais(
+            erro=erro_cadastro,
+            nome_digitado=nome_raw,
+            foto_marcada=tem_foto,
+            audio_marcado=tem_audio,
+            video_marcado=tem_video,
+        )
+
+    # ── GET: exibir lista + formulário ────────────────────────────────────────
+    return _pagina_profissionais()
+
+
+def _pagina_profissionais(
+    erro=None,
+    nome_digitado="",
+    foto_marcada=False,
+    audio_marcado=False,
+    video_marcado=False,
+):
+    """
+    Renderiza a página de profissionais.
+    Separa a geração do HTML da lógica da rota para facilitar o reuso
+    (a rota POST chama esta função com os dados preservados em caso de erro).
+    """
+    # ── Carrega a lista do banco ───────────────────────────────────────────────
+    lista = []
+    aviso_banco = ""
+    if BANCO_DISPONIVEL:
+        try:
+            _conn = bd.obter_conexao()
+            lista = bd.listar_profissionais(_conn)
+            _conn.close()
+        except Exception as _err_lista:
+            aviso_banco = f"Não foi possível carregar a lista: {_err_lista}"
+    else:
+        aviso_banco = "Banco de dados indisponível."
+
+    # ── Monta as linhas da tabela ──────────────────────────────────────────────
+    def _icone(valor):
+        return "✓" if valor else "—"
+
+    def _cor_icone(valor):
+        return "color:#27ae60;font-weight:700" if valor else "color:#ced4da"
+
+    if lista:
+        linhas_tabela = ""
+        for p in lista:
+            linhas_tabela += f"""
+            <tr>
+                <td style="font-family:ui-monospace,monospace;font-size:1.1em;
+                            font-weight:700;color:#1a1a2e;letter-spacing:1px">
+                    {_esc(p['letra'])}
+                </td>
+                <td style="font-weight:600">{_esc(p['nome'])}</td>
+                <td style="text-align:center;{_cor_icone(p['tem_foto'])}">{_icone(p['tem_foto'])}</td>
+                <td style="text-align:center;{_cor_icone(p['tem_audio'])}">{_icone(p['tem_audio'])}</td>
+                <td style="text-align:center;{_cor_icone(p['tem_video'])}">{_icone(p['tem_video'])}</td>
+            </tr>"""
+    else:
+        linhas_tabela = """
+            <tr>
+                <td colspan="5" style="text-align:center;color:#adb5bd;padding:24px">
+                    Nenhum profissional cadastrado ainda.
+                </td>
+            </tr>"""
+
+    # ── Bloco de erro (POST com problema) ─────────────────────────────────────
+    bloco_erro = ""
+    if erro:
+        bloco_erro = f"""
+        <div style="background:#fdecea;border:1px solid #f5c6cb;color:#c0392b;
+                    border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:0.9em">
+            <strong>Erro:</strong> {_esc(erro)}
+        </div>"""
+
+    # ── Bloco de aviso de banco ────────────────────────────────────────────────
+    bloco_aviso = ""
+    if aviso_banco:
+        bloco_aviso = f"""
+        <div style="background:#fff3cd;border:1px solid #ffc107;color:#856404;
+                    border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:0.9em">
+            {_esc(aviso_banco)}
+        </div>"""
+
+    # ── Checkboxes com estado preservado ──────────────────────────────────────
+    def _checked(valor):
+        return "checked" if valor else ""
+
+    # ── Corpo da página ────────────────────────────────────────────────────────
+    corpo = f"""
+    <div style="display:grid;grid-template-columns:1fr 340px;gap:24px;align-items:start">
+
+        <!-- Tabela de profissionais cadastrados -->
+        <div>
+            <h2 style="font-size:1em;font-weight:700;color:#1a1a2e;margin-bottom:12px">
+                Profissionais cadastrados
+                <span style="font-size:0.8em;font-weight:400;color:#6c757d;margin-left:8px">
+                    ({len(lista)} {'profissional' if len(lista) == 1 else 'profissionais'})
+                </span>
+            </h2>
+            {bloco_aviso}
+            <table style="width:100%;border-collapse:collapse;background:#fff;
+                          border-radius:8px;overflow:hidden;
+                          box-shadow:0 1px 4px rgba(0,0,0,0.08);font-size:0.88em">
+                <thead>
+                    <tr>
+                        <th style="padding:9px 12px;text-align:left;background:#f8f9fa;
+                                   color:#6c757d;text-transform:uppercase;font-size:0.78em;
+                                   letter-spacing:0.4px;border-bottom:1px solid #dee2e6;
+                                   width:60px">Letra</th>
+                        <th style="padding:9px 12px;text-align:left;background:#f8f9fa;
+                                   color:#6c757d;text-transform:uppercase;font-size:0.78em;
+                                   letter-spacing:0.4px;border-bottom:1px solid #dee2e6">Nome</th>
+                        <th style="padding:9px 12px;text-align:center;background:#f8f9fa;
+                                   color:#6c757d;text-transform:uppercase;font-size:0.78em;
+                                   letter-spacing:0.4px;border-bottom:1px solid #dee2e6;
+                                   width:70px">Foto</th>
+                        <th style="padding:9px 12px;text-align:center;background:#f8f9fa;
+                                   color:#6c757d;text-transform:uppercase;font-size:0.78em;
+                                   letter-spacing:0.4px;border-bottom:1px solid #dee2e6;
+                                   width:70px">Áudio</th>
+                        <th style="padding:9px 12px;text-align:center;background:#f8f9fa;
+                                   color:#6c757d;text-transform:uppercase;font-size:0.78em;
+                                   letter-spacing:0.4px;border-bottom:1px solid #dee2e6;
+                                   width:70px">Vídeo</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {linhas_tabela}
+                </tbody>
+            </table>
+            <p style="color:#adb5bd;font-size:0.8em;margin-top:10px">
+                A letra é atribuída automaticamente na ordem de cadastro e é permanente.
+                Ela identifica visualmente as câmeras no set — é pista, não autoridade.
+            </p>
+        </div>
+
+        <!-- Formulário de novo cadastro -->
+        <div style="background:#fff;border-radius:8px;padding:20px 22px;
+                    box-shadow:0 1px 4px rgba(0,0,0,0.08)">
+            <h2 style="font-size:1em;font-weight:700;color:#1a1a2e;margin-bottom:16px">
+                Novo profissional
+            </h2>
+            {bloco_erro}
+            <form action="/profissionais" method="post">
+                <div style="margin-bottom:14px">
+                    <label style="display:block;font-size:0.85em;font-weight:600;
+                                  color:#495057;margin-bottom:5px">
+                        Nome <span style="color:#c0392b">★</span>
+                    </label>
+                    <input type="text" name="nome"
+                           value="{_esc(nome_digitado)}"
+                           placeholder="Ex.: JOAO"
+                           autocomplete="off"
+                           style="width:100%;padding:9px 12px;border:1px solid #ced4da;
+                                  border-radius:6px;font-size:0.9em;font-family:inherit">
+                </div>
+
+                <div style="margin-bottom:18px">
+                    <label style="display:block;font-size:0.85em;font-weight:600;
+                                  color:#495057;margin-bottom:8px">
+                        Tipos de material <span style="color:#c0392b">★</span>
+                    </label>
+                    <label style="display:flex;align-items:center;gap:8px;
+                                  margin-bottom:8px;cursor:pointer;font-size:0.9em">
+                        <input type="checkbox" name="tem_foto" {_checked(foto_marcada)}
+                               style="width:16px;height:16px">
+                        Foto
+                    </label>
+                    <label style="display:flex;align-items:center;gap:8px;
+                                  margin-bottom:8px;cursor:pointer;font-size:0.9em">
+                        <input type="checkbox" name="tem_audio" {_checked(audio_marcado)}
+                               style="width:16px;height:16px">
+                        Áudio
+                    </label>
+                    <label style="display:flex;align-items:center;gap:8px;
+                                  cursor:pointer;font-size:0.9em">
+                        <input type="checkbox" name="tem_video" {_checked(video_marcado)}
+                               style="width:16px;height:16px">
+                        Vídeo
+                    </label>
+                </div>
+
+                <button type="submit"
+                        style="width:100%;background:#1a1a2e;color:#fff;border:none;
+                               border-radius:6px;padding:10px;font-weight:700;
+                               font-size:0.9em;cursor:pointer;letter-spacing:0.3px">
+                    Cadastrar
+                </button>
+            </form>
+        </div>
+    </div>"""
+
+    return _pagina("Profissionais", "profissionais", corpo)
 
 
 # ── TRATAMENTO DE ERROS GLOBAIS ───────────────────────────────────────────────

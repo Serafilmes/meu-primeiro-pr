@@ -566,6 +566,10 @@ def inicializar_banco():
     # esta chamada explícita garante que bancos antigos sejam atualizados.
     migrar_schema_match_candidatos(conn)
 
+    # Migração incremental: cria a tabela profissionais (Nova Ficha v2) se ainda
+    # não existir. Guarda nome + tipos de material + letra sequencial imutável.
+    migrar_schema_profissionais(conn)
+
     return conn
 
 
@@ -1537,6 +1541,145 @@ def consultar_perfil(conn, nome):
     }
 
     return perfil
+
+
+# ── PROFISSIONAIS (Nova Ficha v2) ─────────────────────────────────────────────
+#
+# Tabela `profissionais`: nome + booleanos de tipo de material + letra sequencial
+# imutável (A, B, C…). A letra é pista visual das câmeras no set, NÃO autoridade
+# de identidade (a B do set pode não ser a B do cadastro).
+
+def migrar_schema_profissionais(conn):
+    """Cria a tabela `profissionais` se não existir. Segura para bancos existentes."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS profissionais (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome      TEXT    NOT NULL UNIQUE,
+            tem_foto  INTEGER NOT NULL DEFAULT 0,
+            tem_audio INTEGER NOT NULL DEFAULT 0,
+            tem_video INTEGER NOT NULL DEFAULT 0,
+            letra     TEXT    NOT NULL UNIQUE,
+            criado_em TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
+        )
+    """)
+    conn.commit()
+
+
+def _proxima_letra(conn):
+    """
+    Retorna a próxima letra disponível (A, B, C, …, Z, AA, AB, …).
+    A letra é baseada na contagem de profissionais já cadastrados — simples e
+    determinístico. Nunca recalculada após atribuída (imutável por design).
+    """
+    row = conn.execute("SELECT COUNT(*) FROM profissionais").fetchone()
+    n = row[0]  # 0 → A, 1 → B, …, 25 → Z, 26 → AA, …
+
+    # Codificação base-26 sem zero (estilo Excel: A..Z, AA..AZ, BA…)
+    resultado = []
+    n += 1  # transforma 0-based em 1-based para o algoritmo
+    while n > 0:
+        n, resto = divmod(n - 1, 26)
+        resultado.append(chr(ord('A') + resto))
+    return ''.join(reversed(resultado))
+
+
+def criar_profissional(conn, nome, tipos):
+    """
+    Cadastra um novo profissional e atribui a próxima letra sequencial.
+
+    Args:
+        conn:  conexão SQLite aberta.
+        nome:  nome do profissional (ex.: "JOAO"). UNIQUE — erro se duplicado.
+        tipos: dict com chaves "foto", "audio", "video" (bool ou 0/1).
+               Exemplo: {"foto": True, "audio": False, "video": True}
+
+    Returns:
+        dict com id, nome, tem_foto, tem_audio, tem_video, letra, criado_em.
+
+    Raises:
+        sqlite3.IntegrityError: se o nome já existir.
+        ValueError: se nenhum tipo for marcado.
+    """
+    nome = nome.strip().upper()
+    if not nome:
+        raise ValueError("Nome não pode ser vazio.")
+
+    tem_foto  = int(bool(tipos.get("foto",  False)))
+    tem_audio = int(bool(tipos.get("audio", False)))
+    tem_video = int(bool(tipos.get("video", False)))
+
+    if not (tem_foto or tem_audio or tem_video):
+        raise ValueError(f"Profissional '{nome}' precisa ter ao menos um tipo marcado.")
+
+    letra = _proxima_letra(conn)
+
+    conn.execute(
+        """
+        INSERT INTO profissionais (nome, tem_foto, tem_audio, tem_video, letra)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (nome, tem_foto, tem_audio, tem_video, letra),
+    )
+    conn.commit()
+
+    row = conn.execute(
+        "SELECT id, nome, tem_foto, tem_audio, tem_video, letra, criado_em "
+        "FROM profissionais WHERE nome = ?",
+        (nome,),
+    ).fetchone()
+
+    return {
+        "id":        row[0],
+        "nome":      row[1],
+        "tem_foto":  bool(row[2]),
+        "tem_audio": bool(row[3]),
+        "tem_video": bool(row[4]),
+        "letra":     row[5],
+        "criado_em": row[6],
+    }
+
+
+def listar_profissionais(conn, filtro_tipo=None):
+    """
+    Retorna profissionais cadastrados, ordenados pela letra (A → Z → AA…).
+
+    Args:
+        conn:         conexão SQLite aberta.
+        filtro_tipo:  "foto" | "audio" | "video" | None (todos).
+                      Filtra profissionais que têm aquele tipo marcado.
+
+    Returns:
+        Lista de dicts com id, nome, tem_foto, tem_audio, tem_video, letra.
+    """
+    COLUNAS_TIPO = {"foto": "tem_foto", "audio": "tem_audio", "video": "tem_video"}
+
+    if filtro_tipo is not None:
+        coluna = COLUNAS_TIPO.get(filtro_tipo.lower())
+        if coluna is None:
+            raise ValueError(f"filtro_tipo inválido: '{filtro_tipo}'. Use foto, audio ou video.")
+        sql = (
+            f"SELECT id, nome, tem_foto, tem_audio, tem_video, letra "
+            f"FROM profissionais WHERE {coluna} = 1 "
+            f"ORDER BY length(letra), letra"
+        )
+        rows = conn.execute(sql).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT id, nome, tem_foto, tem_audio, tem_video, letra "
+            "FROM profissionais ORDER BY length(letra), letra"
+        ).fetchall()
+
+    return [
+        {
+            "id":        r[0],
+            "nome":      r[1],
+            "tem_foto":  bool(r[2]),
+            "tem_audio": bool(r[3]),
+            "tem_video": bool(r[4]),
+            "letra":     r[5],
+        }
+        for r in rows
+    ]
 
 
 # ── PONTO DE ENTRADA (INICIALIZAÇÃO DIRETA) ───────────────────────────────────
