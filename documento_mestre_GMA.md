@@ -3,9 +3,101 @@
 
 > Documento de arquitetura e estado do projeto. Serve como contexto completo para
 > continuar o desenvolvimento (inclusive em sessões do Claude Code).
-> Última atualização: 2026-06-15 (sessão 28 — BUILD: Fatia 3 da Nova Ficha v2 (TIPO em caixinhas multi-seleção + NOME em dropdown fechado filtrado por tipo, com 2º dropdown de áudio); ativar/desativar profissional (soft-delete, coluna `ativo`) e excluir definitivo só de sobra real (nome sem nenhuma ficha); decisão de conceito da "fonte de material" (PGM/online) e da origem cartão×pasta satélite — `desenho_nova_ficha_v2_GMA.md` §12. Commit `bc904bb`.)
+> Última atualização: 2026-06-15 (sessão 30 — BUILD: Fatia 5 da Nova Ficha v2 (a ÚLTIMA) + regra do ÁUDIO À PARTE. Fatia 5: grava multi-tipo como booleanos + 2º nome; Matcher entende multi-tipo. Regra nova do idealizador: ÁUDIO é SEMPRE transferência à parte → a ficha mista (foto/vídeo + áudio) é GRAVADA como DUAS fichas ligadas por `entrega_id` (match/linha/transferência próprios para o áudio); os 2 nomes na tela são só conveniência de digitação. Foto+vídeo na estrutura de pastas = decidir junto com a Camada 2 (anotado). **Nova Ficha v2 COMPLETA** (Fatias 1-5). Testado ponta a ponta. Sem commit ainda.)
 
 ## Estado atual (2026-06-15)
+
+**✅ Sessão 30 (2026-06-15) — BUILD: Fatia 5 da Nova Ficha v2 (gravar multi-tipo + 2 nomes) — FECHA a Nova Ficha v2:**
+
+Sessão de **build** conduzida pelo orquestrador, sobre `banco_dados.py`, `flask_gma.py` e `matcher.py`.
+Última fatia: até aqui a ficha já *coletava* multi-tipo e 2 nomes (Fatia 3), mas o envio ia "disfarçado"
+em campos hidden compatíveis com o backend antigo (`tipo_material="FOTO+AUDIO"`, `nome`, e um `nome_audio`
+que o backend **ignorava**). A Fatia 5 grava isso **de verdade**.
+
+- **Banco (`banco_dados.py`):** `formularios` ganhou 4 colunas (migração não-destrutiva): `tem_foto`,
+  `tem_audio`, `tem_video` (booleanos — decisão §7 do desenho: conjunto fixo pequeno = colunas
+  marca-sim/não, facilitam contar na planilha e ajudam o Matcher) + `nome_audio` (o 2º nome — operador
+  de som, quase sempre outra pessoa). `gravar_formulario` e a lista branca de `atualizar_formulario`
+  passaram a incluir esses campos. `tipo_material` segue existindo como texto canônico (ex.: "FOTO+VIDEO")
+  para compatibilidade/exibição; a verdade estruturada são os booleanos.
+- **Flask (`flask_gma.py`):** dois helpers — `_derivar_tipos` ("FOTO+VIDEO" → booleanos, robusto ao
+  separador) e `_tipo_display` (→ "Foto · Vídeo", nunca por espaço). `_processar_e_salvar_formulario`
+  deriva os booleanos, captura o `nome_audio` (antes jogado fora) e grava tudo — no banco **e** no JSON
+  da fila (o Matcher lê de lá). A **edição** de ficha (`_normalizar_campos_ficha`) mantém os booleanos
+  em sincronia quando o tipo é editado. **Planilha** e **fichas recentes** exibem o multi-tipo com `·` e
+  o 2º nome ("+ FULANO (áudio)"); a coluna Câmera (vazia desde a Fatia 4) saiu das fichas recentes.
+- **Matcher (`matcher.py`):** o critério de tipo (+1) entende multi-tipo: quebra o `tipo_material` da
+  ficha no conjunto de tipos marcados e pontua se o **tipo predominante do cartão** estiver entre eles.
+  Ficha de tipo único continua idêntica ao comportamento anterior (conjunto de 1 elemento).
+- **🔶 REGRA DO IDEALIZADOR (mesma sessão) — ÁUDIO É SEMPRE TRANSFERÊNCIA À PARTE:** mesmo quando a ficha
+  junta áudio a um vídeo, isso é só **conveniência de digitação**. Na prática o áudio vem em **outro
+  cartão** (o gravador, quase sempre outra pessoa) → tem que virar **match, linha de planilha e
+  transferência próprios**. Implementado: `_processar_e_salvar_formulario` agora **divide** a ficha mista
+  (áudio + foto/vídeo + nome_audio) em **duas fichas** com o mesmo `entrega_id` — uma do foto/vídeo (nome,
+  tipo sem áudio, guarda `nome_audio` como informação) e uma do áudio (nome = nome_audio, tipo AUDIO). Cada
+  uma casa com seu próprio cartão. Coluna nova `entrega_id` em `formularios` (migração não-destrutiva); o
+  Matcher roda uma vez só após gravar as duas. Só áudio, ou só foto/vídeo → uma ficha (sem divisão).
+  Testado: Foto+Áudio (JOAO+MARINA) → 2 fichas ligadas; Foto+Vídeo → 1; só Áudio → 1.
+- **🔶 DECISÃO ADIADA (foto+vídeo na estrutura de pastas):** quando o profissional entrega foto **e** vídeo,
+  isso deve se refletir nas **pastas** (hoje `tipo_material` vira nome de pasta em `transferencia.py:347` —
+  uma ficha "FOTO+VIDEO" geraria uma pasta literal `FOTO+VIDEO`, errado). O idealizador decidiu **resolver
+  junto com a Camada 2** (transferência), quando formos mexer no destino — anotado, não construído nesta
+  sessão.
+- **Testado ponta a ponta (laboratório limpo ao fim):** migração das 4 colunas no `gma.db` real; helpers
+  de tipo; Matcher (FOTO+VIDEO × cartão VIDEO → +1; VIDEO × cartão FOTO → 0; tipo único intacto);
+  `gravar_formulario` gravando booleanos (1,1,0) e `nome_audio` normalizado; **POST `/ficha` real** com
+  ficha mista (Foto+Áudio, 2 nomes) → grava booleanos + `nome_audio`, câmera vazia (Fatia 4), e o JSON
+  da fila carrega os campos novos. Todos os registros/JSON de teste removidos (inclusive os eventos de
+  auditoria com FK — ordem de limpeza: eventos → ficha).
+- **Arquivos tocados:** `banco_dados.py`, `flask_gma.py`, `matcher.py`. **Sem commit ainda** (a critério
+  do idealizador).
+- **⏭️ PRÓXIMO PASSO:** Nova Ficha v2 está **completa**. Pendências do desenho/decisões que ficaram para
+  depois: **foto+vídeo na estrutura de pastas** (resolver com a Camada 2); **origem do material**
+  (cartão × pasta satélite/link — §12, fatia futura) e a leitura unificada Operação→banco (§9, radar).
+  Fora da ficha, o foco com prazo é o **Andar 7 (marca/identidade visual, 20/06)**.
+
+**✅ Sessão 29 (2026-06-15) — BUILD: Fatia 4 da Nova Ficha v2 (câmera no cadastro do profissional):**
+
+Sessão de **build** conduzida pelo orquestrador, sobre `banco_dados.py`, `flask_gma.py` e `matcher.py`.
+Fecha a decisão da sessão 23 ("a câmera sai da ficha"): a câmera agora **mora no cadastro do
+profissional**, não é mais perguntada na ficha. O Matcher continua usando o critério +3 — só mudou
+**de onde lê** a câmera.
+
+- **Banco (`banco_dados.py`):** coluna `camera TEXT` em `profissionais` (migração não-destrutiva via
+  `ALTER TABLE … ADD COLUMN`, igual ao padrão da coluna `ativo`; `gma.db` existente migrado sem perder
+  dados). `criar_profissional(…, camera=None)` aceita e grava; `listar_profissionais` devolve `camera`.
+  Duas funções novas: `definir_camera_profissional(conn, id, camera)` (edição inline; vazio → NULL) e
+  `camera_do_profissional(conn, nome)` (busca por nome, ignora maiúsculas/espaços — fonte do +3).
+- **Flask (`flask_gma.py`):** aba Profissionais ganhou **coluna Câmera** com **mini-form inline** de
+  edição (rota `POST /profissionais/<id>/camera`) e **campo Câmera (opcional)** no cadastro de novo
+  profissional. A **ficha (`/ficha`)** perdeu o campo câmera **nas duas caras** (some do GET e do POST;
+  datalist e linhas de resumo que citavam câmera também removidos). `camera` saiu de
+  `CAMPOS_OBRIGATORIOS` — senão nenhuma ficha enviaria sem o campo (coerente com a sessão 23).
+- **Matcher (`matcher.py`):** `calcular_pontuacao` busca a câmera do **cadastro** pelo nome da ficha
+  (helper `_camera_do_cadastro`, best-effort/offline-first). **Queda de volta** para a câmera da ficha
+  se o nome não estiver cadastrado ou estiver sem câmera — preserva o canal Tally de reserva, que ainda
+  pode declarar câmera. Sem câmera em lugar nenhum → o +3 simplesmente não pontua (nunca derruba o match).
+- **Testado ponta a ponta (laboratório limpo ao fim):** (1) migração da coluna no `gma.db` real; (2)
+  cadastro de profissional com câmera "Sony" + ficha **sem campo câmera** (nome só) + cartão Sony →
+  `câmera:+3` confirmado; controle: cadastro sem câmera → +3 **não** entra; (3) test client Flask: GET
+  `/ficha` sem `name="camera"`, GET `/profissionais` com coluna/edição/campo de câmera, POST de cadastro
+  e edição inline gravando e zerando para NULL. Todos os registros de teste removidos.
+- **O que NÃO mudou:** letras, tipos, ativar/desativar/excluir; o resto da aba Profissionais; Fatias 1–3;
+  a existência do critério +3 do Matcher (só a fonte da câmera).
+- **🐛 BUG CORRIGIDO na mesma sessão (letra sequencial):** ao excluir o profissional PADILHA (letra C),
+  qualquer cadastro novo passou a falhar dizendo "nome já cadastrado". Causa: `_proxima_letra` calculava
+  a letra por `COUNT(*)` — com A, B, D no banco (C apagado), `COUNT=3` recalculava "D", que colidia com
+  a letra UNIQUE do SERAFA; o `except` da rota ainda atribuía o erro ao nome (mascarava a colisão de
+  letra). Conserto: `_proxima_letra` passou a se basear na **MAIOR letra já atribuída** (helpers
+  `_indice_para_letra`/`_letra_para_indice`), nunca na contagem — robusto a exclusões e nunca colide.
+  Design intencional: apagar um nome do meio **queima** a letra (ela não volta — reusá-la confundiria o
+  set); só o último excluído libera a posição. A mensagem de erro do Flask agora distingue colisão de
+  nome × de letra. Memória: `letra-sequencial-profissional`.
+- **Arquivos tocados:** `banco_dados.py`, `flask_gma.py`, `matcher.py`. **Sem commit ainda** (a critério
+  do idealizador).
+- **⏭️ PRÓXIMO PASSO:** Fatia 5 — gravar a forma nova de verdade (multi-tipo + 2 nomes: nome + nome_audio),
+  hoje ainda enviada por campos hidden compatíveis com o backend antigo. Origem do material
+  (cartão × pasta satélite) segue como fatia futura.
 
 **✅ Sessão 28 (2026-06-15) — BUILD: Fatia 3 + gestão de profissionais (ativar/desativar/excluir):**
 

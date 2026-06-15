@@ -9,7 +9,7 @@
 > O sistema guarda o dado em um lugar só; as telas são jeitos diferentes de LER
 > esse mesmo dado. Nada diverge.
 >
-> Última atualização: 2026-06-15 (sessão 28 — BUILD da Nova Ficha v2 chegou na Fatia 3: TIPO em caixinhas + NOME em dropdown fechado filtrado; aba Profissionais ganhou ativar/desativar (some dos dropdowns sem perder a letra) e excluir só de sobra real; decidido que a aba é "fonte de material" (pode ser PGM/online) e a origem cartão×pasta satélite mora no cadastro mas funciona no check-in — `desenho_nova_ficha_v2_GMA.md` §12. Commit `bc904bb`.)
+> Última atualização: 2026-06-15 (sessão 30 — BUILD da Fatia 5, a ÚLTIMA: a ficha passou a GRAVAR a forma nova de verdade — multi-tipo como booleanos (tem_foto/tem_audio/tem_video) + 2º nome (nome_audio) em `formularios`; o Matcher entende multi-tipo no +1; Planilha e fichas recentes exibem multi-tipo (·) e o 2º nome. **Nova Ficha v2 COMPLETA (Fatias 1-5).** Testado ponta a ponta; sem commit ainda.)
 
 ---
 
@@ -26,9 +26,10 @@ ANDAR                                       PROGRESSO
         └─ Matcher seguro + perfil que aprende cada pessoa
         └─ ficha PRÓPRIA no GMA (gabarito + edição) · online c/ senha · QR
         └─ NOVO: cartão SEM MÍDIA tratado em 2 níveis (ignora × chama operador)
-        └─ Nova Ficha v2 em build: Fatias 1-3 ✅ (aba Profissionais com
-           ativar/desativar/excluir; TIPO em caixinhas + NOME dropdown fechado).
-           Falta Fatia 4 (câmera vem do Leitor) e 5 (gravar multi-tipo + 2 nomes)
+        └─ Nova Ficha v2 COMPLETA ✅ (Fatias 1-5): aba Profissionais com
+           ativar/desativar/excluir + CÂMERA no cadastro; TIPO em caixinhas +
+           NOME dropdown fechado; câmera saiu da ficha → Matcher lê do cadastro;
+           grava multi-tipo (booleanos) + 2º nome (áudio) — Matcher entende multi-tipo
 2 · Transferência (copiar com segurança)    ████████████  PRONTO ✅
 3 · Banco de dados (guardar tudo)           ██████████░░  QUASE
                                                           (Kanban + Planilha no ar; falta Google Sheets real)
@@ -213,6 +214,32 @@ Nenhuma decisão foi à toa. Cada uma resolveu um problema que apareceu
               mora no cadastro mas funciona no check-in. Em desenho_nova_ficha_v2 §12
            💾 Commitado (sessão 26): teste + nota da ficha
            💾 Commitado (sessão 28): Fatia 3 + ativar/desativar/excluir profissional + §12
+
+15/06  S29 🛠️ BUILD Fatia 4 — a CÂMERA saiu da ficha e foi pro cadastro do profissional
+           🔶 DECISÃO (já era da S23): câmera não se pergunta mais na ficha; mora no
+              cadastro (coluna `camera` em profissionais) — sai de CAMPOS_OBRIGATORIOS
+           🔗 Matcher: o critério +3 agora lê a câmera do cadastro pelo nome da ficha
+              (cai de volta pra câmera da ficha se não houver cadastro — preserva o Tally)
+           🖥️ Aba Profissionais: coluna Câmera com edição inline + campo no cadastro
+           🧪 Testado: JOÃO/Sony cadastrado → cartão Sony → +3 SEM campo na ficha ✅
+           🐛 Bug pego no teste do idealizador: ao excluir um profissional do MEIO, a letra
+              colidia (era por COUNT) e travava qualquer cadastro novo dizendo "nome já existe"
+           🔧 _proxima_letra passou a usar a MAIOR letra já dada; letra de quem sai fica
+              queimada (não volta) — todo cadastro novo recebe a próxima letra
+           💾 Sem commit ainda (a critério do idealizador)
+
+15/06  S30 🛠️ BUILD Fatia 5 (a ÚLTIMA) — a ficha passa a GRAVAR a forma nova de verdade
+           🗄️ formularios ganha booleanos tem_foto/tem_audio/tem_video + nome_audio
+              (antes o multi-tipo e o 2º nome viajavam em hidden e o backend ignorava)
+           🔗 Matcher entende multi-tipo no +1 (predominante do cartão ∈ tipos marcados)
+           🖥️ Planilha e fichas recentes exibem multi-tipo (Foto · Vídeo) e o 2º nome (áudio)
+           🔶 REGRA: ÁUDIO é SEMPRE transferência à parte (vem em outro cartão). A ficha
+              mista vira DUAS fichas ligadas por entrega_id (foto/vídeo + áudio) → cada uma
+              com match/linha/transferência próprios. Os 2 nomes na tela = só facilitar a entrada
+           🔶 ADIADO p/ Camada 2: foto+vídeo do mesmo profissional na estrutura de PASTAS
+           🧪 Testado ponta a ponta: Foto+Áudio → 2 fichas; Foto+Vídeo → 1; só Áudio → 1 ✅
+           🎉 Nova Ficha v2 COMPLETA (Fatias 1-5)
+           💾 Sem commit ainda (a critério do idealizador)
 ```
 
 ---
@@ -227,6 +254,7 @@ Nenhuma decisão foi à toa. Cada uma resolveu um problema que apareceu
 | 💰 **Sem IA no ciclo principal** — só no andar 6, opcional | Custo mínimo; o ciclo roda grátis e offline |
 | ⚡ **Tudo funciona sem internet** | A nuvem só sincroniza depois |
 | 🤖 **Autonomia máxima** — o operador é o último recurso | Sem filas no set |
+| 🎙️ **Áudio é SEMPRE transferência à parte** | Vem em outro cartão (gravador); juntar áudio a vídeo na ficha é só conveniência de digitação — por baixo são match/linha/transferência separados |
 
 ---
 

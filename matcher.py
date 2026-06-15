@@ -190,6 +190,29 @@ def atualizar_json(caminho_pasta, nome_arquivo, atualizacoes):
 
 # ── LÓGICA DE PONTUAÇÃO ───────────────────────────────────────────────────────
 
+def _camera_do_cadastro(nome):
+    """
+    Busca a câmera cadastrada para um profissional (pelo nome da ficha) na tabela
+    `profissionais`. Fonte do critério +3 na Nova Ficha v2: a câmera saiu da ficha
+    e passou a viver no cadastro.
+
+    Best-effort e offline-first: se o banco não estiver disponível ou o nome não
+    estiver cadastrado, devolve None (o critério +3 cai de volta para a câmera da
+    ficha, e na falta dela simplesmente não pontua). Nunca derruba o match.
+    """
+    if not nome or not str(nome).strip():
+        return None
+    try:
+        import banco_dados as _bd
+        _conn = _bd.inicializar_banco()
+        try:
+            return _bd.camera_do_profissional(_conn, nome)
+        finally:
+            _conn.close()
+    except Exception:
+        return None
+
+
 def calcular_pontuacao(dados_form, dados_material):
     """
     Calcula a pontuação de compatibilidade entre um formulário e um material.
@@ -211,8 +234,13 @@ def calcular_pontuacao(dados_form, dados_material):
     detalhes = []  # para debug/log
 
     # ── Critério 1: câmera bate (+3) ──────────────────────────────────────────
+    # Na Nova Ficha v2 a câmera NÃO vem mais da ficha: mora no cadastro do
+    # profissional. O Matcher busca a câmera do cadastro pelo nome da ficha; se o
+    # nome não está cadastrado (ou está sem câmera), cai de volta para a câmera da
+    # ficha — preserva o canal Tally de reserva, que ainda pode declarar câmera.
     marca_material = (dados_material.get("marca_camera") or "").strip().lower()
-    camera_form = (dados_form.get("camera") or "").strip().lower()
+    camera_cadastro = _camera_do_cadastro(dados_form.get("nome"))
+    camera_form = (camera_cadastro or dados_form.get("camera") or "").strip().lower()
 
     # Comparação flexível: verifica se a câmera do formulário aparece dentro
     # do nome da câmera do material (ou vice-versa). Isso resolve casos como
@@ -262,10 +290,16 @@ def calcular_pontuacao(dados_form, dados_material):
     tipo_form = (dados_form.get("tipo_material") or "").strip().upper()
     contagem_tipo = dados_material.get("contagem_tipo")  # pode ser None ou {}
 
-    if tipo_form and contagem_tipo and isinstance(contagem_tipo, dict):
+    # Nova Ficha v2 (Fatia 5): a ficha pode marcar MAIS DE UM tipo (ex.: "FOTO+VIDEO").
+    # Quebramos o texto nos tipos marcados (FOTO/AUDIO/VIDEO) e pontuamos se o tipo
+    # predominante do cartão estiver ENTRE eles. Para ficha de tipo único, o
+    # conjunto tem 1 elemento e o comportamento é idêntico ao de antes.
+    tipos_form = {t for t in ("FOTO", "AUDIO", "VIDEO") if t in tipo_form}
+
+    if tipos_form and contagem_tipo and isinstance(contagem_tipo, dict):
         # Identifica o tipo com maior contagem de arquivos no cartão
         tipo_predominante = max(contagem_tipo, key=contagem_tipo.get).upper()
-        if tipo_form == tipo_predominante:
+        if tipo_predominante in tipos_form:
             pontos += 1
             detalhes.append("tipo:+1")
 

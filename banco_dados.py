@@ -222,8 +222,27 @@ def inicializar_banco():
                 -- Câmera usada (ex: "GoPro", "Sony FX6", "Canon R5")
                 camera          TEXT,
 
-                -- Tipo de material gravado (ex: "VIDEO", "FOTO", "AUDIO")
+                -- Tipo de material gravado. Texto canônico interno unindo os tipos
+                -- marcados (ex: "VIDEO", "FOTO+VIDEO"). Mantido para compatibilidade
+                -- e exibição; a verdade estruturada são os booleanos abaixo.
                 tipo_material   TEXT,
+
+                -- Multi-seleção de tipo (Nova Ficha v2, §7): conjunto fixo pequeno =
+                -- colunas booleanas. Facilitam contar na planilha e ajudam o Matcher.
+                tem_foto        INTEGER NOT NULL DEFAULT 0,
+                tem_audio       INTEGER NOT NULL DEFAULT 0,
+                tem_video       INTEGER NOT NULL DEFAULT 0,
+
+                -- Segundo nome: o operador de áudio, quando a entrega tem áudio junto
+                -- de foto/vídeo (o áudio quase sempre é outra pessoa). NULL se não houver.
+                -- Informativo: o áudio vira uma ficha PRÓPRIA (ver entrega_id abaixo).
+                nome_audio      TEXT,
+
+                -- Liga fichas que vieram de um mesmo check-in misto. O áudio é sempre
+                -- transferência à parte (cartão/match/linha próprios), então uma ficha
+                -- "foto/vídeo + áudio" é gravada como DUAS fichas com o mesmo entrega_id.
+                -- NULL quando a ficha não faz parte de uma entrega dividida.
+                entrega_id      TEXT,
 
                 -- Data de gravação informada pelo profissional (formato AAAA-MM-DD)
                 data_gravacao   TEXT,
@@ -634,7 +653,9 @@ def registrar_evento(conn, tipo, descricao, cartao_id=None, formulario_id=None, 
 
 def gravar_formulario(conn, id_form, nome, camera, tipo_material, data_gravacao, operador=None,
                       modelo_camera=None, tipo_conteudo=None, local_cena=None,
-                      prioridade=None, observacoes=None):
+                      prioridade=None, observacoes=None,
+                      tem_foto=0, tem_audio=0, tem_video=0, nome_audio=None,
+                      entrega_id=None):
     """
     Insere um formulário de check-in na tabela 'formularios'.
 
@@ -646,7 +667,7 @@ def gravar_formulario(conn, id_form, nome, camera, tipo_material, data_gravacao,
       id_form       — ID único do formulário gerado pelo Flask (ex: "20260606_164602_x0b3iy")
       nome          — nome do profissional de captação, já normalizado em maiúsculas
       camera        — câmera declarada no formulário (ex: "GoPro")
-      tipo_material — tipo de material (ex: "VIDEO", "FOTO", "AUDIO")
+      tipo_material — tipo de material canônico (ex: "VIDEO", "FOTO+VIDEO")
       data_gravacao — data de gravação no formato "AAAA-MM-DD"
       operador      — nome do operador que preencheu o formulário (pode ser None)
 
@@ -657,17 +678,24 @@ def gravar_formulario(conn, id_form, nome, camera, tipo_material, data_gravacao,
       prioridade    — nível de urgência do cartão (ex: "NORMAL", "URGENTE")
       observacoes   — observações livres do profissional ao fazer o check-in
 
+      Nova Ficha v2 (Fatia 5):
+      tem_foto/tem_audio/tem_video — multi-seleção de tipo como booleanos (0/1)
+      nome_audio    — segundo nome (operador de áudio), quando a entrega tem áudio
+
     Retorna o ID (rowid) do registro inserido ou o ID já existente se já havia no banco.
     """
     cursor = conn.execute(
         """
         INSERT OR IGNORE INTO formularios
             (id_form_original, nome, camera, tipo_material, data_gravacao, operador,
-             modelo_camera, tipo_conteudo, local_cena, prioridade, observacoes)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             modelo_camera, tipo_conteudo, local_cena, prioridade, observacoes,
+             tem_foto, tem_audio, tem_video, nome_audio, entrega_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (id_form, nome, camera, tipo_material, data_gravacao, operador,
-         modelo_camera, tipo_conteudo, local_cena, prioridade, observacoes)
+         modelo_camera, tipo_conteudo, local_cena, prioridade, observacoes,
+         int(bool(tem_foto)), int(bool(tem_audio)), int(bool(tem_video)),
+         (nome_audio or "").strip().upper() or None, entrega_id)
     )
     conn.commit()
 
@@ -713,6 +741,13 @@ def migrar_schema_formularios(conn):
         ("local_cena",     "TEXT"),
         ("prioridade",     "TEXT DEFAULT 'NORMAL'"),
         ("observacoes",    "TEXT"),
+        # Nova Ficha v2, Fatia 5 — multi-tipo (booleanos) + segundo nome (áudio)
+        ("tem_foto",       "INTEGER NOT NULL DEFAULT 0"),
+        ("tem_audio",      "INTEGER NOT NULL DEFAULT 0"),
+        ("tem_video",      "INTEGER NOT NULL DEFAULT 0"),
+        ("nome_audio",     "TEXT"),
+        # Liga as duas fichas de uma entrega mista (áudio = transferência à parte)
+        ("entrega_id",     "TEXT"),
     ]
 
     for nome_col, tipo_col in novos_campos:
@@ -1130,6 +1165,8 @@ def atualizar_formulario(conn, formulario_id, campos):
     COLUNAS_EDITAVEIS = {
         "nome", "camera", "tipo_material", "data_gravacao", "operador",
         "modelo_camera", "tipo_conteudo", "local_cena", "prioridade", "observacoes",
+        # Nova Ficha v2, Fatia 5 — multi-tipo (booleanos) + segundo nome (áudio)
+        "tem_foto", "tem_audio", "tem_video", "nome_audio",
     }
     # Filtra só o que é permitido editar (segurança: ignora qualquer campo estranho)
     campos_limpos = {c: v for c, v in (campos or {}).items() if c in COLUNAS_EDITAVEIS}
@@ -1560,6 +1597,7 @@ def migrar_schema_profissionais(conn):
             tem_video INTEGER NOT NULL DEFAULT 0,
             letra     TEXT    NOT NULL UNIQUE,
             ativo     INTEGER NOT NULL DEFAULT 1,
+            camera    TEXT,
             criado_em TEXT    NOT NULL DEFAULT (datetime('now','localtime'))
         )
     """)
@@ -1571,19 +1609,19 @@ def migrar_schema_profissionais(conn):
     if "ativo" not in colunas:
         conn.execute("ALTER TABLE profissionais ADD COLUMN ativo INTEGER NOT NULL DEFAULT 1")
 
+    # Migração para bancos sem a coluna 'camera' (Nova Ficha v2, Fatia 4).
+    # A câmera saiu da ficha e passou a morar no cadastro do profissional: é o
+    # campo que o Matcher usa para o critério +3 (compara com a marca detectada
+    # no cartão). NULL por padrão — câmera é opcional no cadastro.
+    if "camera" not in colunas:
+        conn.execute("ALTER TABLE profissionais ADD COLUMN camera TEXT")
+
     conn.commit()
 
 
-def _proxima_letra(conn):
-    """
-    Retorna a próxima letra disponível (A, B, C, …, Z, AA, AB, …).
-    A letra é baseada na contagem de profissionais já cadastrados — simples e
-    determinístico. Nunca recalculada após atribuída (imutável por design).
-    """
-    row = conn.execute("SELECT COUNT(*) FROM profissionais").fetchone()
-    n = row[0]  # 0 → A, 1 → B, …, 25 → Z, 26 → AA, …
-
-    # Codificação base-26 sem zero (estilo Excel: A..Z, AA..AZ, BA…)
+def _indice_para_letra(n):
+    """Converte um índice 0-based em letra (0→A, 1→B, …, 25→Z, 26→AA, …).
+    Codificação base-26 sem zero (bijetiva, estilo coluna de Excel)."""
     resultado = []
     n += 1  # transforma 0-based em 1-based para o algoritmo
     while n > 0:
@@ -1592,18 +1630,49 @@ def _proxima_letra(conn):
     return ''.join(reversed(resultado))
 
 
-def criar_profissional(conn, nome, tipos):
+def _letra_para_indice(letra):
+    """Inverso de _indice_para_letra: 'A'→0, 'Z'→25, 'AA'→26, …"""
+    n = 0
+    for ch in (letra or "").strip().upper():
+        n = n * 26 + (ord(ch) - ord('A') + 1)
+    return n - 1
+
+
+def _proxima_letra(conn):
+    """
+    Retorna a próxima letra sequencial (A, B, C, …, Z, AA, AB, …).
+
+    Baseia-se na MAIOR letra já atribuída — NÃO na contagem de registros. Por quê:
+    a contagem quebra quando se exclui um profissional do meio. Ex.: com A, B, D
+    cadastrados (o C foi excluído), COUNT=3 calcularia "D" de novo → colisão com a
+    letra única já existente, e o cadastro falha para QUALQUER nome novo.
+
+    Apagar um nome do meio NÃO reaproveita a letra dele: a "C" fica queimada de
+    propósito (a letra é pista permanente das câmeras no set — reusá-la para outra
+    pessoa confundiria a identificação). A letra só "volta" se você excluir o último
+    cadastrado (aí o próximo legitimamente reutiliza aquela posição). Tabela vazia → A.
+    """
+    rows = conn.execute("SELECT letra FROM profissionais").fetchall()
+    if not rows:
+        return _indice_para_letra(0)
+    maior = max(_letra_para_indice(r[0]) for r in rows)
+    return _indice_para_letra(maior + 1)
+
+
+def criar_profissional(conn, nome, tipos, camera=None):
     """
     Cadastra um novo profissional e atribui a próxima letra sequencial.
 
     Args:
-        conn:  conexão SQLite aberta.
-        nome:  nome do profissional (ex.: "JOAO"). UNIQUE — erro se duplicado.
-        tipos: dict com chaves "foto", "audio", "video" (bool ou 0/1).
-               Exemplo: {"foto": True, "audio": False, "video": True}
+        conn:   conexão SQLite aberta.
+        nome:   nome do profissional (ex.: "JOAO"). UNIQUE — erro se duplicado.
+        tipos:  dict com chaves "foto", "audio", "video" (bool ou 0/1).
+                Exemplo: {"foto": True, "audio": False, "video": True}
+        camera: marca da câmera do profissional (ex.: "Sony"). Opcional — é o que o
+                Matcher compara com a marca detectada no cartão (critério +3).
 
     Returns:
-        dict com id, nome, tem_foto, tem_audio, tem_video, letra, criado_em.
+        dict com id, nome, tem_foto, tem_audio, tem_video, letra, camera, criado_em.
 
     Raises:
         sqlite3.IntegrityError: se o nome já existir.
@@ -1620,19 +1689,21 @@ def criar_profissional(conn, nome, tipos):
     if not (tem_foto or tem_audio or tem_video):
         raise ValueError(f"Profissional '{nome}' precisa ter ao menos um tipo marcado.")
 
+    camera = (camera or "").strip() or None
+
     letra = _proxima_letra(conn)
 
     conn.execute(
         """
-        INSERT INTO profissionais (nome, tem_foto, tem_audio, tem_video, letra)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO profissionais (nome, tem_foto, tem_audio, tem_video, letra, camera)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (nome, tem_foto, tem_audio, tem_video, letra),
+        (nome, tem_foto, tem_audio, tem_video, letra, camera),
     )
     conn.commit()
 
     row = conn.execute(
-        "SELECT id, nome, tem_foto, tem_audio, tem_video, letra, criado_em "
+        "SELECT id, nome, tem_foto, tem_audio, tem_video, letra, camera, criado_em "
         "FROM profissionais WHERE nome = ?",
         (nome,),
     ).fetchone()
@@ -1644,7 +1715,8 @@ def criar_profissional(conn, nome, tipos):
         "tem_audio": bool(row[3]),
         "tem_video": bool(row[4]),
         "letra":     row[5],
-        "criado_em": row[6],
+        "camera":    row[6],
+        "criado_em": row[7],
     }
 
 
@@ -1740,7 +1812,7 @@ def listar_profissionais(conn, filtro_tipo=None, apenas_ativos=False):
 
     where = (" WHERE " + " AND ".join(condicoes)) if condicoes else ""
     sql = (
-        "SELECT id, nome, tem_foto, tem_audio, tem_video, letra, ativo "
+        "SELECT id, nome, tem_foto, tem_audio, tem_video, letra, ativo, camera "
         f"FROM profissionais{where} ORDER BY length(letra), letra"
     )
     rows = conn.execute(sql).fetchall()
@@ -1754,9 +1826,49 @@ def listar_profissionais(conn, filtro_tipo=None, apenas_ativos=False):
             "tem_video": bool(r[4]),
             "letra":     r[5],
             "ativo":     bool(r[6]),
+            "camera":    r[7],
         }
         for r in rows
     ]
+
+
+def definir_camera_profissional(conn, prof_id, camera):
+    """
+    Atualiza a câmera de um profissional (edição inline na aba Profissionais).
+
+    Args:
+        conn:    conexão SQLite aberta.
+        prof_id: id do profissional.
+        camera:  marca da câmera (ex.: "Sony"). Vazio → grava NULL (sem câmera).
+
+    Returns:
+        True se algum registro foi alterado; False se o id não existia.
+    """
+    camera = (camera or "").strip() or None
+    cursor = conn.execute(
+        "UPDATE profissionais SET camera = ? WHERE id = ?",
+        (camera, prof_id),
+    )
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def camera_do_profissional(conn, nome):
+    """
+    Devolve a câmera cadastrada para um profissional, buscando pelo nome (ignora
+    maiúsculas/espaços). É a fonte do critério +3 do Matcher na Nova Ficha v2:
+    a câmera não vem mais da ficha, vem do cadastro.
+
+    Returns:
+        A marca da câmera (str) ou None se o nome não está cadastrado ou não tem câmera.
+    """
+    if not nome or not str(nome).strip():
+        return None
+    row = conn.execute(
+        "SELECT camera FROM profissionais WHERE UPPER(TRIM(nome)) = UPPER(TRIM(?))",
+        (nome,),
+    ).fetchone()
+    return row[0] if row else None
 
 
 # ── PONTO DE ENTRADA (INICIALIZAÇÃO DIRETA) ───────────────────────────────────

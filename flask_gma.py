@@ -59,8 +59,11 @@ SENTINELA_PORTEIRO = os.path.join(RAIZ_GMA, ".gma_ativo")
 # Arquivo de log do Flask
 ARQUIVO_LOG = os.path.join(RAIZ_GMA, "logs", "flask_gma.log")
 
-# Campos obrigatórios que todo formulário deve conter
-CAMPOS_OBRIGATORIOS = ["nome", "camera", "tipo_material", "data_gravacao"]
+# Campos obrigatórios que todo formulário deve conter.
+# A câmera SAIU desta lista na Nova Ficha v2 (Fatia 4): ela não é mais perguntada
+# na ficha — vem do cadastro do profissional (e/ou é detectada pelo Leitor). O
+# Matcher busca a câmera do cadastro pelo nome para o critério +3.
+CAMPOS_OBRIGATORIOS = ["nome", "tipo_material", "data_gravacao"]
 
 # Tempo em minutos para considerar um item como órfão no painel
 MINUTOS_ORFAO = 10
@@ -389,13 +392,67 @@ def _portao_de_acesso():
     )
 
 
+# ── MULTI-TIPO (Nova Ficha v2, Fatia 5) ──────────────────────────────────────
+# O campo tipo_material chega como texto canônico unindo os tipos marcados
+# (ex.: "FOTO", "FOTO+VIDEO", "AUDIO+VIDEO"). Estas duas funções traduzem entre
+# esse texto e a forma estruturada (booleanos), que é como o banco guarda — §7.
+
+def _derivar_tipos(tipo_material):
+    """De "FOTO+VIDEO" → {'tem_foto':1, 'tem_audio':0, 'tem_video':1}.
+    Robusto ao separador: aceita +, ·, vírgula, espaço (qualquer não-letra)."""
+    txt = (tipo_material or "").upper()
+    return {
+        "tem_foto":  1 if "FOTO"  in txt else 0,
+        "tem_audio": 1 if "AUDIO" in txt else 0,
+        "tem_video": 1 if "VIDEO" in txt else 0,
+    }
+
+
+def _tipo_display(tipo_material):
+    """Exibição amigável do multi-tipo: "FOTO+VIDEO" → "Foto · Vídeo" (§7: nunca
+    por espaço cru; junta com ·). Mantém a ordem Foto · Áudio · Vídeo."""
+    t = _derivar_tipos(tipo_material)
+    partes = []
+    if t["tem_foto"]:  partes.append("Foto")
+    if t["tem_audio"]: partes.append("Áudio")
+    if t["tem_video"]: partes.append("Vídeo")
+    return " · ".join(partes) if partes else (tipo_material or "—")
+
+
+def _tipo_canonico(tem_foto, tem_audio, tem_video):
+    """Monta o texto canônico interno a partir dos booleanos: (1,0,1) → "FOTO+VIDEO".
+    Ordem fixa FOTO+AUDIO+VIDEO; unido por "+". Vazio se nenhum tipo."""
+    partes = []
+    if tem_foto:  partes.append("FOTO")
+    if tem_audio: partes.append("AUDIO")
+    if tem_video: partes.append("VIDEO")
+    return "+".join(partes)
+
+
 # ── FUNÇÃO CENTRAL: VALIDAR, SALVAR E DISPARAR MATCHER ───────────────────────
 # Esta função contém toda a lógica de processamento de um formulário recebido.
 # Ela é chamada por /forms (Google Forms via Apps Script) e por /forms/tally
 # (webhook nativo do Tally), que chegam em formatos diferentes mas precisam
 # da mesma cadeia de validação + gravação + Matcher.
 
-def _processar_e_salvar_formulario(dados_recebidos, origem="FORMS"):
+def _tentar_match_seguro(origem):
+    """Dispara o Matcher de forma protegida (erro nele nunca derruba o check-in).
+    Retorna a lista de matches gerados (vazia se indisponível ou em erro)."""
+    if not MATCHER_DISPONIVEL:
+        logger.warning(f"{origem} | Matcher não disponível — cruzamento automático desativado")
+        return []
+    try:
+        matches = modulo_matcher.tentar_match()
+        if matches:
+            logger.info(f"{origem} | Matcher encontrou {len(matches)} match(es)")
+        return matches or []
+    except Exception as erro:
+        logger.error(f"{origem} | Erro ao chamar Matcher | {erro}")
+        return []
+
+
+def _processar_e_salvar_formulario(dados_recebidos, origem="FORMS",
+                                   entrega_id=None, disparar_matcher=True):
     """
     Recebe um dicionário com os campos do formulário já extraídos e normalizados
     no padrão esperado pelo GMA:
@@ -406,6 +463,13 @@ def _processar_e_salvar_formulario(dados_recebidos, origem="FORMS"):
 
     O parâmetro `origem` é só para o log distinguir de qual endpoint veio
     (ex: "FORMS" para Google Forms, "TALLY" para o webhook do Tally).
+
+    Áudio é sempre transferência à parte (regra do idealizador): quando a ficha
+    marca áudio JUNTO de foto/vídeo, ela descreve DUAS entregas (cartões diferentes).
+    Nesse caso esta função se divide em duas fichas ligadas por um `entrega_id`
+    comum — uma do foto/vídeo (nome) e uma do áudio (nome_audio, tipo AUDIO). Os
+    parâmetros `entrega_id`/`disparar_matcher` servem à recursão dessa divisão
+    (o Matcher roda UMA vez só, no fim do processamento externo).
     """
     # ── Valida os campos obrigatórios ──────────────────────────────────────────
     valido, mensagem_erro = validar_payload_form(dados_recebidos)
@@ -424,12 +488,61 @@ def _processar_e_salvar_formulario(dados_recebidos, origem="FORMS"):
     camera_normalizada = normalizar_camera(dados_recebidos.get("camera", ""))
     nome_normalizado = dados_recebidos.get("nome", "").strip().upper()
 
+    # Nova Ficha v2 (Fatia 5): deriva os booleanos de tipo e captura o 2º nome (áudio).
+    tipo_material_norm = dados_recebidos.get("tipo_material", "").strip().upper()
+    tipos = _derivar_tipos(tipo_material_norm)
+    nome_audio_norm = (dados_recebidos.get("nome_audio", "") or "").strip().upper() or None
+
+    # ── Áudio = transferência à parte: divide a ficha mista em duas ────────────
+    # Só divide quando há áudio E foto/vídeo juntos E um nome de áudio informado.
+    precisa_dividir = (
+        tipos["tem_audio"] and (tipos["tem_foto"] or tipos["tem_video"]) and nome_audio_norm
+    )
+    if precisa_dividir:
+        entrega = "E" + gerar_id_form()  # id que liga as duas fichas da entrega
+
+        # Ficha 1 — foto/vídeo (sem o áudio). Mantém nome_audio como informação.
+        dados_fv = dict(dados_recebidos)
+        dados_fv["tipo_material"] = _tipo_canonico(tipos["tem_foto"], 0, tipos["tem_video"])
+        # Ficha 2 — áudio (a 2ª pessoa): vira o "nome" da própria ficha, tipo AUDIO.
+        dados_au = dict(dados_recebidos)
+        dados_au["nome"] = nome_audio_norm
+        dados_au["tipo_material"] = "AUDIO"
+        dados_au["nome_audio"] = ""
+
+        resp_fv, cod_fv = _processar_e_salvar_formulario(
+            dados_fv, origem, entrega_id=entrega, disparar_matcher=False)
+        resp_au, cod_au = _processar_e_salvar_formulario(
+            dados_au, origem, entrega_id=entrega, disparar_matcher=False)
+
+        # O Matcher roda UMA vez, agora que as duas fichas já estão na fila.
+        matches = _tentar_match_seguro(origem)
+
+        p_fv = resp_fv.get_json() if cod_fv == 201 else {}
+        logger.info(f"{origem} | Entrega {entrega} dividida | foto/vídeo: {nome_normalizado} "
+                    f"| áudio: {nome_audio_norm}")
+        return jsonify({
+            "ok":              True,
+            "split":           True,
+            "entrega_id":      entrega,
+            "id_form":         p_fv.get("id_form"),
+            "nome":            nome_normalizado,
+            "nome_audio":      nome_audio_norm,
+            "matches_gerados": len(matches),
+            "mensagem":        "Entrega registrada como duas fichas (áudio à parte)."
+        }), 201
+
     dados_form = {
         "id_form":          id_form,
         "timestamp":        timestamp_iso,
         "nome":             nome_normalizado,
         "camera":           camera_normalizada,
-        "tipo_material":    dados_recebidos.get("tipo_material", "").strip().upper(),
+        "tipo_material":    tipo_material_norm,
+        "tem_foto":         tipos["tem_foto"],
+        "tem_audio":        tipos["tem_audio"],
+        "tem_video":        tipos["tem_video"],
+        "nome_audio":       nome_audio_norm,
+        "entrega_id":       entrega_id,
         "data_gravacao":    dados_recebidos.get("data_gravacao", "").strip(),
         "operador":         dados_recebidos.get("operador", "").strip() or None,
         # Campos editoriais (opcionais — não bloqueiam validação nem matching)
@@ -483,6 +596,11 @@ def _processar_e_salvar_formulario(dados_recebidos, origem="FORMS"):
             local_cena=dados_form.get("local_cena"),
             prioridade=dados_form.get("prioridade"),
             observacoes=dados_form.get("observacoes"),
+            tem_foto=dados_form.get("tem_foto", 0),
+            tem_audio=dados_form.get("tem_audio", 0),
+            tem_video=dados_form.get("tem_video", 0),
+            nome_audio=dados_form.get("nome_audio"),
+            entrega_id=dados_form.get("entrega_id"),
         )
         _conn_flask.close()
         # Salva o ID do banco de volta no JSON (ponte para o Matcher e Transferência)
@@ -494,20 +612,9 @@ def _processar_e_salvar_formulario(dados_recebidos, origem="FORMS"):
         logger.error(f"BANCO | Falha ao gravar formulário (fluxo JSON continua) | {_err_bd}")
 
     # ── Tenta fazer match com material já na fila ────────────────────────────
-    matches = []
-    if MATCHER_DISPONIVEL:
-        try:
-            matches = modulo_matcher.tentar_match()
-            if matches:
-                logger.info(
-                    f"{origem} | Matcher encontrou {len(matches)} match(es) "
-                    f"após receber formulário {id_form}"
-                )
-        except Exception as erro:
-            # Erro no Matcher não impede o registro do formulário
-            logger.error(f"{origem} | Erro ao chamar Matcher | {erro}")
-    else:
-        logger.warning(f"{origem} | Matcher não disponível — cruzamento automático desativado")
+    # Pulado quando esta é uma das metades de uma entrega dividida (o chamador
+    # externo dispara o Matcher uma vez só, depois de gravar as duas fichas).
+    matches = _tentar_match_seguro(origem) if disparar_matcher else []
 
     # ── Retorna confirmação ────────────────────────────────────────────────────
     return jsonify({
@@ -1609,7 +1716,7 @@ def planilha():
             SELECT c.id, c.numero_cartao, c.volume, c.marca_camera, c.tipo_material,
                    c.status, c.total_arquivos_transferidos, c.tamanho_transferido_bytes,
                    c.destino_pasta,
-                   f.nome AS prof_nome, f.data_gravacao
+                   f.nome AS prof_nome, f.nome_audio AS prof_nome_audio, f.data_gravacao
             FROM cartoes c
             LEFT JOIN matches m ON m.id = (
                 SELECT id FROM matches WHERE cartao_id = c.id ORDER BY id DESC LIMIT 1
@@ -1629,12 +1736,18 @@ def planilha():
         if not profissional and linha["numero_cartao"]:
             profissional = linha["numero_cartao"].rsplit("_", 1)[0]
 
+        # 2º nome (operador de áudio), quando houver — Fatia 5.
+        prof_html = _esc(profissional) or "—"
+        if linha["prof_nome_audio"]:
+            prof_html += (f' <span style="color:#6c757d;font-size:0.85em">'
+                          f'+ {_esc(linha["prof_nome_audio"])} (áudio)</span>')
+
         n_arquivos = linha["total_arquivos_transferidos"]
         n_arquivos = n_arquivos if n_arquivos is not None else "—"
 
         linhas_html += f"""
         <tr>
-            <td>{_esc(profissional) or '—'}</td>
+            <td>{prof_html}</td>
             <td>{_esc(linha['marca_camera']) or '—'}</td>
             <td>{_esc(linha['tipo_material']) or '—'}</td>
             <td>{_esc(linha['data_gravacao']) or '—'}</td>
@@ -2111,7 +2224,7 @@ def _fichas_recentes_html(limite=12):
     try:
         conn = bd.obter_conexao()
         fichas = conn.execute(
-            "SELECT id, nome, camera, tipo_material, data_gravacao, status "
+            "SELECT id, nome, nome_audio, tipo_material, data_gravacao, status "
             "FROM formularios ORDER BY id DESC LIMIT ?", (limite,)
         ).fetchall()
         conn.close()
@@ -2126,12 +2239,16 @@ def _fichas_recentes_html(limite=12):
     for f in fichas:
         status = f["status"] or ""
         cor = COR_STATUS_FICHA.get(status, "#495057")
+        # Nome principal + (quando há áudio de outra pessoa) o 2º nome — Fatia 5.
+        nome_html = f"<b>{_esc(f['nome'])}</b>"
+        if f["nome_audio"]:
+            nome_html += (f' <span style="color:#6c757d;font-size:0.85em">'
+                          f'+ {_esc(f["nome_audio"])} (áudio)</span>')
         linhas.append(f"""
           <tr>
             <td class="mono">{f['id']}</td>
-            <td><b>{_esc(f['nome'])}</b></td>
-            <td>{_esc(f['camera'])}</td>
-            <td>{_esc(f['tipo_material'])}</td>
+            <td>{nome_html}</td>
+            <td>{_esc(_tipo_display(f['tipo_material']))}</td>
             <td class="mono">{_esc(f['data_gravacao'])}</td>
             <td><span class="badge-mini" style="background:{cor}">{_esc(status) or '—'}</span></td>
             <td><a class="link-editar" href="/ficha/{f['id']}/editar">editar ✎</a></td>
@@ -2140,7 +2257,7 @@ def _fichas_recentes_html(limite=12):
     <div class="recentes">
       <h2>Fichas recentes (clique para editar)</h2>
       <table class="tab-recentes">
-        <thead><tr><th>#</th><th>Nome</th><th>Câmera</th><th>Tipo</th>
+        <thead><tr><th>#</th><th>Nome</th><th>Tipo</th>
                    <th>Data</th><th>Status</th><th></th></tr></thead>
         <tbody>{''.join(linhas)}</tbody>
       </table>
@@ -2166,7 +2283,7 @@ def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
     # Atributo HTML que desabilita os campos críticos quando a ficha já casou.
     trava = " disabled" if bloquear_criticos else ""
     aviso_trava = (
-        '<div class="aviso-trava">🔒 Esta ficha já casou com material. Nome, câmera, '
+        '<div class="aviso-trava">🔒 Esta ficha já casou com material. Nome, '
         'tipo e data ficam travados (mexer aqui afetaria a numeração e a pasta no HD). '
         'Você ainda pode ajustar os campos editoriais abaixo.</div>'
         if bloquear_criticos else ""
@@ -2193,15 +2310,9 @@ def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
     {bloco_erro}
     {aviso_trava}
     <form class="ficha-form" action="{action}" method="post">
-      {_datalist('lista_cameras', sug['cameras'])}
       {_datalist('lista_modelos', sug['modelos'])}
       <div class="ficha-grid">
         {bloco_tipo_nome}
-        <div class="campo">
-          <label>Câmera <span class="estrela">★</span> <span class="dica-gabarito">(escolha ou digite)</span></label>
-          <input type="text" name="camera" list="lista_cameras" value="{_esc(d.get('camera',''))}"
-                 required placeholder="ex: Sony, GoPro, Nikon"{trava}>
-        </div>
         <div class="campo">
           <label>Data de gravação <span class="estrela">★</span></label>
           <input type="date" name="data_gravacao" value="{_esc(d.get('data_gravacao',''))}" required{trava}>
@@ -2260,7 +2371,13 @@ def _normalizar_campos_ficha(dados):
     out = {}
     if "nome" in dados:          out["nome"] = dados.get("nome", "").strip().upper()
     if "camera" in dados:        out["camera"] = normalizar_camera(dados.get("camera", ""))
-    if "tipo_material" in dados:  out["tipo_material"] = dados.get("tipo_material", "").strip().upper()
+    if "tipo_material" in dados:
+        out["tipo_material"] = dados.get("tipo_material", "").strip().upper()
+        # Mantém os booleanos em sincronia com o texto editado (Fatia 5).
+        tipos = _derivar_tipos(out["tipo_material"])
+        out["tem_foto"], out["tem_audio"], out["tem_video"] = (
+            tipos["tem_foto"], tipos["tem_audio"], tipos["tem_video"])
+    if "nome_audio" in dados:     out["nome_audio"] = dados.get("nome_audio", "").strip().upper() or None
     if "data_gravacao" in dados:  out["data_gravacao"] = dados.get("data_gravacao", "").strip()
     if "operador" in dados:       out["operador"] = dados.get("operador", "").strip() or None
     if "modelo_camera" in dados:  out["modelo_camera"] = dados.get("modelo_camera", "").strip() or None
@@ -2332,11 +2449,27 @@ def ficha_enviar():
         "<p style='margin-top:8px'>A ficha ficou aguardando o material do cartão chegar "
         "para o Matcher cruzar.</p>"
     )
-    resumo = f"""
+    if payload.get("split"):
+        # Entrega mista: o áudio virou uma ficha à parte (transferência separada).
+        titulo_ok = "✅ Entrega registrada — 2 fichas (áudio à parte)"
+        tipo_fv = _tipo_display(_tipo_canonico(
+            _derivar_tipos(dados.get('tipo_material',''))["tem_foto"], 0,
+            _derivar_tipos(dados.get('tipo_material',''))["tem_video"]))
+        resumo = f"""
+      <div class="resumo">
+        <div><b>Foto/Vídeo</b> {_esc(payload.get('nome'))} <span class="mono">({_esc(tipo_fv)})</span></div>
+        <div><b>Áudio</b> {_esc(payload.get('nome_audio'))} <span class="mono">(à parte)</span></div>
+        <div><b>Data</b> {_esc(dados.get('data_gravacao',''))}</div>
+      </div>
+      <p style="margin-top:8px;color:#6c757d;font-size:0.9em">
+        O áudio é sempre transferência separada — cada um casa com seu próprio cartão.
+      </p>"""
+    else:
+        titulo_ok = "✅ Ficha recebida com sucesso"
+        resumo = f"""
       <div class="resumo">
         <div><b>Nome</b> {_esc(payload.get('nome'))}</div>
-        <div><b>Câmera</b> {_esc(payload.get('camera'))}</div>
-        <div><b>Tipo</b> {_esc(dados.get('tipo_material',''))}</div>
+        <div><b>Tipo</b> {_esc(_tipo_display(dados.get('tipo_material','')))}</div>
         <div><b>Data</b> {_esc(dados.get('data_gravacao',''))}</div>
         <div><b>ID da ficha</b> <span class="mono">{_esc(payload.get('id_form'))}</span></div>
       </div>"""
@@ -2351,7 +2484,7 @@ def ficha_enviar():
         botoes = '<a class="btn-secundario" href="/ficha">Preencher outra ficha</a>'
     corpo = f"""
     <div class="ok-box">
-      <h2>✅ Ficha recebida com sucesso</h2>
+      <h2>{titulo_ok}</h2>
       {resumo}
       {nota_match}
       <div style="margin-top:18px; display:flex; gap:12px;">{botoes}</div>
@@ -2408,7 +2541,7 @@ def ficha_editar_salvar(ficha_id):
     # Se os críticos estão travados, descarta-os do que veio (defesa no servidor —
     # não confia só no 'disabled' do HTML).
     if bloquear:
-        for campo in ("nome", "camera", "tipo_material", "data_gravacao"):
+        for campo in ("nome", "tipo_material", "data_gravacao"):
             enviados.pop(campo, None)
 
     campos = _normalizar_campos_ficha(enviados)
@@ -2447,7 +2580,6 @@ def ficha_editar_salvar(ficha_id):
       <h2>✅ Ficha #{ficha_id} atualizada</h2>
       <div class="resumo">
         <div><b>Nome</b> {_esc(atualizada.get('nome'))}</div>
-        <div><b>Câmera</b> {_esc(atualizada.get('camera'))}</div>
         <div><b>Tipo</b> {_esc(atualizada.get('tipo_material'))}</div>
         <div><b>Data</b> {_esc(atualizada.get('data_gravacao'))}</div>
         <div><b>Prioridade</b> {_esc(atualizada.get('prioridade'))}</div>
@@ -2790,10 +2922,11 @@ def profissionais():
     """
     # ── POST: cadastrar novo profissional ─────────────────────────────────────
     if request.method == "POST":
-        nome_raw  = (request.form.get("nome") or "").strip()
-        tem_foto  = bool(request.form.get("tem_foto"))
-        tem_audio = bool(request.form.get("tem_audio"))
-        tem_video = bool(request.form.get("tem_video"))
+        nome_raw   = (request.form.get("nome") or "").strip()
+        tem_foto   = bool(request.form.get("tem_foto"))
+        tem_audio  = bool(request.form.get("tem_audio"))
+        tem_video  = bool(request.form.get("tem_video"))
+        camera_raw = (request.form.get("camera") or "").strip()
 
         erro_cadastro = None
 
@@ -2810,17 +2943,25 @@ def profissionais():
                     _conn,
                     nome_raw,
                     {"foto": tem_foto, "audio": tem_audio, "video": tem_video},
+                    camera=camera_raw,
                 )
                 _conn.close()
                 logger.info(
                     f"PROFISSIONAIS | Cadastrado: {nome_raw.upper()} "
-                    f"| foto={tem_foto} audio={tem_audio} video={tem_video}"
+                    f"| foto={tem_foto} audio={tem_audio} video={tem_video} "
+                    f"| camera={camera_raw or '—'}"
                 )
                 return redirect("/profissionais")
             except Exception as _err:
                 import sqlite3 as _sqlite3
                 if isinstance(_err, _sqlite3.IntegrityError):
-                    erro_cadastro = f"'{nome_raw.upper()}' já está cadastrado."
+                    # Distingue QUAL restrição UNIQUE estourou — antes assumíamos
+                    # sempre o nome, o que mascarava uma colisão de letra.
+                    if "letra" in str(_err).lower():
+                        erro_cadastro = ("Conflito interno na letra sequencial. "
+                                         "Isto não deveria acontecer — avise o desenvolvedor.")
+                    else:
+                        erro_cadastro = f"'{nome_raw.upper()}' já está cadastrado."
                 else:
                     erro_cadastro = f"Erro ao cadastrar: {_err}"
                 logger.warning(f"PROFISSIONAIS | Erro no cadastro: {_err}")
@@ -2832,6 +2973,7 @@ def profissionais():
             foto_marcada=tem_foto,
             audio_marcado=tem_audio,
             video_marcado=tem_video,
+            camera_digitada=camera_raw,
         )
 
     # ── GET: exibir lista + formulário ────────────────────────────────────────
@@ -2864,6 +3006,34 @@ def profissionais_ativo(prof_id):
     except Exception as _err:
         logger.error(f"PROFISSIONAIS | Erro ao alternar 'ativo' (id={prof_id}): {_err}")
         return _pagina_profissionais(erro=f"Erro ao mudar a situação: {_err}")
+
+    return redirect("/profissionais")
+
+
+@app.route("/profissionais/<int:prof_id>/camera", methods=["POST"])
+def profissionais_camera(prof_id):
+    """
+    Atualiza a câmera de um profissional (mini-form inline na tabela). A câmera é o
+    que o Matcher compara com a marca detectada no cartão (critério +3). Vazio →
+    grava NULL (profissional sem câmera definida). Volta para a lista no fim.
+
+    Acesso: somente base (localhost). Remoto recebe 403 pelo portão existente.
+    """
+    if not BANCO_DISPONIVEL:
+        return _pagina_profissionais(erro="Banco de dados indisponível.")
+
+    camera_raw = (request.form.get("camera") or "").strip()
+    try:
+        _conn = bd.obter_conexao()
+        ok = bd.definir_camera_profissional(_conn, prof_id, camera_raw)
+        _conn.close()
+        if ok:
+            logger.info(f"PROFISSIONAIS | id={prof_id} câmera → {camera_raw or '—'}")
+        else:
+            logger.warning(f"PROFISSIONAIS | id={prof_id} não encontrado ao gravar câmera")
+    except Exception as _err:
+        logger.error(f"PROFISSIONAIS | Erro ao gravar câmera (id={prof_id}): {_err}")
+        return _pagina_profissionais(erro=f"Erro ao gravar a câmera: {_err}")
 
     return redirect("/profissionais")
 
@@ -2907,6 +3077,7 @@ def _pagina_profissionais(
     foto_marcada=False,
     audio_marcado=False,
     video_marcado=False,
+    camera_digitada="",
 ):
     """
     Renderiza a página de profissionais.
@@ -2982,6 +3153,23 @@ def _pagina_profissionais(
                     'style="color:#ced4da;font-size:0.82em;cursor:default">excluir</span>'
                 )
 
+            # Mini-form inline da câmera: campo de texto + botão salvar. Submete
+            # sozinho para /profissionais/<id>/camera (o Matcher usa isto no +3).
+            camera_atual = p.get("camera") or ""
+            celula_camera = (
+                f'<form action="/profissionais/{p["id"]}/camera" method="post" '
+                f'style="margin:0;display:flex;gap:5px;align-items:center">'
+                f'<input type="text" name="camera" value="{_esc(camera_atual)}" '
+                f'placeholder="—" autocomplete="off" '
+                f'style="width:92px;padding:4px 7px;border:1px solid #ced4da;'
+                f'border-radius:5px;font-size:0.85em;font-family:inherit">'
+                f'<button type="submit" title="Salvar câmera" '
+                f'style="background:#fff;border:1px solid #ced4da;color:#1a1a2e;'
+                f'border-radius:5px;padding:4px 8px;font-size:0.8em;cursor:pointer;'
+                f'font-family:inherit">salvar</button>'
+                f'</form>'
+            )
+
             linhas_tabela += f"""
             <tr style="{estilo_linha}">
                 <td style="font-family:ui-monospace,monospace;font-size:1.1em;
@@ -2992,6 +3180,7 @@ def _pagina_profissionais(
                 <td style="text-align:center;{_cor_icone(p['tem_foto'])}">{_icone(p['tem_foto'])}</td>
                 <td style="text-align:center;{_cor_icone(p['tem_audio'])}">{_icone(p['tem_audio'])}</td>
                 <td style="text-align:center;{_cor_icone(p['tem_video'])}">{_icone(p['tem_video'])}</td>
+                <td style="text-align:center">{celula_camera}</td>
                 <td style="text-align:center">
                     <div style="display:flex;gap:10px;align-items:center;justify-content:center">
                         <form action="/profissionais/{p['id']}/ativo" method="post" style="margin:0">
@@ -3004,7 +3193,7 @@ def _pagina_profissionais(
     else:
         linhas_tabela = """
             <tr>
-                <td colspan="6" style="text-align:center;color:#adb5bd;padding:24px">
+                <td colspan="7" style="text-align:center;color:#adb5bd;padding:24px">
                     Nenhum profissional cadastrado ainda.
                 </td>
             </tr>"""
@@ -3071,6 +3260,10 @@ def _pagina_profissionais(
                         <th style="padding:9px 12px;text-align:center;background:#f8f9fa;
                                    color:#6c757d;text-transform:uppercase;font-size:0.78em;
                                    letter-spacing:0.4px;border-bottom:1px solid #dee2e6;
+                                   width:170px">Câmera</th>
+                        <th style="padding:9px 12px;text-align:center;background:#f8f9fa;
+                                   color:#6c757d;text-transform:uppercase;font-size:0.78em;
+                                   letter-spacing:0.4px;border-bottom:1px solid #dee2e6;
                                    width:160px">Situação</th>
                     </tr>
                 </thead>
@@ -3128,6 +3321,22 @@ def _pagina_profissionais(
                                style="width:16px;height:16px">
                         Vídeo
                     </label>
+                </div>
+
+                <div style="margin-bottom:18px">
+                    <label style="display:block;font-size:0.85em;font-weight:600;
+                                  color:#495057;margin-bottom:5px">
+                        Câmera <span style="color:#adb5bd;font-weight:400">(opcional)</span>
+                    </label>
+                    <input type="text" name="camera"
+                           value="{_esc(camera_digitada)}"
+                           placeholder="Ex.: Sony"
+                           autocomplete="off"
+                           style="width:100%;padding:9px 12px;border:1px solid #ced4da;
+                                  border-radius:6px;font-size:0.9em;font-family:inherit">
+                    <p style="color:#adb5bd;font-size:0.78em;margin-top:5px">
+                        O Matcher compara esta marca com a câmera detectada no cartão.
+                    </p>
                 </div>
 
                 <button type="submit"
