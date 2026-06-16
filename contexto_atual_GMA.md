@@ -1,7 +1,7 @@
 # Contexto Atual — Sistema GMA
 ## Estado vivo do projeto (carregar em TODA sessão junto com `arquitetura_GMA.md`)
 
-> Última atualização: 2026-06-15 (sessão 32)
+> Última atualização: 2026-06-16 (sessão 33)
 > Para detalhes técnicos históricos, ver `historico_GMA.md` (não carregar por padrão).
 
 ---
@@ -21,6 +21,12 @@
 ---
 
 ## O que acabou de ser feito (sessões recentes)
+
+### ✅ Sessão 33 (BUILD) — Molde da Planilha (Camada 3, Fatia 1)
+**Arquivos:** `banco_dados.py`, `flask_gma.py`. **Commitado** (`e385153`).
+- **Banco:** tabela `molde_planilha` (chave · rótulo · bloco · ordem · visível · sistema). Migração não-destrutiva via `inicializar_banco()`. Funções: `sincronizar_catalogo_molde`, `listar_molde`, `listar_molde_visivel`, `definir_visivel_coluna`, `adicionar_coluna_custom`, `excluir_coluna_custom` (só sistema=0).
+- **Flask:** `CATALOGO_PLANILHA` (17 colunas em 4 blocos; pós-produção oculta por padrão). `/planilha` refatorada para ler colunas do molde dinamicamente. Nova página `GET /molde` (gestão completa: toggle individual · toggle de bloco inteiro · adicionar coluna personalizada · excluir coluna personalizada). Todos os POSTs usam redirect 303 (PRG correto).
+- **Testado:** ocultar/mostrar coluna individual ✓, ocultar/mostrar bloco inteiro ✓, pós-produção oculta por padrão e liga de um clique ✓, adicionar coluna custom ✓, excluir coluna custom ✓, guard recusa excluir coluna do sistema ✓.
 
 ### ✅ Sessão 32 (BUILD) — Google Sheets real NO AR (Camada 3, via impersonação)
 **Arquivos:** `exportador_sheets.py`, `.env`, `.gitignore`. **Sem commit.** Configuração feita com o idealizador (gcloud + autorizações no navegador).
@@ -106,7 +112,7 @@ Depois de testar a Fatia 1, o idealizador esclareceu e expandiu:
 
 5. 📊 **Google Sheets real** (Camada 3) — ✅ **NO AR (s32)** via impersonação. Pendências menores: o exportador precisa do `gcloud` no PATH e roda na sincronização do `inicializar_gma` a cada 60s; testar dentro do sistema completo (até agora só rodado à mão).
 
-8. 🗂️ **Gestão de listas de contexto** (operador) — Fatia 1 ✅ (aba "Listas", s31); **ponte chips→ficha→planilha ✅ (s32)**. **Próxima fatia (a fazer):** blocos/colunas que ligam-desligam por evento (o "molde" da planilha) + agrupar a planilha por profissional.
+8. 🗂️ **Gestão de listas de contexto** (operador) — Fatia 1 ✅ (aba "Listas", s31); **ponte chips→ficha→planilha ✅ (s32)**; **Molde da Planilha ✅ (s33)** — blocos/colunas ligam-desligam, add/remove colunas custom. **Próxima fatia:** agrupar a planilha por profissional + espelhar o molde no `exportador_sheets.py`.
 
 9. 📥 **Central de Entrada — importação de fontes** (preparação) — montar as listas a partir de lista colada / planilha remota-CSV / PDF / print(OCR); pipeline Fontes→Extração→Revisão do operador→`listas_contexto`. Desenho alinhado (s31, sem código); começar pela planilha remota/CSV (já provada).
 
@@ -136,12 +142,9 @@ Depois de testar a Fatia 1, o idealizador esclareceu e expandiu:
 
 ## Arquivos com mudanças não commitadas (atenção)
 
-- `banco_dados.py` — colunas novas em `formularios` (booleanos de tipo + `nome_audio` + `entrega_id`), tabela `profissionais` com `camera` e `ativo`, tabela `match_candidatos`, tabela `listas_contexto` (s31), tabela-ponte `formularios_chips` + guard `itens_lista_em_uso` religado (s32)
-- `flask_gma.py` — Nova Ficha v2 completa, aba Profissionais, Passo 2 do Matcher, aba Listas (s31), chips de classificação na ficha + 5 colunas na planilha (s32)
-- `exportador_sheets.py` — auth por impersonação (`GMA_SHEETS_SA`), fix gspread 6.x, 5 colunas de chips, carrega `.env` sozinho (s32)
-- `.gitignore` — bloqueia `credenciais_google.json` e variações (s32); `.env` ganhou `GMA_SHEETS_SA` + `GMA_SHEETS_ID` (não versionado)
-- `matcher.py` — multi-tipo, câmera do cadastro, confirmação manual de empate
-- `leitor_midia.py` — cartão sem mídia em 2 níveis (`sem_midia` / `revisar`) — **também sem commit**
+- `exportador_sheets.py` — auth por impersonação (`GMA_SHEETS_SA`), fix gspread 6.x, 5 colunas de chips, carrega `.env` sozinho (s32). **Sem commit.**
+- `contexto_atual_GMA.md` — este arquivo (atualizado s33). **Sem commit.**
+- Todos os demais (`banco_dados.py`, `flask_gma.py`, `matcher.py`, `leitor_midia.py`, `.gitignore`) **já commitados** até a s33.
 
 ---
 
