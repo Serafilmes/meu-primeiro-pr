@@ -2081,6 +2081,31 @@ def definir_ativo_grupo(conn, chave, ativo):
     return "ok"
 
 
+def mover_grupo(conn, chave, direcao):
+    """
+    Move um grupo para cima ou para baixo na ordem de exibição, trocando a
+    posição com o vizinho. `direcao` ∈ {"cima", "baixo"}. Loga a operação.
+
+    Returns: "ok" (inclusive se já está no limite) | "inexistente".
+    """
+    grupos = listar_grupos(conn)  # ordenados por `ordem`
+    idx = next((i for i, g in enumerate(grupos) if g["chave"] == chave), None)
+    if idx is None:
+        return "inexistente"
+    alvo = idx - 1 if direcao == "cima" else idx + 1
+    if alvo < 0 or alvo >= len(grupos):
+        return "ok"  # já no topo/fundo — nada a fazer
+    a, b = grupos[idx], grupos[alvo]
+    conn.execute("UPDATE grupos_classificacao SET ordem = ? WHERE chave = ?",
+                 (b["ordem"], a["chave"]))
+    conn.execute("UPDATE grupos_classificacao SET ordem = ? WHERE chave = ?",
+                 (a["ordem"], b["chave"]))
+    conn.commit()
+    registrar_evento(conn, "grupo_alterado",
+                     f"Grupo '{a['rotulo']}' movido para {direcao}", dados={"chave": chave})
+    return "ok"
+
+
 def grupo_em_uso(conn, chave):
     """
     True se algum item deste grupo já aparece em alguma ficha (formularios_chips).

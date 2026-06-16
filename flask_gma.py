@@ -4381,6 +4381,183 @@ def listas_criar_inline():
         return jsonify({"ok": False, "erro": "Erro interno ao criar item."}), 500
 
 
+# ── ROTAS: GESTÃO DE GRUPOS DE CLASSIFICAÇÃO (Fatia 3) ───────────────────────
+# Só operador local edita grupos (o portão de acesso já barra /grupos no remoto).
+
+@app.route("/grupos", methods=["POST"])
+def grupos_criar():
+    """Cria um grupo de classificação novo (nome + múltipla/única)."""
+    if not BANCO_DISPONIVEL:
+        return _pagina_listas(erro="Banco de dados indisponível.")
+    rotulo = (request.form.get("rotulo") or "").strip()
+    multipla = (request.form.get("multipla", "1") == "1")
+    try:
+        conn = bd.obter_conexao()
+        novo = bd.criar_grupo(conn, rotulo, multipla=multipla)
+        conn.close()
+        logger.info(f"GRUPOS | criado '{rotulo}' ({novo['chave']})")
+    except ValueError as e:
+        return _pagina_listas(erro=str(e))
+    except Exception as e:
+        msg = str(e)
+        if "UNIQUE" in msg or "PRIMARY" in msg:
+            return _pagina_listas(erro=f'Já existe um grupo parecido com "{rotulo}".')
+        logger.error(f"GRUPOS | erro ao criar '{rotulo}': {e}")
+        return _pagina_listas(erro="Erro ao criar o grupo.")
+    return redirect("/listas")
+
+
+@app.route("/grupos/<chave>/editar", methods=["POST"])
+def grupos_editar(chave):
+    """Renomeia o grupo e ajusta a regra única/múltipla de uma vez."""
+    if not BANCO_DISPONIVEL:
+        return redirect("/listas")
+    rotulo = (request.form.get("rotulo") or "").strip()
+    multipla = (request.form.get("multipla", "1") == "1")
+    try:
+        conn = bd.obter_conexao()
+        if rotulo:
+            res = bd.renomear_grupo(conn, chave, rotulo)
+            if res == "ok":
+                bd.definir_multipla_grupo(conn, chave, multipla)
+        conn.close()
+        if rotulo and res != "ok":
+            return _pagina_listas(erro="Grupo não encontrado.")
+        if not rotulo:
+            return _pagina_listas(erro="O nome do grupo não pode ser vazio.")
+    except Exception as e:
+        logger.error(f"GRUPOS | erro ao editar {chave}: {e}")
+        return _pagina_listas(erro="Erro ao editar o grupo.")
+    return redirect("/listas")
+
+
+@app.route("/grupos/<chave>/mover", methods=["POST"])
+def grupos_mover(chave):
+    """Sobe ou desce o grupo na ordem de exibição."""
+    if not BANCO_DISPONIVEL:
+        return redirect("/listas")
+    direcao = "cima" if request.form.get("dir") == "cima" else "baixo"
+    try:
+        conn = bd.obter_conexao()
+        bd.mover_grupo(conn, chave, direcao)
+        conn.close()
+    except Exception as e:
+        logger.error(f"GRUPOS | erro ao mover {chave}: {e}")
+    return redirect("/listas")
+
+
+@app.route("/grupos/<chave>/ativo", methods=["POST"])
+def grupos_ativo(chave):
+    """Ativa ou desativa um grupo (soft-delete)."""
+    if not BANCO_DISPONIVEL:
+        return redirect("/listas")
+    ativo = (request.form.get("ativo") == "1")
+    try:
+        conn = bd.obter_conexao()
+        bd.definir_ativo_grupo(conn, chave, ativo)
+        conn.close()
+    except Exception as e:
+        logger.error(f"GRUPOS | erro ao ativar/desativar {chave}: {e}")
+    return redirect("/listas")
+
+
+@app.route("/grupos/<chave>/excluir", methods=["POST"])
+def grupos_excluir(chave):
+    """Exclui um grupo de vez — só se não foi usado em nenhuma ficha."""
+    if not BANCO_DISPONIVEL:
+        return redirect("/listas")
+    try:
+        conn = bd.obter_conexao()
+        res = bd.excluir_grupo(conn, chave)
+        conn.close()
+    except Exception as e:
+        logger.error(f"GRUPOS | erro ao excluir {chave}: {e}")
+        return _pagina_listas(erro="Erro ao excluir o grupo.")
+    if res == "em_uso":
+        return _pagina_listas(erro="Este grupo já foi usado em fichas — só pode ser desativado.")
+    return redirect("/listas")
+
+
+def _cabecalho_grupo_html(g, total, em_uso):
+    """
+    Cabeçalho de um grupo na aba Listas: nome editável + múltipla/única + contador
+    + controles (mover, ativar/desativar, excluir). Tudo via forms POST (sem JS).
+    """
+    chave = _esc(g["chave"])
+    rotulo = _esc(g["rotulo"])
+    ativo = g["ativo"]
+
+    sel_mult = "selected" if g["multipla"] else ""
+    sel_uni = "" if g["multipla"] else "selected"
+    estilo_btn = ("background:#fff;border:1px solid #ced4da;border-radius:5px;"
+                  "padding:3px 9px;font-size:0.8em;cursor:pointer;font-family:inherit")
+
+    # Renomear + múltipla num só form
+    form_editar = (
+        f'<form action="/grupos/{chave}/editar" method="post" '
+        f'style="display:flex;gap:6px;align-items:center;margin:0;flex:1">'
+        f'<input type="text" name="rotulo" value="{rotulo}" maxlength="40" '
+        f'style="font-weight:700;font-size:0.95em;border:1px solid transparent;'
+        f'border-radius:5px;padding:3px 6px;font-family:inherit;color:#1a1a2e;'
+        f'background:#f8f9fa;width:160px">'
+        f'<select name="multipla" style="{estilo_btn}">'
+        f'<option value="1" {sel_mult}>marca vários</option>'
+        f'<option value="0" {sel_uni}>escolhe um</option>'
+        f'</select>'
+        f'<button type="submit" style="{estilo_btn};color:#1D9E75;font-weight:700">salvar</button>'
+        f'</form>'
+    )
+
+    # Mover cima/baixo
+    btn_mover = (
+        f'<form action="/grupos/{chave}/mover" method="post" style="margin:0">'
+        f'<button name="dir" value="cima" style="{estilo_btn}" title="Subir">↑</button></form>'
+        f'<form action="/grupos/{chave}/mover" method="post" style="margin:0">'
+        f'<button name="dir" value="baixo" style="{estilo_btn}" title="Descer">↓</button></form>'
+    )
+
+    # Ativar/Desativar
+    if ativo:
+        btn_ativo = (
+            f'<form action="/grupos/{chave}/ativo" method="post" style="margin:0">'
+            f'<button name="ativo" value="0" style="{estilo_btn};color:#c0392b">Desativar</button></form>'
+        )
+        selo = ""
+    else:
+        btn_ativo = (
+            f'<form action="/grupos/{chave}/ativo" method="post" style="margin:0">'
+            f'<button name="ativo" value="1" style="background:#1a1a2e;border:1px solid #1a1a2e;'
+            f'color:#fff;border-radius:5px;padding:3px 9px;font-size:0.8em;cursor:pointer;'
+            f'font-family:inherit">Ativar</button></form>'
+        )
+        selo = ('<span style="background:#e9ecef;color:#6c757d;border-radius:4px;'
+                'padding:1px 7px;font-size:0.72em;font-weight:600">inativo</span>')
+
+    # Excluir — só se NÃO está em uso (s33). Em uso → dica de desativar.
+    if em_uso:
+        btn_excluir = ('<span style="color:#adb5bd;font-size:0.76em" '
+                       'title="Já usado em fichas — só pode desativar">em uso</span>')
+    else:
+        btn_excluir = (
+            f'<form action="/grupos/{chave}/excluir" method="post" style="margin:0" '
+            f'onsubmit="return confirm(\'Excluir o grupo {rotulo} e seus itens? Não tem volta.\')">'
+            f'<button type="submit" style="background:none;border:none;color:#adb5bd;'
+            f'font-size:0.78em;cursor:pointer;text-decoration:underline;font-family:inherit;'
+            f'padding:0">excluir</button></form>'
+        )
+
+    badge = (f'<span style="background:#e9ecef;color:#6c757d;border-radius:12px;'
+             f'padding:1px 10px;font-size:0.8em;font-weight:700">{total}</span>')
+
+    return (
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">'
+        f'{form_editar}{badge}{selo}'
+        '<div style="display:flex;gap:6px;align-items:center">'
+        f'{btn_mover}{btn_ativo}{btn_excluir}</div>'
+        '</div>'
+    )
+
+
 def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
     """
     Renderiza a aba de Listas de Contexto.
@@ -4405,20 +4582,31 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
     else:
         aviso_banco = "Banco de dados indisponível."
 
-    # ── Agrupa os itens por tipo ──────────────────────────────────────────────
-    # Monta um dicionário tipo → lista_de_itens
-    grupos = {t: [] for t in bd.ORDEM_TIPOS_LISTA}
-    for item in todos_itens:
-        t = item["tipo"]
-        if t in grupos:
-            grupos[t].append(item)
+    # ── Carrega os GRUPOS (dinâmicos) e o que está em uso ─────────────────────
+    grupos_def = []
+    grupos_em_uso = set()
+    if BANCO_DISPONIVEL:
+        try:
+            _conn = bd.obter_conexao()
+            grupos_def = bd.listar_grupos(_conn)
+            grupos_em_uso = {g["chave"] for g in grupos_def if bd.grupo_em_uso(_conn, g["chave"])}
+            _conn.close()
+        except Exception as _err_g:
+            aviso_banco = aviso_banco or f"Não foi possível carregar os grupos: {_err_g}"
 
-    # ── Monta os blocos HTML de cada grupo ────────────────────────────────────
+    # Agrupa os itens por tipo (= chave do grupo)
+    itens_por_tipo = {}
+    for item in todos_itens:
+        itens_por_tipo.setdefault(item["tipo"], []).append(item)
+
+    # ── Monta os blocos HTML de cada grupo (na ordem definida) ────────────────
     blocos_grupos = ""
-    for tipo in bd.ORDEM_TIPOS_LISTA:
-        rotulo = bd.ROTULOS_LISTA_CONTEXTO[tipo]
-        itens_do_tipo = grupos[tipo]
+    for g in grupos_def:
+        tipo = g["chave"]
+        rotulo = g["rotulo"]
+        itens_do_tipo = itens_por_tipo.get(tipo, [])
         total = len(itens_do_tipo)
+        cabecalho_grupo = _cabecalho_grupo_html(g, total, tipo in grupos_em_uso)
 
         # Monta as linhas da tabela deste grupo
         if itens_do_tipo:
@@ -4489,15 +4677,8 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
                 </tr>"""
 
         blocos_grupos += f"""
-        <div style="margin-bottom:28px">
-            <h3 style="font-size:0.92em;font-weight:700;color:#1a1a2e;margin-bottom:10px;
-                       display:flex;align-items:center;gap:10px">
-                {_esc(rotulo)}
-                <span style="background:#e9ecef;color:#6c757d;border-radius:12px;
-                             padding:1px 10px;font-size:0.82em;font-weight:700">
-                    {total}
-                </span>
-            </h3>
+        <div style="margin-bottom:28px{';opacity:0.55' if not g['ativo'] else ''}">
+            {cabecalho_grupo}
             <table style="width:100%;border-collapse:collapse;background:#fff;
                           border-radius:8px;overflow:hidden;
                           box-shadow:0 1px 4px rgba(0,0,0,0.08);font-size:0.88em">
@@ -4546,11 +4727,13 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
             {_esc(aviso_banco)}
         </div>"""
 
-    # Monta as <option> do select de tipo no formulário de adição
+    # Monta as <option> do select de tipo no formulário de adição (grupos ativos)
     opcoes_tipo = ""
-    for t in bd.ORDEM_TIPOS_LISTA:
-        sel = " selected" if t == tipo_digitado else ""
-        opcoes_tipo += f'<option value="{t}"{sel}>{bd.ROTULOS_LISTA_CONTEXTO[t]}</option>'
+    for g in grupos_def:
+        if not g["ativo"]:
+            continue
+        sel = " selected" if g["chave"] == tipo_digitado else ""
+        opcoes_tipo += f'<option value="{_esc(g["chave"])}"{sel}>{_esc(g["rotulo"])}</option>'
 
     # ── Corpo da página ────────────────────────────────────────────────────────
     corpo = f"""
@@ -4568,9 +4751,50 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
             {blocos_grupos}
         </div>
 
+        <!-- Coluna de formulários (grupo + item) -->
+        <div style="display:flex;flex-direction:column;gap:18px;position:sticky;top:20px">
+
+        <!-- Formulário de novo GRUPO -->
+        <div style="background:#fff;border-radius:8px;padding:20px 22px;
+                    box-shadow:0 1px 4px rgba(0,0,0,0.08)">
+            <h2 style="font-size:1em;font-weight:700;color:#1a1a2e;margin-bottom:6px">
+                Novo grupo
+            </h2>
+            <p style="color:#adb5bd;font-size:0.78em;margin-bottom:14px;line-height:1.5">
+                Um grupo vira um bloco de chips na ficha e uma coluna na planilha.
+            </p>
+            <form action="/grupos" method="post">
+                <div style="margin-bottom:12px">
+                    <label style="display:block;font-size:0.85em;font-weight:600;
+                                  color:#495057;margin-bottom:5px">Nome do grupo
+                        <span style="color:#c0392b">★</span></label>
+                    <input type="text" name="rotulo" autocomplete="off"
+                           placeholder="Ex.: Salas, Patrocinador, Idioma"
+                           style="width:100%;padding:9px 12px;border:1px solid #ced4da;
+                                  border-radius:6px;font-size:0.9em;font-family:inherit">
+                </div>
+                <div style="margin-bottom:16px">
+                    <label style="display:block;font-size:0.85em;font-weight:600;
+                                  color:#495057;margin-bottom:5px">Seleção na ficha</label>
+                    <select name="multipla"
+                            style="width:100%;padding:9px 12px;border:1px solid #ced4da;
+                                   border-radius:6px;font-size:0.9em;font-family:inherit">
+                        <option value="1">Marca vários</option>
+                        <option value="0">Escolhe um</option>
+                    </select>
+                </div>
+                <button type="submit"
+                        style="width:100%;background:#1D9E75;color:#fff;border:none;
+                               border-radius:6px;padding:10px;font-weight:700;
+                               font-size:0.9em;cursor:pointer;letter-spacing:0.3px">
+                    Criar grupo
+                </button>
+            </form>
+        </div>
+
         <!-- Formulário de novo item -->
         <div style="background:#fff;border-radius:8px;padding:20px 22px;
-                    box-shadow:0 1px 4px rgba(0,0,0,0.08);position:sticky;top:20px">
+                    box-shadow:0 1px 4px rgba(0,0,0,0.08)">
             <h2 style="font-size:1em;font-weight:700;color:#1a1a2e;margin-bottom:16px">
                 Adicionar item
             </h2>
@@ -4615,12 +4839,12 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
 
             <p style="color:#adb5bd;font-size:0.78em;margin-top:18px;line-height:1.5">
                 Itens desativados somem das fichas mas ficam no banco (proteção do
-                histórico). Para remover de vez, use o botão "excluir" na linha.
-                Enquanto a ficha nao registra chips selecionados, qualquer item
-                pode ser excluido — quando essa integracao for construida, itens
-                usados em fichas anteriores passarao a ser protegidos.
+                histórico). Itens já usados numa ficha não podem ser excluídos de
+                vez — só desativados.
             </p>
         </div>
+
+        </div><!-- fim da coluna de formulários -->
     </div>"""
 
     return _pagina("Listas de Contexto", "listas", corpo)
