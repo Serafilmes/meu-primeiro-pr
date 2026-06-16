@@ -2270,6 +2270,8 @@ CSS_FICHA = """
     .chip input { position:absolute; opacity:0; width:0; height:0; margin:0; }
     .chip.sel { background:#1D9E75; border-color:#1D9E75; color:#fff; font-weight:600; }
     .chip-vazio { font-size:0.84em; color:#adb5bd; font-style:italic; }
+    .chip-contador { font-weight:600; font-size:0.85em; color:#adb5bd; }
+    .chip-contador.tem { color:#1D9E75; }
     .chip-acao  { margin-top:5px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
     .chip-btn-novo { background:none; border:1px dashed #ced4da; border-radius:12px;
         padding:3px 10px; font-size:0.8em; color:#6c757d; cursor:pointer; }
@@ -2281,27 +2283,58 @@ CSS_FICHA = """
         font-size:1em; padding:0 4px; }
     .chip-novo-ok { color:#1D9E75; font-weight:700; }
     .chip-novo-cancel { color:#adb5bd; }
+    /* Toques maiores no celular: chips mais fáceis de acertar com o dedo. */
+    @media (max-width: 600px) {
+        .ficha-form { padding:16px 14px; }
+        .ficha-grid { grid-template-columns:1fr; gap:12px; }
+        .chip { padding:8px 15px; font-size:0.95em; }
+        .chip-novo-input { width:100%; }
+        .tipo-checks { gap:12px; }
+    }
 """
 
-# JS dos chips: torna o chip clicável (pinta quando marcado) e aplica escolha
-# ÚNICA por grupo (os chips com data-grupo preenchido — palco/marca/pauta/serviço).
-# Tags têm data-grupo vazio → seleção múltipla livre. Roda no navegador, offline,
-# sem dependência externa. Inofensivo quando não há chips na página (não acha nada).
+# JS dos chips: torna o chip clicável (pinta quando marcado), mantém o contador de
+# marcados por grupo e — se algum grupo for de escolha única (data-grupo preenchido)
+# — desmarca os irmãos. Hoje todos os grupos são múltiplos (CLASSIF_UNICA vazio).
+# Roda no navegador, offline, sem dependência externa. Inofensivo sem chips na página.
 JS_CHIPS = """
 <script>
 (function(){
   function pinta(lbl){ if(lbl) lbl.classList.toggle('sel', lbl.querySelector('input').checked); }
+
+  // Atualiza o contador de um grupo (tipo): "· 2 marcados".
+  window.gmaAtualizaContador = function(tipo){
+    if (!tipo) return;
+    var linha = document.getElementById('chip-linha-' + tipo);
+    var cont  = document.querySelector('.chip-contador[data-tipo="' + tipo + '"]');
+    if (!linha || !cont) return;
+    var n = linha.querySelectorAll('input[type=checkbox]:checked').length;
+    cont.textContent = n ? ('· ' + n + (n > 1 ? ' marcados' : ' marcado')) : '';
+    cont.classList.toggle('tem', n > 0);
+  };
+
+  function grupoDoChip(lbl){
+    var linha = lbl.closest('.chip-linha');
+    return linha ? linha.id.replace('chip-linha-', '') : '';
+  }
+
   document.querySelectorAll('.chip input[type=checkbox]').forEach(function(inp){
     var lbl = inp.closest('.chip');
     inp.addEventListener('change', function(){
       var grupo = lbl.getAttribute('data-grupo');
-      if (grupo && inp.checked) {
+      if (grupo && inp.checked) {  // escolha única: desmarca os irmãos
         document.querySelectorAll('.chip[data-grupo="'+grupo+'"] input').forEach(function(outro){
           if (outro !== inp) { outro.checked = false; pinta(outro.closest('.chip')); }
         });
       }
       pinta(lbl);
+      window.gmaAtualizaContador(grupoDoChip(lbl));
     });
+  });
+
+  // Estado inicial dos contadores (edição/reabertura de ficha já com chips marcados).
+  document.querySelectorAll('.chip-contador').forEach(function(c){
+    window.gmaAtualizaContador(c.getAttribute('data-tipo'));
   });
 })();
 </script>"""
@@ -2406,8 +2439,10 @@ JS_CHIP_NOVO = """
               });
             }
             lbl.classList.toggle('sel', chk.checked);
+            if (window.gmaAtualizaContador) window.gmaAtualizaContador(tipo);
           });
           linha.appendChild(lbl);
+          if (window.gmaAtualizaContador) window.gmaAtualizaContador(tipo);
         }
         fecharNovo(tipo);
         okBtn.disabled = false;
@@ -2417,10 +2452,12 @@ JS_CHIP_NOVO = """
 })();
 </script>"""
 
-# Quais grupos de classificação são de escolha ÚNICA (radio-like) e qual é múltiplo.
-# Espelha o desenho da Planilha de Entrega (s31): palco/marca/pauta/serviço = 1 valor;
-# tags = vários.
-CLASSIF_UNICA = {"palco", "marca", "pauta", "servico"}
+# Quais grupos de classificação são de escolha ÚNICA (radio-like).
+# DECISÃO s33: TODOS os grupos passaram a aceitar MÚLTIPLA escolha — um cartão
+# cobre vários palcos, várias pautas, várias marcas. Quem tem só um, marca um.
+# O conjunto fica vazio (nenhum grupo é único hoje); mantido para o futuro, quando
+# os grupos forem editáveis e cada um carregar sua própria regra de única/múltipla.
+CLASSIF_UNICA = set()
 
 
 def _opcoes_select(lista, selecionado=""):
@@ -2878,7 +2915,10 @@ def _bloco_classificacao_ficha(chips_selecionados, eh_operador=False):
                 f'<input type="checkbox" name="chip" value="{iid}"{checked}>'
                 f'{_esc(it["valor"])}</label>'
             )
-        dica = "" if unico else ' <span class="ajuda">(pode marcar várias)</span>'
+        # Todos os grupos são múltipla escolha hoje (CLASSIF_UNICA vazio). Mostramos
+        # um contador discreto ao lado do rótulo, atualizado pelo JS ao marcar/desmarcar.
+        dica = (' <span class="ajuda">(uma opção)</span>' if unico
+                else f' <span class="chip-contador" data-tipo="{tipo}"></span>')
         # Botão "+ novo" — só para o operador (acesso local). O profissional
         # de captação (acesso remoto) só escolhe; nunca vê a opção de criar.
         btn_novo = ""
@@ -2973,6 +3013,8 @@ def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
           <input type="date" name="data_gravacao" value="{_esc(d.get('data_gravacao',''))}" required{trava}>
         </div>
 
+        {bloco_classificacao}
+
         <div class="grupo-titulo">Opcionais (ajudam o sistema e os editores)</div>
 
         <div class="campo">
@@ -2985,17 +3027,6 @@ def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
                  value="{_esc(d.get('modelo_camera',''))}" placeholder="ex: FX3, HERO7">
         </div>
         <div class="campo">
-          <label>Tipo de conteúdo</label>
-          <select name="tipo_conteudo">
-            <option value="">— nenhum —</option>
-            {_opcoes_select(OPCOES_TIPO_CONTEUDO, d.get('tipo_conteudo',''))}
-          </select>
-        </div>
-        <div class="campo">
-          <label>Local / cena</label>
-          <input type="text" name="local_cena" value="{_esc(d.get('local_cena',''))}" placeholder="ex: PALCO PRINCIPAL">
-        </div>
-        <div class="campo">
           <label>Prioridade</label>
           <select name="prioridade">
             {_opcoes_select(OPCOES_PRIORIDADE, d.get('prioridade','') or 'NORMAL')}
@@ -3005,7 +3036,6 @@ def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
           <label>Observações</label>
           <textarea name="observacoes" placeholder="anotações livres sobre o cartão…">{_esc(d.get('observacoes',''))}</textarea>
         </div>
-        {bloco_classificacao}
       </div>
       <div class="ficha-acoes">
         <button type="submit" class="btn-enviar">{texto_botao}</button>
