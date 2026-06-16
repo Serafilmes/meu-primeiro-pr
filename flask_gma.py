@@ -2029,17 +2029,11 @@ def molde_planilha():
             badge_vis = (f'<span style="color:#1D9E75;font-size:0.8em">● visível</span>'
                          if vis else
                          f'<span style="color:#adb5bd;font-size:0.8em">○ oculta</span>')
-            badge_sis = ('' if col["sistema"] else
-                         '<span style="background:#e9ecef;color:#6c757d;font-size:0.75em;'
-                         'padding:1px 6px;border-radius:4px;margin-left:6px">personalizada</span>')
-            btn_excluir = (
-                f'<form method="post" action="/molde/{_esc(col["chave"])}/excluir" style="display:inline">'
-                f'<button type="submit" style="background:none;border:none;color:#dc3545;'
-                f'cursor:pointer;font-size:0.8em;padding:0 4px" '
-                f'onclick="return confirm(\'Excluir a coluna "{_esc(col["rotulo"])}"?\')">✕ excluir</button>'
-                f'</form>'
-                if not col["sistema"] else ""
-            )
+            # As colunas vêm só dos grupos cadastrados e do sistema — não há mais
+            # coluna "personalizada" solta (s33). Por isso, sem selo nem excluir aqui:
+            # para tirar uma coluna de classificação, exclui-se o GRUPO na aba Listas.
+            badge_sis = ""
+            btn_excluir = ""
             linhas_col += f"""
             <tr style="border-bottom:1px solid #f1f3f5">
               <td style="padding:8px 12px">{_esc(col['rotulo'])}{badge_sis}</td>
@@ -2089,47 +2083,19 @@ def molde_planilha():
           </table>
         </div>"""
 
-    # Formulário: nova coluna personalizada
-    opcoes_bloco = "".join(
-        f'<option value="{b}">{r}</option>'
-        for b, r in BLOCOS_PLANILHA
-    )
-    form_nova = f"""
-    <div style="background:#fff;border:1px solid #e9ecef;border-radius:8px;padding:16px;margin-top:8px">
-      <p style="font-weight:600;margin:0 0 12px 0">+ Adicionar coluna personalizada</p>
-      <p style="font-size:0.82em;color:#6c757d;margin:0 0 12px 0">
-        Colunas personalizadas aparecem na planilha como "—" localmente — úteis para
-        preencher manualmente no Google Sheets (ex.: "Aprovado", "Nota editorial").
-      </p>
-      <form method="post" action="/molde/nova" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
-        <div>
-          <label style="font-size:0.85em;display:block;margin-bottom:4px">Rótulo (nome da coluna)</label>
-          <input type="text" name="rotulo" required maxlength="40"
-            style="border:1px solid #dee2e6;border-radius:4px;padding:6px 10px;font-size:0.9em">
-        </div>
-        <div>
-          <label style="font-size:0.85em;display:block;margin-bottom:4px">Bloco</label>
-          <select name="bloco" style="border:1px solid #dee2e6;border-radius:4px;padding:6px 10px;font-size:0.9em">
-            {opcoes_bloco}
-          </select>
-        </div>
-        <button type="submit" style="background:#1D9E75;color:#fff;border:none;border-radius:4px;
-          padding:7px 16px;cursor:pointer;font-size:0.9em">Adicionar</button>
-      </form>
-    </div>"""
-
     corpo = f"""
     <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px">
       <div style="flex:1">
         <h2 style="margin:0;font-size:1.1em">Configurar colunas da Planilha de Entrega</h2>
         <p style="margin:4px 0 0 0;font-size:0.85em;color:#6c757d">
-          Colunas do sistema só podem ser ocultadas. Colunas personalizadas podem ser excluídas.
+          Ligue/desligue as colunas. As colunas de classificação vêm dos grupos
+          cadastrados na aba <a href="/listas" style="color:#1D9E75">Listas</a> —
+          para criar ou remover uma, mexa nos grupos lá.
         </p>
       </div>
       <a href="/planilha" style="font-size:0.85em;color:#1D9E75">← Voltar à planilha</a>
     </div>
-    {secoes_html}
-    {form_nova}"""
+    {secoes_html}"""
 
     return _pagina("Configurar Colunas", "molde", corpo), 200, {"Content-Type": "text/html; charset=utf-8"}
 
@@ -2181,42 +2147,9 @@ def molde_bloco_mostrar(bloco_chave):
     return redirect("/molde", 303)
 
 
-@app.route("/molde/nova", methods=["POST"])
-def molde_nova_coluna():
-    """Cria uma nova coluna personalizada."""
-    if not BANCO_DISPONIVEL:
-        return redirect("/molde", 303)
-    rotulo = (request.form.get("rotulo") or "").strip()
-    bloco  = (request.form.get("bloco")  or "custom").strip()
-    # Deriva a chave: minúsculas, só letras/dígitos/underscore
-    import re as _re
-    chave = "custom_" + _re.sub(r"[^a-z0-9_]", "_",
-                                 rotulo.lower().replace(" ", "_"))[:30]
-    try:
-        conn = bd.obter_conexao()
-        resultado = bd.adicionar_coluna_custom(conn, chave, rotulo, bloco)
-        conn.close()
-        if resultado == "duplicada":
-            logger.warning(f"MOLDE | Nova coluna duplicada: {chave}")
-    except Exception as e:
-        logger.error(f"MOLDE | nova coluna | {e}")
-    return redirect("/molde", 303)
-
-
-@app.route("/molde/<chave>/excluir", methods=["POST"])
-def molde_excluir_coluna(chave):
-    """Exclui uma coluna personalizada definitivamente."""
-    if not BANCO_DISPONIVEL:
-        return redirect("/molde", 303)
-    try:
-        conn = bd.obter_conexao()
-        resultado = bd.excluir_coluna_custom(conn, chave)
-        conn.close()
-        if resultado == "sistema":
-            logger.warning(f"MOLDE | Tentativa de excluir coluna do sistema: {chave}")
-    except Exception as e:
-        logger.error(f"MOLDE | excluir {chave} | {e}")
-    return redirect("/molde", 303)
+# NOTA (s33): as rotas /molde/nova e /molde/<chave>/excluir foram removidas — não
+# há mais "coluna personalizada" solta. As colunas de classificação vêm dos grupos
+# (aba Listas); criar/remover coluna = criar/excluir grupo. O Molde só liga/desliga.
 
 
 # ── ROTA: FICHA DE CHECK-IN (tela de inserção local) ─────────────────────────
