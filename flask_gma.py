@@ -544,7 +544,12 @@ def _processar_e_salvar_formulario(dados_recebidos, origem="FORMS",
         "nome_audio":       nome_audio_norm,
         "entrega_id":       entrega_id,
         "data_gravacao":    dados_recebidos.get("data_gravacao", "").strip(),
-        "operador":         dados_recebidos.get("operador", "").strip() or None,
+        # "Quem preencheu?" (ficha remota): se o profissional marcou "Eu mesmo"
+        # (preenchido_por=proprio), o operador é o próprio nome — sem campo redundante.
+        # Senão, vale o que foi digitado (ou o operador da base, que manda texto livre).
+        "operador":         (nome_normalizado
+                             if dados_recebidos.get("preenchido_por") == "proprio"
+                             else (dados_recebidos.get("operador", "").strip() or None)),
         # Campos editoriais (opcionais — não bloqueiam validação nem matching)
         "modelo_camera":    dados_recebidos.get("modelo_camera", "").strip() or None,
         "tipo_conteudo":    dados_recebidos.get("tipo_conteudo", "").strip().upper() or None,
@@ -2283,6 +2288,11 @@ CSS_FICHA = """
         font-size:1em; padding:0 4px; }
     .chip-novo-ok { color:#1D9E75; font-weight:700; }
     .chip-novo-cancel { color:#adb5bd; }
+    /* Toggles "Quando foi gravado?" e "Quem está preenchendo?" */
+    .radio-linha { display:flex; gap:18px; align-items:center; margin-top:2px; }
+    .radio-op { font-size:0.92em; font-weight:600; color:#495057;
+                display:flex; align-items:center; gap:6px; cursor:pointer; }
+    .radio-op input[type=radio] { width:16px; height:16px; cursor:pointer; accent-color:#27ae60; }
     /* Toques maiores no celular: chips mais fáceis de acertar com o dedo. */
     @media (max-width: 600px) {
         .ficha-form { padding:16px 14px; }
@@ -2459,6 +2469,36 @@ JS_CHIP_NOVO = """
       })
       .catch(function(){ alert('Erro de conexão.'); okBtn.disabled = false; });
   }
+})();
+</script>"""
+
+# JS dos toggles da ficha: "Quando foi gravado?" (mostra a data só em "Outro dia")
+# e "Quem está preenchendo?" (mostra o campo de nome só em "Outra pessoa").
+JS_FICHA_TOGGLES = """
+<script>
+(function(){
+  function init(){
+    // Toggle da data: "Hoje" esconde o campo (volta p/ hoje); "Outro dia" abre.
+    var campoData = document.getElementById('campo-data');
+    document.querySelectorAll('input[name="grav_quando"]').forEach(function(r){
+      r.addEventListener('change', function(){
+        if (!campoData || !r.checked) return;
+        if (r.value === 'outro') { campoData.style.display = ''; campoData.focus(); }
+        else { campoData.style.display = 'none'; campoData.value = campoData.getAttribute('data-hoje'); }
+      });
+    });
+    // Toggle do "quem preencheu": "Eu mesmo" esconde; "Outra pessoa" abre.
+    var campoOp = document.getElementById('campo-operador');
+    document.querySelectorAll('input[name="preenchido_por"]').forEach(function(r){
+      r.addEventListener('change', function(){
+        if (!campoOp || !r.checked) return;
+        if (r.value === 'outro') { campoOp.style.display = ''; campoOp.focus(); }
+        else { campoOp.style.display = 'none'; campoOp.value = ''; }
+      });
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
 })();
 </script>"""
 
@@ -2962,6 +3002,77 @@ def _bloco_classificacao_ficha(chips_selecionados, eh_operador=False):
     )
 
 
+def _bloco_data_ficha(d, trava, hoje_iso):
+    """
+    Bloco "Quando foi gravado?" — assume HOJE por padrão e só pede a data quando
+    o profissional diz que foi outro dia (2.1, decisão s33). Mais prático no set:
+    a maioria entrega no mesmo dia. O Matcher recebe a data normalmente (critério +2).
+
+    Travada (ficha já casou): mostra só a data desabilitada, sem o toggle.
+    """
+    data_atual = (d.get("data_gravacao") or "").strip()
+    if trava:
+        return (
+            '<div class="campo">'
+            '<label>Data de gravação <span class="estrela">★</span></label>'
+            f'<input type="date" name="data_gravacao" value="{_esc(data_atual)}" required disabled>'
+            '</div>'
+        )
+    # Estado inicial: "hoje" — exceto edição de uma ficha com data diferente de hoje.
+    eh_hoje = (not data_atual) or (data_atual == hoje_iso)
+    valor = data_atual or hoje_iso
+    chk_hoje = " checked" if eh_hoje else ""
+    chk_outro = "" if eh_hoje else " checked"
+    estilo = "display:none;" if eh_hoje else ""
+    return (
+        '<div class="campo largo">'
+        '<label>Quando foi gravado? <span class="estrela">★</span></label>'
+        '<div class="radio-linha">'
+        f'<label class="radio-op"><input type="radio" name="grav_quando" value="hoje"{chk_hoje}> Hoje</label>'
+        f'<label class="radio-op"><input type="radio" name="grav_quando" value="outro"{chk_outro}> Outro dia</label>'
+        '</div>'
+        f'<input type="date" name="data_gravacao" id="campo-data" value="{_esc(valor)}" '
+        f'data-hoje="{hoje_iso}" required style="margin-top:8px;{estilo}">'
+        '</div>'
+    )
+
+
+def _bloco_operador_ficha(d, eh_operador):
+    """
+    "Quem preencheu?" — diferente por contexto (2.2, decisão s33):
+
+    - Base (operador local): campo de texto livre (o login real virá numa fatia
+      futura; por ora o operador digita ou deixa em branco).
+    - Remoto (profissional pelo celular): "Eu mesmo" (padrão) ou "Outra pessoa".
+      Em "Eu mesmo" o campo de nome some — o servidor usa o próprio nome do
+      profissional, sem redundância. Em "Outra pessoa", abre o campo do nome.
+    """
+    operador_atual = (d.get("operador") or "").strip()
+    if eh_operador:
+        return (
+            '<div class="campo">'
+            '<label>Quem preencheu <span class="ajuda">(operador do check-in)</span></label>'
+            f'<input type="text" name="operador" value="{_esc(operador_atual)}" placeholder="opcional">'
+            '</div>'
+        )
+    # Remoto: se já há um operador salvo (edição), começa em "Outra pessoa".
+    tem_outro = bool(operador_atual)
+    chk_proprio = "" if tem_outro else " checked"
+    chk_outro = " checked" if tem_outro else ""
+    estilo = "" if tem_outro else "display:none;"
+    return (
+        '<div class="campo largo">'
+        '<label>Quem está preenchendo?</label>'
+        '<div class="radio-linha">'
+        f'<label class="radio-op"><input type="radio" name="preenchido_por" value="proprio"{chk_proprio}> Eu mesmo</label>'
+        f'<label class="radio-op"><input type="radio" name="preenchido_por" value="outro"{chk_outro}> Outra pessoa</label>'
+        '</div>'
+        f'<input type="text" name="operador" id="campo-operador" value="{_esc(operador_atual)}" '
+        f'placeholder="nome de quem preencheu" style="margin-top:8px;{estilo}">'
+        '</div>'
+    )
+
+
 def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
                 bloquear_criticos=False, mostrar_recentes=True,
                 chips_selecionados=None):
@@ -3003,12 +3114,21 @@ def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
     # Se falhar (banco indisponível), a ficha ainda abre — dropdowns ficarão vazios.
     profissionais = _profissionais_para_ficha()
 
+    # Operador (base/local) vê ferramentas a mais que o profissional remoto.
+    eh_operador = _host_local()
+    # Data de hoje (para o bloco "Quando foi gravado?" assumir o caso comum).
+    hoje_iso = datetime.now().strftime("%Y-%m-%d")
+
     # Monta o bloco TIPO (checkboxes) + NOME (dropdowns fechados) — Nova Ficha v2 Fatia 3.
     bloco_tipo_nome = _bloco_tipo_nome_ficha(d, trava, profissionais)
 
+    # Bloco "Quando foi gravado?" (2.1) e "Quem preencheu?" (2.2).
+    bloco_data = _bloco_data_ficha(d, trava, hoje_iso)
+    bloco_operador = _bloco_operador_ficha(d, eh_operador)
+
     # Monta o bloco CLASSIFICAÇÃO (chips das listas de contexto) — ponte chips→ficha.
     bloco_classificacao = _bloco_classificacao_ficha(chips_selecionados,
-                                                     eh_operador=_host_local())
+                                                     eh_operador=eh_operador)
 
     corpo = f"""
     <p class="legenda">{legenda}</p>
@@ -3018,19 +3138,13 @@ def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
       {_datalist('lista_modelos', sug['modelos'])}
       <div class="ficha-grid">
         {bloco_tipo_nome}
-        <div class="campo">
-          <label>Data de gravação <span class="estrela">★</span></label>
-          <input type="date" name="data_gravacao" value="{_esc(d.get('data_gravacao',''))}" required{trava}>
-        </div>
+        {bloco_data}
 
         {bloco_classificacao}
 
         <div class="grupo-titulo">Opcionais (ajudam o sistema e os editores)</div>
 
-        <div class="campo">
-          <label>Operador <span class="ajuda">(quem fez o check-in)</span></label>
-          <input type="text" name="operador" value="{_esc(d.get('operador',''))}" placeholder="opcional">
-        </div>
+        {bloco_operador}
         <div class="campo">
           <label>Modelo da câmera</label>
           <input type="text" name="modelo_camera" list="lista_modelos"
@@ -3054,7 +3168,7 @@ def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
     </form>
     {_fichas_recentes_html() if (mostrar_recentes and not editando) else ''}"""
 
-    head_extra = f"<style>{CSS_FICHA}</style>{JS_CHIPS}{JS_CHIP_NOVO}"
+    head_extra = f"<style>{CSS_FICHA}</style>{JS_CHIPS}{JS_CHIP_NOVO}{JS_FICHA_TOGGLES}"
     titulo = "Editar ficha" if editando else "Nova Ficha"
     return _pagina(titulo, "ficha", corpo, head_extra)
 
