@@ -605,6 +605,11 @@ def inicializar_banco():
     # pelo Flask (que é quem o define) via sincronizar_catalogo_molde().
     migrar_schema_molde_planilha(conn)
 
+    # Migração incremental: cria a tabela grupos_classificacao e semeia os 5 grupos
+    # padrão. Os grupos de classificação (palco/marca/pauta/servico/tag) deixam de
+    # ser fixos no código e viram dados editáveis pelo operador (s33).
+    migrar_schema_grupos_classificacao(conn)
+
     return conn
 
 
@@ -1923,6 +1928,197 @@ ROTULOS_LISTA_CONTEXTO = {
 
 # Ordem de exibição na aba Listas (a mesma descrita no briefing).
 ORDEM_TIPOS_LISTA = ["palco", "marca", "pauta", "servico", "tag"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Grupos de classificação editáveis (tabela grupos_classificacao)
+# ─────────────────────────────────────────────────────────────────────────────
+# Os grupos (palco/marca/pauta/servico/tag) deixam de ser constantes fixas e
+# viram dados editáveis pelo operador (decisão s33). Um único ponto de criação
+# que alimenta a ficha (chips) E a planilha (coluna). Cada grupo:
+#   chave    — identificador estável (ex: "palco", "custom_sala"); = listas_contexto.tipo
+#   rotulo   — nome exibido (editável; ex: "Palcos")
+#   multipla — 1 = marca vários / 0 = escolhe um (regra POR grupo; substitui CLASSIF_UNICA)
+#   ordem    — ordem de exibição
+#   ativo    — 1 = aparece na ficha / 0 = desativado (soft-delete preserva histórico)
+#   sistema  — 1 = grupo padrão semeado pelo sistema / 0 = criado pelo operador
+#
+# Regra de exclusão (s33): pode excluir de vez SÓ se o grupo não foi usado em
+# nenhuma ficha; se já foi usado, só desativa. O guard é "em uso?", não "sistema?".
+
+# Os 5 grupos padrão semeados em todo banco novo: (chave, rotulo, multipla, ordem).
+GRUPOS_PADRAO = [
+    ("palco",   "Palcos",   1, 0),
+    ("marca",   "Marcas",   1, 1),
+    ("pauta",   "Pautas",   1, 2),
+    ("servico", "Serviços", 1, 3),
+    ("tag",     "Tags",     1, 4),
+]
+
+
+def migrar_schema_grupos_classificacao(conn):
+    """
+    Cria a tabela `grupos_classificacao` se ainda não existir e semeia os 5 grupos
+    padrão (INSERT OR IGNORE — não sobrescreve o que o operador já editou).
+
+    Não-destrutivo: seguro chamar em bancos existentes.
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS grupos_classificacao (
+            chave    TEXT PRIMARY KEY,
+            rotulo   TEXT NOT NULL,
+            multipla INTEGER NOT NULL DEFAULT 1,
+            ordem    INTEGER NOT NULL DEFAULT 0,
+            ativo    INTEGER NOT NULL DEFAULT 1,
+            sistema  INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    for chave, rotulo, multipla, ordem in GRUPOS_PADRAO:
+        conn.execute(
+            "INSERT OR IGNORE INTO grupos_classificacao "
+            "(chave, rotulo, multipla, ordem, ativo, sistema) VALUES (?, ?, ?, ?, 1, 1)",
+            (chave, rotulo, multipla, ordem),
+        )
+    conn.commit()
+
+
+def listar_grupos(conn, apenas_ativos=False):
+    """Retorna os grupos de classificação, ordenados por `ordem`."""
+    where = " WHERE ativo = 1" if apenas_ativos else ""
+    rows = conn.execute(
+        f"SELECT chave, rotulo, multipla, ordem, ativo, sistema "
+        f"FROM grupos_classificacao{where} ORDER BY ordem, rotulo"
+    ).fetchall()
+    return [
+        {"chave": r[0], "rotulo": r[1], "multipla": bool(r[2]),
+         "ordem": r[3], "ativo": bool(r[4]), "sistema": bool(r[5])}
+        for r in rows
+    ]
+
+
+def _slug_grupo(rotulo):
+    """Deriva uma chave estável (custom_<slug>) a partir do rótulo digitado."""
+    import re
+    base = re.sub(r"[^a-z0-9_]", "_", (rotulo or "").lower().replace(" ", "_"))[:30]
+    return "custom_" + base.strip("_")
+
+
+def criar_grupo(conn, rotulo, multipla=True):
+    """
+    Cria um grupo de classificação novo (sistema=0). A chave é derivada do rótulo.
+
+    Returns: dict do grupo criado, ou levanta ValueError se rótulo vazio /
+    sqlite3.IntegrityError se a chave colidir.
+    """
+    rotulo = (rotulo or "").strip()
+    if not rotulo:
+        raise ValueError("O nome do grupo não pode ser vazio.")
+    chave = _slug_grupo(rotulo)
+    if chave == "custom_":
+        raise ValueError("Nome inválido para o grupo.")
+    ordem = conn.execute(
+        "SELECT COALESCE(MAX(ordem), -1) + 1 FROM grupos_classificacao"
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO grupos_classificacao (chave, rotulo, multipla, ordem, ativo, sistema) "
+        "VALUES (?, ?, ?, ?, 1, 0)",
+        (chave, rotulo, 1 if multipla else 0, ordem),
+    )
+    conn.commit()
+    registrar_evento(conn, "grupo_criado", f"Grupo de classificação criado: {rotulo}",
+                     dados={"chave": chave, "multipla": bool(multipla)})
+    return {"chave": chave, "rotulo": rotulo, "multipla": bool(multipla),
+            "ordem": ordem, "ativo": True, "sistema": False}
+
+
+def renomear_grupo(conn, chave, novo_rotulo):
+    """Renomeia um grupo (vale para padrão e personalizado). Loga a operação."""
+    novo_rotulo = (novo_rotulo or "").strip()
+    if not novo_rotulo:
+        raise ValueError("O nome do grupo não pode ser vazio.")
+    row = conn.execute(
+        "SELECT rotulo FROM grupos_classificacao WHERE chave = ?", (chave,)
+    ).fetchone()
+    if row is None:
+        return "inexistente"
+    antigo = row[0]
+    conn.execute("UPDATE grupos_classificacao SET rotulo = ? WHERE chave = ?",
+                 (novo_rotulo, chave))
+    conn.commit()
+    registrar_evento(conn, "grupo_renomeado",
+                     f"Grupo renomeado: {antigo} → {novo_rotulo}", dados={"chave": chave})
+    return "ok"
+
+
+def definir_multipla_grupo(conn, chave, multipla):
+    """Define se o grupo aceita múltipla escolha (True) ou só uma (False)."""
+    row = conn.execute(
+        "SELECT rotulo FROM grupos_classificacao WHERE chave = ?", (chave,)
+    ).fetchone()
+    if row is None:
+        return "inexistente"
+    conn.execute("UPDATE grupos_classificacao SET multipla = ? WHERE chave = ?",
+                 (1 if multipla else 0, chave))
+    conn.commit()
+    registrar_evento(conn, "grupo_alterado",
+                     f"Grupo '{row[0]}': múltipla={bool(multipla)}", dados={"chave": chave})
+    return "ok"
+
+
+def definir_ativo_grupo(conn, chave, ativo):
+    """Ativa/desativa um grupo (soft-delete). Loga a operação."""
+    row = conn.execute(
+        "SELECT rotulo FROM grupos_classificacao WHERE chave = ?", (chave,)
+    ).fetchone()
+    if row is None:
+        return "inexistente"
+    conn.execute("UPDATE grupos_classificacao SET ativo = ? WHERE chave = ?",
+                 (1 if ativo else 0, chave))
+    conn.commit()
+    estado = "ativado" if ativo else "desativado"
+    registrar_evento(conn, "grupo_alterado", f"Grupo '{row[0]}' {estado}",
+                     dados={"chave": chave, "ativo": bool(ativo)})
+    return "ok"
+
+
+def grupo_em_uso(conn, chave):
+    """
+    True se algum item deste grupo já aparece em alguma ficha (formularios_chips).
+    Usa a chave do grupo = listas_contexto.tipo.
+    """
+    try:
+        n = conn.execute(
+            "SELECT COUNT(*) FROM formularios_chips fc "
+            "JOIN listas_contexto lc ON lc.id = fc.item_id "
+            "WHERE lc.tipo = ?", (chave,)
+        ).fetchone()[0]
+        return n > 0
+    except sqlite3.OperationalError:
+        return False
+
+
+def excluir_grupo(conn, chave):
+    """
+    Exclui um grupo DEFINITIVAMENTE — só se não foi usado em nenhuma ficha (s33).
+    Remove junto os itens (não usados) daquele grupo. Se já foi usado, recusa
+    (o operador deve desativar). Loga a operação.
+
+    Returns: "excluido" | "em_uso" | "inexistente".
+    """
+    row = conn.execute(
+        "SELECT rotulo FROM grupos_classificacao WHERE chave = ?", (chave,)
+    ).fetchone()
+    if row is None:
+        return "inexistente"
+    if grupo_em_uso(conn, chave):
+        return "em_uso"
+    # Remove os itens (todos não usados, já que o grupo não está em uso) e o grupo.
+    conn.execute("DELETE FROM listas_contexto WHERE tipo = ?", (chave,))
+    conn.execute("DELETE FROM grupos_classificacao WHERE chave = ?", (chave,))
+    conn.commit()
+    registrar_evento(conn, "grupo_excluido", f"Grupo excluído: {row[0]}",
+                     dados={"chave": chave})
+    return "excluido"
 
 
 def migrar_schema_listas_contexto(conn):
