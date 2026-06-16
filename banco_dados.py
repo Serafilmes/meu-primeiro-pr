@@ -594,6 +594,11 @@ def inicializar_banco():
     # (palco, marca, pauta, serviço, tag) geridas pelo operador.
     migrar_schema_listas_contexto(conn)
 
+    # Migração incremental: cria a tabela formularios_chips (a ponte chips→ficha)
+    # se ainda não existir. Liga cada ficha aos itens de listas_contexto que o
+    # profissional escolheu como classificação.
+    migrar_schema_formularios_chips(conn)
+
     return conn
 
 
@@ -2067,18 +2072,21 @@ def definir_ativo_item_lista(conn, item_id, ativo):
 
 def itens_lista_em_uso(conn):
     """
-    Devolve o conjunto de ids de itens que estão referenciados por fichas.
+    Devolve o conjunto de ids de itens referenciados por ao menos uma ficha.
 
-    NOTA: Nesta fatia, os chips ainda NÃO foram conectados à ficha — a ficha
-    não armazena quais itens de lista foram selecionados. Por isso, esta função
-    sempre devolve um conjunto vazio. O guard já existe para quando a integração
-    com a ficha for construída (fatia futura): basta adicionar aqui a consulta
-    na tabela que registrar os chips escolhidos por formulário.
+    Liga-se à tabela formularios_chips (a ponte chips→ficha, construída na fatia
+    "chips na ficha"). Um item em uso só pode ser DESATIVADO (soft-delete, via
+    definir_ativo_item_lista), nunca excluído de vez — princípio 2 do projeto.
     """
-    # TODO (fatia futura): quando os chips entrarem na ficha, implementar o JOIN
-    # entre listas_contexto e a tabela que guardar as seleções por formulário.
-    # Ex: SELECT DISTINCT item_id FROM formularios_chips
-    return set()  # por ora, nenhum item está "em uso"
+    try:
+        return {
+            r[0] for r in conn.execute(
+                "SELECT DISTINCT item_id FROM formularios_chips"
+            )
+        }
+    except sqlite3.OperationalError:
+        # Banco antigo sem a tabela ainda — trata como "nada em uso".
+        return set()
 
 
 def excluir_item_lista(conn, item_id):
@@ -2110,6 +2118,157 @@ def excluir_item_lista(conn, item_id):
     conn.execute("DELETE FROM listas_contexto WHERE id = ?", (item_id,))
     conn.commit()
     return "excluido"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ponte chips → ficha (tabela formularios_chips)
+# ─────────────────────────────────────────────────────────────────────────────
+# Tabela de associação: liga cada ficha (formularios) aos itens de listas_contexto
+# que o profissional escolheu como classificação na ficha (palco, marca, pauta,
+# serviço, tags). Normalizada — uma linha por (ficha, item). A multi-seleção (tags)
+# sai de graça; a escolha única (palco/marca/…) é só convenção da interface.
+#
+# Por que guardar o id e não o texto: o item nunca é renomeado (UNIQUE tipo+valor)
+# e só pode ser excluído de vez se NÃO estiver em uso (guard itens_lista_em_uso).
+# Logo o id é estável; a planilha faz JOIN para mostrar o texto atual e respeita o
+# soft-delete — um item desativado continua aparecendo nas fichas antigas, o que
+# preserva o histórico (princípio 2).
+
+def migrar_schema_formularios_chips(conn):
+    """
+    Cria a tabela `formularios_chips` se ainda não existir.
+
+    Usa CREATE TABLE IF NOT EXISTS — não-destrutivo, seguro chamar várias vezes.
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS formularios_chips (
+            -- A ficha que recebeu a classificação
+            formulario_id INTEGER NOT NULL REFERENCES formularios(id),
+
+            -- O item de listas_contexto escolhido (palco/marca/pauta/serviço/tag)
+            item_id       INTEGER NOT NULL REFERENCES listas_contexto(id),
+
+            -- Um mesmo item não se repete na mesma ficha
+            PRIMARY KEY (formulario_id, item_id)
+        )
+    """)
+    conn.commit()
+
+
+def definir_chips_formulario(conn, formulario_id, item_ids):
+    """
+    Define (substitui) o conjunto de chips de classificação de uma ficha.
+
+    Apaga as escolhas anteriores da ficha e grava as novas. Só aceita item_ids que
+    existam de fato em listas_contexto — ignora silenciosamente ids inválidos (a
+    ficha é vocabulário fechado, mas defendemos no servidor mesmo assim).
+
+    Args:
+        conn:          conexão SQLite aberta.
+        formulario_id: id da ficha (tabela formularios).
+        item_ids:      iterável de ids de listas_contexto (str ou int).
+
+    Returns:
+        Número de chips efetivamente gravados.
+    """
+    # Normaliza os ids para inteiros, descartando o que não for número.
+    ids_norm = []
+    for x in (item_ids or []):
+        try:
+            ids_norm.append(int(x))
+        except (TypeError, ValueError):
+            continue
+
+    # Mantém só os ids que existem em listas_contexto (vocabulário fechado),
+    # preservando a ordem de chegada e sem duplicar.
+    validos = []
+    if ids_norm:
+        marcadores = ",".join("?" for _ in ids_norm)
+        existentes = {
+            r[0] for r in conn.execute(
+                f"SELECT id FROM listas_contexto WHERE id IN ({marcadores})",
+                ids_norm,
+            )
+        }
+        vistos = set()
+        for i in ids_norm:
+            if i in existentes and i not in vistos:
+                validos.append(i)
+                vistos.add(i)
+
+    # Substitui: limpa as escolhas antigas e grava as novas (transação única).
+    conn.execute("DELETE FROM formularios_chips WHERE formulario_id = ?", (formulario_id,))
+    conn.executemany(
+        "INSERT OR IGNORE INTO formularios_chips (formulario_id, item_id) VALUES (?, ?)",
+        [(formulario_id, i) for i in validos],
+    )
+    conn.commit()
+    return len(validos)
+
+
+def listar_chips_formulario(conn, formulario_id):
+    """
+    Devolve os chips de classificação escolhidos por UMA ficha.
+
+    Returns:
+        Lista de dicts {item_id, tipo, valor, ativo}, ordenada por tipo
+        (ORDEM_TIPOS_LISTA) e depois por valor. Inclui itens desativados
+        (soft-delete) que ainda constam na ficha — preserva o histórico.
+    """
+    rows = conn.execute("""
+        SELECT lc.id, lc.tipo, lc.valor, lc.ativo
+        FROM formularios_chips fc
+        JOIN listas_contexto lc ON lc.id = fc.item_id
+        WHERE fc.formulario_id = ?
+    """, (formulario_id,)).fetchall()
+
+    itens = [
+        {"item_id": r[0], "tipo": r[1], "valor": r[2], "ativo": bool(r[3])}
+        for r in rows
+    ]
+    ordem = {t: i for i, t in enumerate(ORDEM_TIPOS_LISTA)}
+    itens.sort(key=lambda it: (ordem.get(it["tipo"], 99), it["valor"].lower()))
+    return itens
+
+
+def chips_por_formulario(conn, formulario_ids=None):
+    """
+    Versão em lote de listar_chips_formulario — para a Planilha (muitas linhas).
+
+    Args:
+        conn:           conexão SQLite aberta.
+        formulario_ids: lista de ids para filtrar. None/vazio = todas as fichas.
+
+    Returns:
+        dict {formulario_id: [ {item_id, tipo, valor, ativo}, ... ]}, cada lista
+        ordenada por tipo (ORDEM_TIPOS_LISTA) e depois por valor.
+    """
+    where = ""
+    params = []
+    if formulario_ids:
+        ids = [int(x) for x in formulario_ids]
+        if not ids:
+            return {}
+        marcadores = ",".join("?" for _ in ids)
+        where = f" WHERE fc.formulario_id IN ({marcadores})"
+        params = ids
+
+    rows = conn.execute(f"""
+        SELECT fc.formulario_id, lc.id, lc.tipo, lc.valor, lc.ativo
+        FROM formularios_chips fc
+        JOIN listas_contexto lc ON lc.id = fc.item_id
+        {where}
+    """, params).fetchall()
+
+    ordem = {t: i for i, t in enumerate(ORDEM_TIPOS_LISTA)}
+    mapa = {}
+    for r in rows:
+        mapa.setdefault(r[0], []).append(
+            {"item_id": r[1], "tipo": r[2], "valor": r[3], "ativo": bool(r[4])}
+        )
+    for lista in mapa.values():
+        lista.sort(key=lambda it: (ordem.get(it["tipo"], 99), it["valor"].lower()))
+    return mapa
 
 
 # ── PONTO DE ENTRADA (INICIALIZAÇÃO DIRETA) ───────────────────────────────────

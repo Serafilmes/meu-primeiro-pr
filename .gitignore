@@ -1,6 +1,11 @@
 # Variáveis de ambiente (segredos — nunca versionar)
 .env
 
+# Credenciais da conta de serviço do Google (chave privada — NUNCA versionar)
+credenciais_google.json
+*credentials*.json
+*-service-account*.json
+
 # Banco de dados local (é operacional, não vai para o repositório)
 gma.db
 gma.db-shm

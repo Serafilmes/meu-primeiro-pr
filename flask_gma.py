@@ -602,9 +602,18 @@ def _processar_e_salvar_formulario(dados_recebidos, origem="FORMS",
             nome_audio=dados_form.get("nome_audio"),
             entrega_id=dados_form.get("entrega_id"),
         )
+        # Classificação por chips (ponte chips→ficha): grava os itens de lista
+        # escolhidos. Vem da ficha local; webhooks externos não mandam e o default
+        # é lista vazia. Numa entrega dividida (áudio à parte), as duas metades
+        # carregam os mesmos chips — ambas descrevem o mesmo conteúdo.
+        _chips = dados_recebidos.get("chips") or []
+        if _db_id is not None:
+            _bd.definir_chips_formulario(_conn_flask, _db_id, _chips)
         _conn_flask.close()
         # Salva o ID do banco de volta no JSON (ponte para o Matcher e Transferência)
         dados_form["db_formulario_id"] = _db_id
+        if _chips:
+            dados_form["chips"] = list(_chips)
         with open(caminho_arquivo, "w", encoding="utf-8") as _f:
             json.dump(dados_form, _f, ensure_ascii=False, indent=2)
         logger.info(f"BANCO | Formulário gravado | db_id={_db_id}")
@@ -1700,6 +1709,16 @@ def salvar_observacao(cartao_id):
     return redirect("/kanban")
 
 
+def _valores_chip(chips, tipo):
+    """
+    Junta, para exibição na planilha, os valores de classificação de um tipo
+    (palco/marca/pauta/servico/tag) de uma ficha. Devolve '—' quando não houver.
+    `chips` é a lista vinda de bd.chips_por_formulario para aquela ficha.
+    """
+    vals = [c["valor"] for c in chips if c["tipo"] == tipo]
+    return _esc(" · ".join(vals)) if vals else "—"
+
+
 @app.route("/planilha", methods=["GET"])
 def planilha():
     """
@@ -1718,6 +1737,7 @@ def planilha():
             SELECT c.id, c.numero_cartao, c.volume, c.marca_camera, c.tipo_material,
                    c.status, c.total_arquivos_transferidos, c.tamanho_transferido_bytes,
                    c.destino_pasta,
+                   f.id AS form_id,
                    f.nome AS prof_nome, f.nome_audio AS prof_nome_audio, f.data_gravacao
             FROM cartoes c
             LEFT JOIN matches m ON m.id = (
@@ -1726,10 +1746,14 @@ def planilha():
             LEFT JOIN formularios f ON f.id = m.formulario_id
             ORDER BY c.id DESC
         """).fetchall()
+        # Busca os chips de classificação de todas as fichas envolvidas (1 query).
+        form_ids = [l["form_id"] for l in linhas if l["form_id"]]
+        chips_map = bd.chips_por_formulario(conn, form_ids) if form_ids else {}
         conn.close()
     except Exception as erro:
         logger.error(f"PLANILHA | Erro ao ler | {erro}")
         linhas = []
+        chips_map = {}
 
     linhas_html = ""
     for linha in linhas:
@@ -1747,6 +1771,9 @@ def planilha():
         n_arquivos = linha["total_arquivos_transferidos"]
         n_arquivos = n_arquivos if n_arquivos is not None else "—"
 
+        # Classificação (chips): junta os valores por tipo para esta ficha.
+        chips = chips_map.get(linha["form_id"], [])
+
         linhas_html += f"""
         <tr>
             <td>{prof_html}</td>
@@ -1754,6 +1781,11 @@ def planilha():
             <td>{_esc(linha['tipo_material']) or '—'}</td>
             <td>{_esc(linha['data_gravacao']) or '—'}</td>
             <td>{_esc(linha['numero_cartao']) or '—'}</td>
+            <td>{_valores_chip(chips, 'palco')}</td>
+            <td>{_valores_chip(chips, 'marca')}</td>
+            <td>{_valores_chip(chips, 'pauta')}</td>
+            <td>{_valores_chip(chips, 'servico')}</td>
+            <td>{_valores_chip(chips, 'tag')}</td>
             <td>{n_arquivos}</td>
             <td>{_fmt_tamanho(linha['tamanho_transferido_bytes'])}</td>
             <td>{_esc(linha['status']) or '—'}</td>
@@ -1761,7 +1793,7 @@ def planilha():
         </tr>"""
 
     if not linhas_html:
-        linhas_html = "<tr><td colspan='9' class='coluna-vazia'>Nenhum cartão no banco ainda.</td></tr>"
+        linhas_html = "<tr><td colspan='14' class='coluna-vazia'>Nenhum cartão no banco ainda.</td></tr>"
 
     corpo = f"""
     <p class="legenda">Espelho local da entrega — é o que vai para o Google Sheets (só informação, nunca o vídeo).
@@ -1769,9 +1801,9 @@ def planilha():
     <input type="text" id="filtro" class="filtro" placeholder="filtrar… (profissional, câmera, status)">
     <table class="planilha-tabela" id="tabela">
         <thead><tr>
-            <th>Profissional</th><th>Câmera</th><th>Tipo</th><th>Data</th>
-            <th>Nº cartão</th><th>Nº arquivos</th><th>Tamanho</th>
-            <th>Status</th><th>Caminho no HD</th>
+            <th>Profissional</th><th>Câmera</th><th>Tipo</th><th>Data</th><th>Nº cartão</th>
+            <th>Palco</th><th>Marca</th><th>Pauta</th><th>Serviço</th><th>Tags</th>
+            <th>Nº arquivos</th><th>Tamanho</th><th>Status</th><th>Caminho no HD</th>
         </tr></thead>
         <tbody>{linhas_html}</tbody>
     </table>"""
@@ -1864,7 +1896,48 @@ CSS_FICHA = """
     .campo-nome-wrapper { display:flex; flex-direction:column; gap:14px; }
     .campo-nome-wrapper .campo { margin:0; }
     .aviso-sem-cadastro { font-size:0.8em; color:#e67e22; margin-top:4px; }
+    /* ── Chips de classificação (listas de contexto) ── */
+    .chip-area { display:flex; flex-direction:column; gap:14px; }
+    .chip-bloco { display:flex; flex-direction:column; gap:7px; }
+    .chip-rotulo { font-size:0.82em; font-weight:700; color:#495057; }
+    .chip-linha { display:flex; flex-wrap:wrap; gap:8px; }
+    .chip { position:relative; display:inline-flex; align-items:center; cursor:pointer;
+            user-select:none; border:1px solid #ced4da; border-radius:16px;
+            padding:5px 13px; font-size:0.88em; color:#495057; background:#fff;
+            transition:background .12s, border-color .12s, color .12s; }
+    .chip:hover { border-color:#1D9E75; }
+    .chip input { position:absolute; opacity:0; width:0; height:0; margin:0; }
+    .chip.sel { background:#1D9E75; border-color:#1D9E75; color:#fff; font-weight:600; }
+    .chip-vazio { font-size:0.84em; color:#adb5bd; font-style:italic; }
 """
+
+# JS dos chips: torna o chip clicável (pinta quando marcado) e aplica escolha
+# ÚNICA por grupo (os chips com data-grupo preenchido — palco/marca/pauta/serviço).
+# Tags têm data-grupo vazio → seleção múltipla livre. Roda no navegador, offline,
+# sem dependência externa. Inofensivo quando não há chips na página (não acha nada).
+JS_CHIPS = """
+<script>
+(function(){
+  function pinta(lbl){ if(lbl) lbl.classList.toggle('sel', lbl.querySelector('input').checked); }
+  document.querySelectorAll('.chip input[type=checkbox]').forEach(function(inp){
+    var lbl = inp.closest('.chip');
+    inp.addEventListener('change', function(){
+      var grupo = lbl.getAttribute('data-grupo');
+      if (grupo && inp.checked) {
+        document.querySelectorAll('.chip[data-grupo="'+grupo+'"] input').forEach(function(outro){
+          if (outro !== inp) { outro.checked = false; pinta(outro.closest('.chip')); }
+        });
+      }
+      pinta(lbl);
+    });
+  });
+})();
+</script>"""
+
+# Quais grupos de classificação são de escolha ÚNICA (radio-like) e qual é múltiplo.
+# Espelha o desenho da Planilha de Entrega (s31): palco/marca/pauta/serviço = 1 valor;
+# tags = vários.
+CLASSIF_UNICA = {"palco", "marca", "pauta", "servico"}
 
 
 def _opcoes_select(lista, selecionado=""):
@@ -2266,8 +2339,83 @@ def _fichas_recentes_html(limite=12):
     </div>"""
 
 
+def _bloco_classificacao_ficha(chips_selecionados):
+    """
+    Monta o bloco de CLASSIFICAÇÃO da ficha: chips clicáveis montados a partir das
+    listas de contexto ATIVAS (palco, marca, pauta, serviço, tags), que o operador
+    gere na aba "Listas". É a ponte chips→ficha→planilha.
+
+    Regras (Nova Ficha v2 / desenho s31):
+    - O profissional só ESCOLHE da lista — vocabulário fechado, sem digitar.
+    - palco/marca/pauta/serviço = escolha única; tags = múltipla (enforçado por JS).
+    - Sem NENHUM item ativo → o bloco inteiro some (a ficha continua limpa).
+    - A classificação é editorial: continua liberada mesmo quando a ficha já casou
+      (ao contrário de nome/tipo/data), por isso não recebe a trava.
+
+    chips_selecionados: conjunto de ids (str) já escolhidos — edição ou
+    reapresentação após erro de validação.
+    """
+    if not BANCO_DISPONIVEL:
+        return ""
+    try:
+        conn = bd.obter_conexao()
+        itens = bd.listar_itens_lista(conn, apenas_ativos=True)
+        conn.close()
+    except Exception as erro:
+        logger.error(f"FICHA | Erro ao carregar listas de contexto | {erro}")
+        return ""
+
+    if not itens:
+        return ""
+
+    # Agrupa por tipo, preservando a ordem oficial de exibição.
+    por_tipo = {}
+    for it in itens:
+        por_tipo.setdefault(it["tipo"], []).append(it)
+
+    sel = {str(s) for s in (chips_selecionados or set())}
+
+    blocos = []
+    for tipo in bd.ORDEM_TIPOS_LISTA:
+        lista = por_tipo.get(tipo)
+        if not lista:
+            continue
+        rotulo = bd.ROTULOS_LISTA_CONTEXTO.get(tipo, tipo.title())
+        unico = tipo in CLASSIF_UNICA
+        # data-grupo só nos grupos de escolha única (o JS usa para desmarcar irmãos).
+        grupo_attr = tipo if unico else ""
+        chips_html = ""
+        for it in lista:
+            iid = str(it["id"])
+            marcado = iid in sel
+            classe = "chip sel" if marcado else "chip"
+            checked = " checked" if marcado else ""
+            chips_html += (
+                f'<label class="{classe}" data-grupo="{grupo_attr}">'
+                f'<input type="checkbox" name="chip" value="{iid}"{checked}>'
+                f'{_esc(it["valor"])}</label>'
+            )
+        dica = "" if unico else ' <span class="ajuda">(pode marcar várias)</span>'
+        blocos.append(
+            f'<div class="chip-bloco"><div class="chip-rotulo">{_esc(rotulo)}{dica}</div>'
+            f'<div class="chip-linha">{chips_html}</div></div>'
+        )
+
+    if not blocos:
+        return ""
+
+    blocos_html = "".join(blocos)
+    return (
+        '<div class="grupo-titulo">Classificação '
+        '<span class="ajuda" style="text-transform:none;letter-spacing:0">'
+        '(ajuda os editores a achar o material)</span></div>'
+        f'<div class="campo largo chip-area">{blocos_html}</div>'
+    )
+
+
 def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
-                bloquear_criticos=False, mostrar_recentes=True):
+                bloquear_criticos=False, mostrar_recentes=True,
+                chips_selecionados=None):
     """
     Monta o HTML do formulário de check-in.
 
@@ -2275,6 +2423,8 @@ def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
     modo="editar" → edita a ficha ficha_id (action /ficha/<id>/editar).
     bloquear_criticos → trava nome/câmera/tipo/data (ficha já casou: mexer aqui
                         afeta numeração/pasta de destino — segurança dos arquivos).
+    chips_selecionados → conjunto de ids de itens de lista já escolhidos (edição /
+                        reapresentação após erro), para remarcar os chips.
     """
     d = dados or {}
     sug = _sugestoes_gabarito()
@@ -2306,6 +2456,9 @@ def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
 
     # Monta o bloco TIPO (checkboxes) + NOME (dropdowns fechados) — Nova Ficha v2 Fatia 3.
     bloco_tipo_nome = _bloco_tipo_nome_ficha(d, trava, profissionais)
+
+    # Monta o bloco CLASSIFICAÇÃO (chips das listas de contexto) — ponte chips→ficha.
+    bloco_classificacao = _bloco_classificacao_ficha(chips_selecionados)
 
     corpo = f"""
     <p class="legenda">{legenda}</p>
@@ -2352,6 +2505,7 @@ def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
           <label>Observações</label>
           <textarea name="observacoes" placeholder="anotações livres sobre o cartão…">{_esc(d.get('observacoes',''))}</textarea>
         </div>
+        {bloco_classificacao}
       </div>
       <div class="ficha-acoes">
         <button type="submit" class="btn-enviar">{texto_botao}</button>
@@ -2360,7 +2514,7 @@ def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
     </form>
     {_fichas_recentes_html() if (mostrar_recentes and not editando) else ''}"""
 
-    head_extra = f"<style>{CSS_FICHA}</style>"
+    head_extra = f"<style>{CSS_FICHA}</style>{JS_CHIPS}"
     titulo = "Editar ficha" if editando else "Nova Ficha"
     return _pagina(titulo, "ficha", corpo, head_extra)
 
@@ -2431,6 +2585,9 @@ def ficha_enviar():
     (em vez do JSON cru que os webhooks recebem).
     """
     dados = request.form.to_dict()
+    # to_dict() perde valores repetidos — os chips chegam como vários campos "chip".
+    chips = request.form.getlist("chip")
+    dados["chips"] = chips
 
     # A função central devolve (resposta_json, codigo_http). Reutilizamos toda a
     # lógica testada e só interpretamos o resultado para montar uma tela amigável.
@@ -2438,8 +2595,10 @@ def ficha_enviar():
     payload = resposta.get_json()
 
     if not payload.get("ok"):
-        # Validação falhou — remostra o formulário com o erro e os valores digitados.
-        corpo = _html_ficha(dados=dados, erro=payload.get("erro", "Erro ao salvar a ficha."))
+        # Validação falhou — remostra o formulário com o erro, os valores digitados
+        # e os chips que o profissional já tinha marcado.
+        corpo = _html_ficha(dados=dados, erro=payload.get("erro", "Erro ao salvar a ficha."),
+                            chips_selecionados=set(chips))
         return corpo, codigo, {"Content-Type": "text/html; charset=utf-8"}
 
     # Sucesso — tela de confirmação com o resumo do que foi gravado.
@@ -2520,7 +2679,16 @@ def ficha_editar_form(ficha_id):
             {"Content-Type": "text/html; charset=utf-8"}
 
     bloquear = ficha.get("status") not in STATUS_FICHA_LIVRE
-    corpo = _html_ficha(dados=ficha, modo="editar", ficha_id=ficha_id, bloquear_criticos=bloquear)
+    # Carrega os chips de classificação já escolhidos, para remarcá-los na ficha.
+    chips_sel = set()
+    try:
+        conn = bd.obter_conexao()
+        chips_sel = {str(c["item_id"]) for c in bd.listar_chips_formulario(conn, ficha_id)}
+        conn.close()
+    except Exception as erro:
+        logger.error(f"FICHA | Erro ao carregar chips da ficha {ficha_id} | {erro}")
+    corpo = _html_ficha(dados=ficha, modo="editar", ficha_id=ficha_id,
+                        bloquear_criticos=bloquear, chips_selecionados=chips_sel)
     return corpo, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
@@ -2539,6 +2707,8 @@ def ficha_editar_salvar(ficha_id):
 
     bloquear = ficha.get("status") not in STATUS_FICHA_LIVRE
     enviados = request.form.to_dict()
+    # Chips de classificação (editoriais): editáveis mesmo com a ficha já casada.
+    chips = request.form.getlist("chip")
 
     # Se os críticos estão travados, descarta-os do que veio (defesa no servidor —
     # não confia só no 'disabled' do HTML).
@@ -2556,23 +2726,27 @@ def ficha_editar_salvar(ficha_id):
             dados_reexibir = dict(ficha); dados_reexibir.update(enviados)
             corpo = _html_ficha(
                 dados=dados_reexibir, modo="editar", ficha_id=ficha_id,
-                bloquear_criticos=bloquear,
+                bloquear_criticos=bloquear, chips_selecionados=set(chips),
                 erro=f"Formato de data inválido: '{campos['data_gravacao']}'. Use AAAA-MM-DD.",
             )
             return corpo, 422, {"Content-Type": "text/html; charset=utf-8"}
 
     # Grava no banco (whitelist na própria função) + sincroniza a fila JSON.
+    # Os chips são gravados sempre — a classificação é editorial e pode mudar mesmo
+    # quando nenhum outro campo mudou.
     try:
         conn = bd.obter_conexao()
         bd.atualizar_formulario(conn, ficha_id, campos)
+        bd.definir_chips_formulario(conn, ficha_id, chips)
         conn.close()
         _atualizar_json_fila(ficha.get("id_form_original"), campos)
-        logger.info(f"FICHA | Ficha {ficha_id} editada | campos={list(campos.keys())}")
+        logger.info(f"FICHA | Ficha {ficha_id} editada | campos={list(campos.keys())} | chips={len(chips)}")
     except Exception as erro:
         logger.error(f"FICHA | Erro ao salvar edição da ficha {ficha_id} | {erro}")
         corpo = _html_ficha(
             dados={**ficha, **enviados}, modo="editar", ficha_id=ficha_id,
-            bloquear_criticos=bloquear, erro="Erro interno ao salvar. Tente de novo.",
+            bloquear_criticos=bloquear, chips_selecionados=set(chips),
+            erro="Erro interno ao salvar. Tente de novo.",
         )
         return corpo, 500, {"Content-Type": "text/html; charset=utf-8"}
 

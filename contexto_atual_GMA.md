@@ -1,7 +1,7 @@
 # Contexto Atual — Sistema GMA
 ## Estado vivo do projeto (carregar em TODA sessão junto com `arquitetura_GMA.md`)
 
-> Última atualização: 2026-06-15 (sessão 31)
+> Última atualização: 2026-06-15 (sessão 32)
 > Para detalhes técnicos históricos, ver `historico_GMA.md` (não carregar por padrão).
 
 ---
@@ -12,7 +12,7 @@
 |---|---|---|
 | 1 | Check-in e identificação | ⚠️ Quase completa — Nova Ficha v2 ✅; falta mural dos câmeras e domínio fixo do túnel |
 | 2 | Transferência | ✅ Concluída e testada com cartão real |
-| 3 | Controle e segurança das informações | ⚠️ Parcial — Kanban + Planilha locais no ar; colunas da Planilha de Entrega desenhadas (s31); Google Sheets real pendente |
+| 3 | Controle e segurança das informações | ✅ Quase completa — Kanban + Planilha locais; chips ficha→planilha (s32); **Google Sheets real NO AR via impersonação (s32)** |
 | 4 | Auditoria + liberação do cartão | ✅ Concluída — ciclo integrado testado |
 | 5 | Plataforma profissional + multi-máquina | 🔧 Em planejamento — agente `plataforma-gma` + blueprint criados |
 | 6 | IA assíncrona | 📋 Futura |
@@ -21,6 +21,24 @@
 ---
 
 ## O que acabou de ser feito (sessões recentes)
+
+### ✅ Sessão 32 (BUILD) — Google Sheets real NO AR (Camada 3, via impersonação)
+**Arquivos:** `exportador_sheets.py`, `.env`, `.gitignore`. **Sem commit.** Configuração feita com o idealizador (gcloud + autorizações no navegador).
+- **Bloqueios encontrados (Workspace `serafa.me`):** (1) a política da org **proíbe baixar chaves de conta de serviço**; (2) o Google **bloqueia o cliente OAuth compartilhado do gcloud** para escopos de Planilhas/Drive. Os dois caminhos clássicos (chave JSON e ADC do usuário) estão fechados.
+- **Solução adotada — impersonação de conta de serviço, SEM chave:** a SA `gma-exportador@gma-sheets-65a228.iam.gserviceaccount.com` (projeto `gma-sheets-65a228`); a conta `ale@serafa.me` tem `roles/iam.serviceAccountTokenCreator` sobre ela; o gcloud gera **tokens curtos** sob demanda (`gcloud auth print-access-token --impersonate-service-account=…`). Respeita a política da org e não deixa segredo no disco. Detalhes na memória [[sheets-auth-impersonacao]].
+- **Planilha:** criada pelo idealizador (a SA não tem Drive próprio → erro de quota se ela criar) e **compartilhada como Editor com a SA**. ID no `.env`. A SA só enxerga essa planilha.
+- **Código (`exportador_sheets.py`):** 🐛 corrigido o bug da `gspread 6.x` (`update(values, range_name)`); ➕ 5 colunas de classificação (chips) → 26 colunas, espelho fiel da `/planilha`; 🔌 carrega o `.env` sozinho; 🔑 novo modo de auth por `GMA_SHEETS_SA` (impersonação) além da chave clássica.
+- **Segurança:** `.gitignore` agora bloqueia `credenciais_google.json` e variações (não há chave hoje, mas previne vazamento futuro).
+- **Testado:** sincronização real escreveu cabeçalho + 3 linhas na aba "GMA". ⚠️ **Roda com `/usr/bin/python3` (3.9, tem gspread)** — o gcloud trouxe um python@3.14 que NÃO tem as libs.
+
+### ✅ Sessão 32 (BUILD) — Chips na ficha: a ponte chips→ficha→planilha
+**Arquivos:** `banco_dados.py`, `flask_gma.py`. **Sem commit.** Conduzido pelo orquestrador; testado ponta a ponta.
+- **Banco:** tabela-ponte nova `formularios_chips` (`formulario_id`·`item_id`, PK composta) ligando cada ficha aos itens de `listas_contexto`. Migração não-destrutiva em `inicializar_banco()`. Funções: `definir_chips_formulario` (substitui o conjunto, valida ids contra o vocabulário), `listar_chips_formulario`, `chips_por_formulario` (lote p/ a planilha). **Guard `itens_lista_em_uso` religado** → agora consulta `formularios_chips` (excluir item em uso = recusado; só soft-delete). Decisão: guardar **id** (não texto) — id é estável, planilha faz JOIN, respeita soft-delete.
+- **Ficha:** bloco "Classificação" com **chips clicáveis** montados das listas ATIVAS (palco/marca/pauta/serviço = escolha única via JS; tags = múltipla). Vocabulário fechado (só escolhe, não digita). Sem itens ativos → bloco some. Chips são editoriais: **continuam liberados mesmo com a ficha já casada**. Gravados no POST da ficha nova e na edição; remarcados ao reabrir; preservados em erro de validação. Numa entrega dividida (áudio à parte), as duas metades herdam os mesmos chips.
+- **Planilha:** 5 colunas novas de classificação (Palco·Marca·Pauta·Serviço·Tags) entre identificação e técnicas, alimentadas por `chips_por_formulario` (1 query).
+- **Testado ponta a ponta** (banco isolado + test client do Flask): render dos chips, item desativado não aparece, POST grava, edição substitui, reabertura remarca, guard recusa exclusão de item em uso, planilha renderiza. `gma.db` intocado, fila limpa.
+- **`formularios_chips` no `gma.db` real:** será criada no próximo boot (`inicializar_banco`); o guard tem fallback `OperationalError` até lá.
+- **Próxima fatia:** blocos/colunas que ligam-desligam por evento (o "molde" da planilha) + importação de fontes para montar as listas.
 
 ### 🗺️ Sessão 31 (alinhamento) — Central de Entrada: dois modos + importação (no papel, sem código)
 Depois de testar a Fatia 1, o idealizador esclareceu e expandiu:
@@ -86,9 +104,9 @@ Depois de testar a Fatia 1, o idealizador esclareceu e expandiu:
 
 4. 🧠 **Fase 2 do perfil** — Matcher usar o perfil aprendido para desempatar sozinho (câmera, prefixo, faixa de numeração). Reduz chamadas ao operador.
 
-5. 📊 **Google Sheets real** (Camada 3) — criar planilha na nuvem + credenciais. Estrutura de colunas já desenhada (ver Sessão 31 / `arquitetura_GMA.md §Camada 3`).
+5. 📊 **Google Sheets real** (Camada 3) — ✅ **NO AR (s32)** via impersonação. Pendências menores: o exportador precisa do `gcloud` no PATH e roda na sincronização do `inicializar_gma` a cada 60s; testar dentro do sistema completo (até agora só rodado à mão).
 
-8. 🗂️ **Gestão de listas de contexto** (operador) — Fatia 1 ✅ (aba "Listas" no painel, s31). **Próxima fatia (a fazer):** ligar os itens como *chips* na ficha → planilha (a "ponte"); depois, blocos ligam-desligam por evento.
+8. 🗂️ **Gestão de listas de contexto** (operador) — Fatia 1 ✅ (aba "Listas", s31); **ponte chips→ficha→planilha ✅ (s32)**. **Próxima fatia (a fazer):** blocos/colunas que ligam-desligam por evento (o "molde" da planilha) + agrupar a planilha por profissional.
 
 9. 📥 **Central de Entrada — importação de fontes** (preparação) — montar as listas a partir de lista colada / planilha remota-CSV / PDF / print(OCR); pipeline Fontes→Extração→Revisão do operador→`listas_contexto`. Desenho alinhado (s31, sem código); começar pela planilha remota/CSV (já provada).
 
@@ -118,8 +136,10 @@ Depois de testar a Fatia 1, o idealizador esclareceu e expandiu:
 
 ## Arquivos com mudanças não commitadas (atenção)
 
-- `banco_dados.py` — colunas novas em `formularios` (booleanos de tipo + `nome_audio` + `entrega_id`), tabela `profissionais` com `camera` e `ativo`, tabela `match_candidatos`, tabela `listas_contexto` (s31)
-- `flask_gma.py` — Nova Ficha v2 completa, aba Profissionais, Passo 2 do Matcher, aba Listas (s31)
+- `banco_dados.py` — colunas novas em `formularios` (booleanos de tipo + `nome_audio` + `entrega_id`), tabela `profissionais` com `camera` e `ativo`, tabela `match_candidatos`, tabela `listas_contexto` (s31), tabela-ponte `formularios_chips` + guard `itens_lista_em_uso` religado (s32)
+- `flask_gma.py` — Nova Ficha v2 completa, aba Profissionais, Passo 2 do Matcher, aba Listas (s31), chips de classificação na ficha + 5 colunas na planilha (s32)
+- `exportador_sheets.py` — auth por impersonação (`GMA_SHEETS_SA`), fix gspread 6.x, 5 colunas de chips, carrega `.env` sozinho (s32)
+- `.gitignore` — bloqueia `credenciais_google.json` e variações (s32); `.env` ganhou `GMA_SHEETS_SA` + `GMA_SHEETS_ID` (não versionado)
 - `matcher.py` — multi-tipo, câmera do cadastro, confirmação manual de empate
 - `leitor_midia.py` — cartão sem mídia em 2 níveis (`sem_midia` / `revisar`) — **também sem commit**
 
