@@ -40,7 +40,7 @@ ANDAR                                       PROGRESSO
 5 · Tela bonita + várias máquinas           █░░░░░░░░░░░  EM PLANEJAMENTO
         └─ agente plataforma-gma + blueprint · acesso por papel e mural já desenhados
 6 · Inteligência artificial (opcional)      ░░░░░░░░░░░░  futuro
-7 · Marca e identidade visual               ░░░░░░░░░░░░  PRAZO 20/06 ⚠️ (próximo foco)
+7 · Marca e identidade visual               ░░░░░░░░░░░░  sem prazo (próximo foco)
 ──────────────────────────────────────────────────────────────────
 ```
 
@@ -283,7 +283,7 @@ Nenhuma decisão foi à toa. Cada uma resolveu um problema que apareceu
 
 Em ordem de impacto:
 
-1. 🎨 **Marca / identidade visual (andar 7)** — prazo 20/06 + o relatório PDF de hoje
+1. 🎨 **Marca / identidade visual (andar 7)** — sem prazo de data + o relatório PDF de hoje
    ficou abaixo do esperado (sem padrão, layout fraco). Definir logo, paleta,
    tipografia e grid ANTES de refazer o PDF, pra ele nascer bonito e consistente.
 2. 📄 **PDF Overview** — refazer o gerador no estilo dashboard + folha de contato

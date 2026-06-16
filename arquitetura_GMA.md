@@ -166,7 +166,7 @@ Fluxo **totalmente automático:**
 - A transcrição nasce colada à entrega de áudio (`entrega_id`); só o texto/resumo vai para a planilha, nunca o arquivo.
 - Sempre assíncrono, depois do evento, nunca no ciclo crítico.
 
-### Camada 7 — Marca & Design `[Prazo 20/06]`
+### Camada 7 — Marca & Design `[Planejada — sem prazo de data]`
 - Logo, paleta, tipografia, grid
 - Layouts de interface e materiais de apresentação
 

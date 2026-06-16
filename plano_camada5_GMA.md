@@ -15,8 +15,8 @@ funciona** — o ciclo de vida completo do cartão roda, e as três telas leem d
 A Camada 5 é a virada de **protótipo → produto**: transformar isso num **programa profissional,
 consistente e integrado**, que o operador abre e usa sem depender do terminal nem do Claude.
 
-> Decisão do idealizador (sessão 20): a Camada 5 **não é sobre beleza** (isso é a Camada 7 / marca,
-> prazo 20/06). É sobre **consistência, robustez e integração** — "um programa consistente, sem
+> Decisão do idealizador (sessão 20): a Camada 5 **não é sobre beleza** (isso é a Camada 7 /
+> marca). É sobre **consistência, robustez e integração** — "um programa consistente, sem
 > falhas, com a integração necessária para todos os níveis do processo".
 
 ---

@@ -16,7 +16,7 @@
 | 4 | Auditoria + liberação do cartão | ✅ Concluída — ciclo integrado testado |
 | 5 | Plataforma profissional + multi-máquina | 🔧 Em planejamento — agente `plataforma-gma` + blueprint criados |
 | 6 | IA assíncrona | 📋 Futura |
-| 7 | Marca e design | 📋 Planejada — **prazo: 2026-06-20** ⚠️ |
+| 7 | Marca e design | 📋 Planejada — foco desejado, **sem prazo de data** (s33) |
 
 ---
 
@@ -96,7 +96,7 @@ Depois de testar a Fatia 1, o idealizador esclareceu e expandiu:
 
 ## Próximos passos (em ordem de prioridade)
 
-1. 🎨 **Andar 7 — Marca/identidade visual** — **PRAZO 20/06** (5 dias). Definir logo, paleta, tipografia e grid **antes** de refazer o PDF, para ele nascer com padrão visual.
+1. 🎨 **Andar 7 — Marca/identidade visual** — **sem prazo de data** (a meta de 20/06 foi descartada na s33). Definir logo, paleta, tipografia e grid **antes** de refazer o PDF, para ele nascer com padrão visual. Filosofia do idealizador: pensar o processo inteiro → mínimo de layout → refinar; fazer certo antes de fazer rápido.
 
 2. 📄 **PDF Overview** — reescrever o gerador no estilo dashboard + folha de contato, lendo `manifesto.json` + `.sppo`. Briefing completo em `arquitetura_GMA.md §PDF`. Material de teste já gerado (224 frames, 62 mídias).
 
