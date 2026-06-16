@@ -2318,68 +2318,78 @@ JS_CHIPS = """
     return linha ? linha.id.replace('chip-linha-', '') : '';
   }
 
-  document.querySelectorAll('.chip input[type=checkbox]').forEach(function(inp){
-    var lbl = inp.closest('.chip');
-    inp.addEventListener('change', function(){
-      var grupo = lbl.getAttribute('data-grupo');
-      if (grupo && inp.checked) {  // escolha única: desmarca os irmãos
-        document.querySelectorAll('.chip[data-grupo="'+grupo+'"] input').forEach(function(outro){
-          if (outro !== inp) { outro.checked = false; pinta(outro.closest('.chip')); }
-        });
-      }
-      pinta(lbl);
-      window.gmaAtualizaContador(grupoDoChip(lbl));
+  function init(){
+    document.querySelectorAll('.chip input[type=checkbox]').forEach(function(inp){
+      var lbl = inp.closest('.chip');
+      inp.addEventListener('change', function(){
+        var grupo = lbl.getAttribute('data-grupo');
+        if (grupo && inp.checked) {  // escolha única: desmarca os irmãos
+          document.querySelectorAll('.chip[data-grupo="'+grupo+'"] input').forEach(function(outro){
+            if (outro !== inp) { outro.checked = false; pinta(outro.closest('.chip')); }
+          });
+        }
+        pinta(lbl);
+        window.gmaAtualizaContador(grupoDoChip(lbl));
+      });
     });
-  });
+    // Estado inicial dos contadores (edição/reabertura já com chips marcados).
+    document.querySelectorAll('.chip-contador').forEach(function(c){
+      window.gmaAtualizaContador(c.getAttribute('data-tipo'));
+    });
+  }
 
-  // Estado inicial dos contadores (edição/reabertura de ficha já com chips marcados).
-  document.querySelectorAll('.chip-contador').forEach(function(c){
-    window.gmaAtualizaContador(c.getAttribute('data-tipo'));
-  });
+  // O script vive no <head>, então espera a página montar antes de buscar os chips.
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
 })();
 </script>"""
 
 JS_CHIP_NOVO = """
 <script>
 (function(){
-  // Abre/fecha o mini-formulário de "+ novo"
-  document.querySelectorAll('.chip-btn-novo').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      var tipo = btn.getAttribute('data-tipo');
-      var form = document.getElementById('novo-form-' + tipo);
-      var inp  = document.getElementById('novo-input-' + tipo);
-      btn.style.display = 'none';
-      form.style.display = 'inline-flex';
-      if (inp) inp.focus();
+  function init(){
+    // Abre/fecha o mini-formulário de "+ novo"
+    document.querySelectorAll('.chip-btn-novo').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var tipo = btn.getAttribute('data-tipo');
+        var form = document.getElementById('novo-form-' + tipo);
+        var inp  = document.getElementById('novo-input-' + tipo);
+        btn.style.display = 'none';
+        form.style.display = 'inline-flex';
+        if (inp) inp.focus();
+      });
     });
-  });
 
-  // Cancelar
-  document.querySelectorAll('.chip-novo-cancel').forEach(function(btn){
-    btn.addEventListener('click', function(){
-      var tipo = btn.getAttribute('data-tipo');
-      fecharNovo(tipo);
-    });
-  });
-
-  // Confirmar (botão ✓ ou Enter no campo)
-  document.querySelectorAll('.chip-novo-ok').forEach(function(btn){
-    btn.addEventListener('click', function(){ criarNovo(btn); });
-  });
-  document.querySelectorAll('.chip-novo-input').forEach(function(inp){
-    inp.addEventListener('keydown', function(e){
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        var tipo = inp.id.replace('novo-input-', '');
-        var ok = document.querySelector('.chip-novo-ok[data-tipo="' + tipo + '"]');
-        if (ok) criarNovo(ok);
-      }
-      if (e.key === 'Escape') {
-        var tipo = inp.id.replace('novo-input-', '');
+    // Cancelar
+    document.querySelectorAll('.chip-novo-cancel').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var tipo = btn.getAttribute('data-tipo');
         fecharNovo(tipo);
-      }
+      });
     });
-  });
+
+    // Confirmar (botão ✓ ou Enter no campo)
+    document.querySelectorAll('.chip-novo-ok').forEach(function(btn){
+      btn.addEventListener('click', function(){ criarNovo(btn); });
+    });
+    document.querySelectorAll('.chip-novo-input').forEach(function(inp){
+      inp.addEventListener('keydown', function(e){
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          var tipo = inp.id.replace('novo-input-', '');
+          var ok = document.querySelector('.chip-novo-ok[data-tipo="' + tipo + '"]');
+          if (ok) criarNovo(ok);
+        }
+        if (e.key === 'Escape') {
+          var tipo = inp.id.replace('novo-input-', '');
+          fecharNovo(tipo);
+        }
+      });
+    });
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
 
   function fecharNovo(tipo){
     var form = document.getElementById('novo-form-' + tipo);
