@@ -1384,6 +1384,73 @@ def _fmt_tamanho(num_bytes):
 
 
 # Colunas do Kanban (chave · rótulo · cor). O card "anda" da esquerda p/ direita.
+# ── CATÁLOGO DA PLANILHA DE ENTREGA ──────────────────────────────────────────
+# Fonte de verdade das colunas disponíveis. Cada entrada:
+#   (chave, rótulo, bloco, tipo_render, campo, visivel_padrao)
+#
+# tipo_render:
+#   "especial"  — lógica própria (ex: profissional + áudio)
+#   "chip"      — lê de chips_map (campo = tipo do chip: palco/marca/…)
+#   "n_arq"     — total_arquivos_transferidos com fallback "—"
+#   "tamanho"   — bytes → texto legível via _fmt_tamanho
+#   "dado"      — campo SQL direto; campo=None → sempre "—" (placeholder custom)
+#
+# visivel_padrao: 1 = visível por padrão / 0 = oculta (operador liga quando precisar)
+# Colunas de pós-produção chegam ocultas — o operador ativa quando o evento precisar.
+CATALOGO_PLANILHA = [
+    # chave               rótulo            bloco            tipo        campo                          vis
+    ("prof_nome",    "Profissional",  "identificacao", "especial", "prof_nome",                    1),
+    ("marca_camera", "Câmera",        "identificacao", "dado",     "marca_camera",                 1),
+    ("tipo_material","Tipo",          "identificacao", "dado",     "tipo_material",                 1),
+    ("data_gravacao","Data",          "identificacao", "dado",     "data_gravacao",                 1),
+    ("numero_cartao","Nº cartão",     "identificacao", "dado",     "numero_cartao",                 1),
+    ("chip_palco",   "Palco",         "classificacao", "chip",     "palco",                         1),
+    ("chip_marca",   "Marca",         "classificacao", "chip",     "marca",                         1),
+    ("chip_pauta",   "Pauta",         "classificacao", "chip",     "pauta",                         1),
+    ("chip_servico", "Serviço",       "classificacao", "chip",     "servico",                       1),
+    ("chip_tag",     "Tags",          "classificacao", "chip",     "tag",                           1),
+    ("n_arquivos",   "Nº arquivos",   "tecnicas",      "n_arq",    "total_arquivos_transferidos",   1),
+    ("tamanho",      "Tamanho",       "tecnicas",      "tamanho",  "tamanho_transferido_bytes",     1),
+    ("status",       "Status",        "tecnicas",      "dado",     "status",                        1),
+    ("destino_pasta","Caminho no HD", "tecnicas",      "dado",     "destino_pasta",                 1),
+    ("pos_editor",   "Editor",        "pos_producao",  "dado",     None,                            0),
+    ("pos_edicao",   "Edição",        "pos_producao",  "dado",     None,                            0),
+    ("pos_upload",   "Upload",        "pos_producao",  "dado",     None,                            0),
+]
+
+# Ordem e rótulos dos blocos (para a página /molde)
+BLOCOS_PLANILHA = [
+    ("identificacao", "Identificação"),
+    ("classificacao",  "Classificação"),
+    ("tecnicas",       "Técnicas"),
+    ("pos_producao",   "Pós-produção"),
+    ("custom",         "Personalizado"),
+]
+
+# Índice rápido chave → definição do catálogo padrão
+_CATALOGO_IDX = {e[0]: e for e in CATALOGO_PLANILHA}
+
+# Controla se o catálogo já foi sincronizado com o banco nesta execução
+_MOLDE_SINCRONIZADO = False
+
+
+def _garantir_molde():
+    """Cria a tabela molde_planilha (se necessário) e sincroniza o catálogo padrão."""
+    global _MOLDE_SINCRONIZADO
+    if _MOLDE_SINCRONIZADO or not BANCO_DISPONIVEL:
+        return
+    try:
+        # inicializar_banco() roda todas as migrações (CREATE TABLE IF NOT EXISTS),
+        # incluindo molde_planilha. É idempotente — seguro chamar várias vezes.
+        conn = bd.inicializar_banco()
+        bd.sincronizar_catalogo_molde(conn, CATALOGO_PLANILHA)
+        conn.close()
+        _MOLDE_SINCRONIZADO = True
+    except Exception as e:
+        logger.error(f"MOLDE | Erro ao sincronizar catálogo | {e}")
+
+
+# ── COLUNAS DO KANBAN ─────────────────────────────────────────────────────────
 COLUNAS_KANBAN = [
     ("detectado",  "Detectado",  "#6c757d"),
     ("match",      "Match",      "#2196f3"),
@@ -1719,6 +1786,78 @@ def _valores_chip(chips, tipo):
     return _esc(" · ".join(vals)) if vals else "—"
 
 
+def _celula_planilha(col, linha, chips):
+    """
+    Renderiza o valor de uma célula para uma linha da planilha.
+
+    Args:
+        col:   dict do molde (chave, rotulo, bloco, …) enriquecido com
+               tipo_render e campo vindos do CATALOGO_PLANILHA.
+        linha: linha do banco (sqlite3.Row).
+        chips: lista de chips desta ficha vinda de chips_por_formulario.
+    """
+    tipo = col.get("tipo_render", "dado")
+    campo = col.get("campo")
+
+    if tipo == "especial":  # coluna Profissional — lógica especial de nome
+        profissional = linha["prof_nome"]
+        if not profissional and linha["numero_cartao"]:
+            profissional = linha["numero_cartao"].rsplit("_", 1)[0]
+        html_val = _esc(profissional) or "—"
+        if linha["prof_nome_audio"]:
+            html_val += (f' <span style="color:#6c757d;font-size:0.85em">'
+                         f'+ {_esc(linha["prof_nome_audio"])} (áudio)</span>')
+        return html_val
+
+    if tipo == "chip":
+        return _valores_chip(chips, campo)
+
+    if tipo == "n_arq":
+        v = linha["total_arquivos_transferidos"]
+        return str(v) if v is not None else "—"
+
+    if tipo == "tamanho":
+        return _fmt_tamanho(linha["tamanho_transferido_bytes"])
+
+    # tipo == "dado" (ou colunas custom)
+    if not campo:
+        return "—"
+    try:
+        return _esc(linha[campo]) or "—"
+    except (IndexError, KeyError):
+        return "—"
+
+
+def _colunas_visiveis():
+    """
+    Retorna a lista de colunas visíveis enriquecidas com tipo_render e campo
+    do catálogo padrão. Colunas custom (não no catálogo) recebem tipo "dado".
+    """
+    _garantir_molde()
+    if not BANCO_DISPONIVEL:
+        # Fallback sem banco: catálogo inteiro visível
+        return [
+            {"chave": e[0], "rotulo": e[1], "bloco": e[2],
+             "tipo_render": e[3], "campo": e[4], "visivel": True, "sistema": True}
+            for e in CATALOGO_PLANILHA if e[5]
+        ]
+    try:
+        conn = bd.obter_conexao()
+        cols = bd.listar_molde_visivel(conn)
+        conn.close()
+    except Exception as e:
+        logger.error(f"MOLDE | Erro ao listar | {e}")
+        return []
+
+    resultado = []
+    for c in cols:
+        cat = _CATALOGO_IDX.get(c["chave"])
+        c["tipo_render"] = cat[3] if cat else "dado"
+        c["campo"]       = cat[4] if cat else None
+        resultado.append(c)
+    return resultado
+
+
 @app.route("/planilha", methods=["GET"])
 def planilha():
     """
@@ -1726,10 +1865,14 @@ def planilha():
 
     É o espelho do que vai para o Google Sheets (Camada 3): só metadados, nunca
     a mídia. Lê do banco juntando cartão + formulário (pelo match mais recente).
+    As colunas renderizadas respeitam o molde configurado em /molde.
     """
     if not BANCO_DISPONIVEL:
         corpo = "<p class='vazio'>Banco de dados indisponível.</p>"
         return _pagina("Planilha de Entrega", "planilha", corpo), 200, {"Content-Type": "text/html; charset=utf-8"}
+
+    colunas = _colunas_visiveis()
+    n_cols = len(colunas) or 1
 
     try:
         conn = bd.obter_conexao()
@@ -1746,7 +1889,6 @@ def planilha():
             LEFT JOIN formularios f ON f.id = m.formulario_id
             ORDER BY c.id DESC
         """).fetchall()
-        # Busca os chips de classificação de todas as fichas envolvidas (1 query).
         form_ids = [l["form_id"] for l in linhas if l["form_id"]]
         chips_map = bd.chips_por_formulario(conn, form_ids) if form_ids else {}
         conn.close()
@@ -1757,54 +1899,30 @@ def planilha():
 
     linhas_html = ""
     for linha in linhas:
-        # Profissional: nome do formulário; senão deriva do número (JOE_001 → JOE)
-        profissional = linha["prof_nome"]
-        if not profissional and linha["numero_cartao"]:
-            profissional = linha["numero_cartao"].rsplit("_", 1)[0]
-
-        # 2º nome (operador de áudio), quando houver — Fatia 5.
-        prof_html = _esc(profissional) or "—"
-        if linha["prof_nome_audio"]:
-            prof_html += (f' <span style="color:#6c757d;font-size:0.85em">'
-                          f'+ {_esc(linha["prof_nome_audio"])} (áudio)</span>')
-
-        n_arquivos = linha["total_arquivos_transferidos"]
-        n_arquivos = n_arquivos if n_arquivos is not None else "—"
-
-        # Classificação (chips): junta os valores por tipo para esta ficha.
         chips = chips_map.get(linha["form_id"], [])
-
-        linhas_html += f"""
-        <tr>
-            <td>{prof_html}</td>
-            <td>{_esc(linha['marca_camera']) or '—'}</td>
-            <td>{_esc(linha['tipo_material']) or '—'}</td>
-            <td>{_esc(linha['data_gravacao']) or '—'}</td>
-            <td>{_esc(linha['numero_cartao']) or '—'}</td>
-            <td>{_valores_chip(chips, 'palco')}</td>
-            <td>{_valores_chip(chips, 'marca')}</td>
-            <td>{_valores_chip(chips, 'pauta')}</td>
-            <td>{_valores_chip(chips, 'servico')}</td>
-            <td>{_valores_chip(chips, 'tag')}</td>
-            <td>{n_arquivos}</td>
-            <td>{_fmt_tamanho(linha['tamanho_transferido_bytes'])}</td>
-            <td>{_esc(linha['status']) or '—'}</td>
-            <td class="mono">{_esc(linha['destino_pasta']) or '—'}</td>
-        </tr>"""
+        celulas = "".join(
+            f'<td class="{"mono" if c["chave"] == "destino_pasta" else ""}">'
+            f'{_celula_planilha(c, linha, chips)}</td>'
+            for c in colunas
+        )
+        linhas_html += f"<tr>{celulas}</tr>"
 
     if not linhas_html:
-        linhas_html = "<tr><td colspan='14' class='coluna-vazia'>Nenhum cartão no banco ainda.</td></tr>"
+        linhas_html = (f"<tr><td colspan='{n_cols}' class='coluna-vazia'>"
+                       f"Nenhum cartão no banco ainda.</td></tr>")
+
+    cabecalhos = "".join(f"<th>{_esc(c['rotulo'])}</th>" for c in colunas)
 
     corpo = f"""
-    <p class="legenda">Espelho local da entrega — é o que vai para o Google Sheets (só informação, nunca o vídeo).
-       Mesma fonte que alimenta as outras telas.</p>
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">
+        <p class="legenda" style="margin:0;flex:1">Espelho local da entrega — é o que vai para o Google Sheets
+          (só informação, nunca o vídeo).</p>
+        <a href="/molde" style="font-size:0.85em;color:#1D9E75;white-space:nowrap">
+          ⚙ Configurar colunas</a>
+    </div>
     <input type="text" id="filtro" class="filtro" placeholder="filtrar… (profissional, câmera, status)">
     <table class="planilha-tabela" id="tabela">
-        <thead><tr>
-            <th>Profissional</th><th>Câmera</th><th>Tipo</th><th>Data</th><th>Nº cartão</th>
-            <th>Palco</th><th>Marca</th><th>Pauta</th><th>Serviço</th><th>Tags</th>
-            <th>Nº arquivos</th><th>Tamanho</th><th>Status</th><th>Caminho no HD</th>
-        </tr></thead>
+        <thead><tr>{cabecalhos}</tr></thead>
         <tbody>{linhas_html}</tbody>
     </table>"""
 
@@ -1821,6 +1939,249 @@ def planilha():
       });
     </script>"""
     return _pagina("Planilha de Entrega", "planilha", corpo, head_extra), 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
+# ── ROTA: MOLDE DA PLANILHA (/molde) ─────────────────────────────────────────
+
+@app.route("/molde", methods=["GET"])
+def molde_planilha():
+    """
+    Página de configuração do molde da planilha.
+
+    O operador pode aqui:
+      - Ocultar/mostrar colunas individualmente (toggle)
+      - Ocultar/mostrar um bloco inteiro de uma vez
+      - Adicionar colunas personalizadas (nome + bloco)
+      - Excluir colunas personalizadas que não são mais necessárias
+    Colunas do sistema só podem ser ocultadas, nunca excluídas.
+    """
+    _garantir_molde()
+    if not BANCO_DISPONIVEL:
+        corpo = "<p class='vazio'>Banco de dados indisponível.</p>"
+        return _pagina("Configurar Colunas", "planilha", corpo), 200, {"Content-Type": "text/html; charset=utf-8"}
+
+    try:
+        conn = bd.obter_conexao()
+        todas = bd.listar_molde(conn)
+        conn.close()
+    except Exception as e:
+        logger.error(f"MOLDE | Erro ao listar | {e}")
+        todas = []
+
+    # Agrupa por bloco respeitando BLOCOS_PLANILHA como ordem
+    ordem_blocos = [b[0] for b in BLOCOS_PLANILHA]
+    rotulos_blocos = dict(BLOCOS_PLANILHA)
+    por_bloco = {b: [] for b in ordem_blocos}
+    for col in todas:
+        bloco = col["bloco"] if col["bloco"] in por_bloco else "custom"
+        por_bloco.setdefault(bloco, []).append(col)
+
+    secoes_html = ""
+    for bloco_chave in ordem_blocos:
+        cols_bloco = por_bloco.get(bloco_chave, [])
+        if not cols_bloco:
+            continue
+        rotulo_bloco = rotulos_blocos.get(bloco_chave, bloco_chave)
+
+        n_visiveis = sum(1 for c in cols_bloco if c["visivel"])
+        cor_bloco = "#1D9E75" if n_visiveis == len(cols_bloco) else ("#f59e0b" if n_visiveis else "#adb5bd")
+
+        linhas_col = ""
+        for col in cols_bloco:
+            vis = col["visivel"]
+            btn_label = "Ocultar" if vis else "Mostrar"
+            btn_cor = "#dc3545" if vis else "#1D9E75"
+            badge_vis = (f'<span style="color:#1D9E75;font-size:0.8em">● visível</span>'
+                         if vis else
+                         f'<span style="color:#adb5bd;font-size:0.8em">○ oculta</span>')
+            badge_sis = ('' if col["sistema"] else
+                         '<span style="background:#e9ecef;color:#6c757d;font-size:0.75em;'
+                         'padding:1px 6px;border-radius:4px;margin-left:6px">personalizada</span>')
+            btn_excluir = (
+                f'<form method="post" action="/molde/{_esc(col["chave"])}/excluir" style="display:inline">'
+                f'<button type="submit" style="background:none;border:none;color:#dc3545;'
+                f'cursor:pointer;font-size:0.8em;padding:0 4px" '
+                f'onclick="return confirm(\'Excluir a coluna "{_esc(col["rotulo"])}"?\')">✕ excluir</button>'
+                f'</form>'
+                if not col["sistema"] else ""
+            )
+            linhas_col += f"""
+            <tr style="border-bottom:1px solid #f1f3f5">
+              <td style="padding:8px 12px">{_esc(col['rotulo'])}{badge_sis}</td>
+              <td style="padding:8px 12px">{badge_vis}</td>
+              <td style="padding:8px 12px;text-align:right">
+                <form method="post" action="/molde/{_esc(col['chave'])}/visivel" style="display:inline">
+                  <input type="hidden" name="visivel" value="{'0' if vis else '1'}">
+                  <button type="submit" style="background:{btn_cor};color:#fff;border:none;
+                    border-radius:4px;padding:3px 10px;cursor:pointer;font-size:0.82em">
+                    {btn_label}
+                  </button>
+                </form>
+                {btn_excluir}
+              </td>
+            </tr>"""
+
+        # Botões de bloco inteiro (ocultar/mostrar tudo)
+        todos_vis = all(c["visivel"] for c in cols_bloco)
+        todos_oc = not any(c["visivel"] for c in cols_bloco)
+        btn_bloco = ""
+        if not todos_oc:
+            btn_bloco += (
+                f'<form method="post" action="/molde/bloco/{bloco_chave}/ocultar" style="display:inline">'
+                f'<button type="submit" style="background:none;border:1px solid #adb5bd;'
+                f'border-radius:4px;padding:2px 8px;cursor:pointer;font-size:0.78em;color:#6c757d">'
+                f'Ocultar bloco</button></form> '
+            )
+        if not todos_vis:
+            btn_bloco += (
+                f'<form method="post" action="/molde/bloco/{bloco_chave}/mostrar" style="display:inline">'
+                f'<button type="submit" style="background:none;border:1px solid #1D9E75;'
+                f'border-radius:4px;padding:2px 8px;cursor:pointer;font-size:0.78em;color:#1D9E75">'
+                f'Mostrar bloco</button></form>'
+            )
+
+        secoes_html += f"""
+        <div style="background:#fff;border:1px solid #e9ecef;border-radius:8px;
+                    margin-bottom:18px;overflow:hidden">
+          <div style="background:#f8f9fa;padding:10px 16px;display:flex;
+                      align-items:center;justify-content:space-between">
+            <span style="font-weight:600;color:{cor_bloco}">{_esc(rotulo_bloco)}</span>
+            <span style="font-size:0.82em;color:#6c757d">{n_visiveis}/{len(cols_bloco)} visíveis
+              &nbsp;{btn_bloco}</span>
+          </div>
+          <table style="width:100%;border-collapse:collapse">
+            <tbody>{linhas_col}</tbody>
+          </table>
+        </div>"""
+
+    # Formulário: nova coluna personalizada
+    opcoes_bloco = "".join(
+        f'<option value="{b}">{r}</option>'
+        for b, r in BLOCOS_PLANILHA
+    )
+    form_nova = f"""
+    <div style="background:#fff;border:1px solid #e9ecef;border-radius:8px;padding:16px;margin-top:8px">
+      <p style="font-weight:600;margin:0 0 12px 0">+ Adicionar coluna personalizada</p>
+      <p style="font-size:0.82em;color:#6c757d;margin:0 0 12px 0">
+        Colunas personalizadas aparecem na planilha como "—" localmente — úteis para
+        preencher manualmente no Google Sheets (ex.: "Aprovado", "Nota editorial").
+      </p>
+      <form method="post" action="/molde/nova" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+        <div>
+          <label style="font-size:0.85em;display:block;margin-bottom:4px">Rótulo (nome da coluna)</label>
+          <input type="text" name="rotulo" required maxlength="40"
+            style="border:1px solid #dee2e6;border-radius:4px;padding:6px 10px;font-size:0.9em">
+        </div>
+        <div>
+          <label style="font-size:0.85em;display:block;margin-bottom:4px">Bloco</label>
+          <select name="bloco" style="border:1px solid #dee2e6;border-radius:4px;padding:6px 10px;font-size:0.9em">
+            {opcoes_bloco}
+          </select>
+        </div>
+        <button type="submit" style="background:#1D9E75;color:#fff;border:none;border-radius:4px;
+          padding:7px 16px;cursor:pointer;font-size:0.9em">Adicionar</button>
+      </form>
+    </div>"""
+
+    corpo = f"""
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px">
+      <div style="flex:1">
+        <h2 style="margin:0;font-size:1.1em">Configurar colunas da Planilha de Entrega</h2>
+        <p style="margin:4px 0 0 0;font-size:0.85em;color:#6c757d">
+          Colunas do sistema só podem ser ocultadas. Colunas personalizadas podem ser excluídas.
+        </p>
+      </div>
+      <a href="/planilha" style="font-size:0.85em;color:#1D9E75">← Voltar à planilha</a>
+    </div>
+    {secoes_html}
+    {form_nova}"""
+
+    return _pagina("Configurar Colunas", "planilha", corpo), 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
+@app.route("/molde/<chave>/visivel", methods=["POST"])
+def molde_toggle(chave):
+    """Liga ou desliga a visibilidade de uma coluna."""
+    if not BANCO_DISPONIVEL:
+        return redirect("/molde", 303)
+    visivel = request.form.get("visivel", "1") == "1"
+    try:
+        conn = bd.obter_conexao()
+        bd.definir_visivel_coluna(conn, chave, visivel)
+        conn.close()
+    except Exception as e:
+        logger.error(f"MOLDE | toggle {chave} | {e}")
+    return redirect("/molde", 303)
+
+
+@app.route("/molde/bloco/<bloco_chave>/ocultar", methods=["POST"])
+def molde_bloco_ocultar(bloco_chave):
+    """Oculta todas as colunas de um bloco de uma vez."""
+    if not BANCO_DISPONIVEL:
+        return redirect("/molde", 303)
+    try:
+        conn = bd.obter_conexao()
+        for col in bd.listar_molde(conn):
+            if col["bloco"] == bloco_chave:
+                bd.definir_visivel_coluna(conn, col["chave"], False)
+        conn.close()
+    except Exception as e:
+        logger.error(f"MOLDE | ocultar bloco {bloco_chave} | {e}")
+    return redirect("/molde", 303)
+
+
+@app.route("/molde/bloco/<bloco_chave>/mostrar", methods=["POST"])
+def molde_bloco_mostrar(bloco_chave):
+    """Torna visíveis todas as colunas de um bloco de uma vez."""
+    if not BANCO_DISPONIVEL:
+        return redirect("/molde", 303)
+    try:
+        conn = bd.obter_conexao()
+        for col in bd.listar_molde(conn):
+            if col["bloco"] == bloco_chave:
+                bd.definir_visivel_coluna(conn, col["chave"], True)
+        conn.close()
+    except Exception as e:
+        logger.error(f"MOLDE | mostrar bloco {bloco_chave} | {e}")
+    return redirect("/molde", 303)
+
+
+@app.route("/molde/nova", methods=["POST"])
+def molde_nova_coluna():
+    """Cria uma nova coluna personalizada."""
+    if not BANCO_DISPONIVEL:
+        return redirect("/molde", 303)
+    rotulo = (request.form.get("rotulo") or "").strip()
+    bloco  = (request.form.get("bloco")  or "custom").strip()
+    # Deriva a chave: minúsculas, só letras/dígitos/underscore
+    import re as _re
+    chave = "custom_" + _re.sub(r"[^a-z0-9_]", "_",
+                                 rotulo.lower().replace(" ", "_"))[:30]
+    try:
+        conn = bd.obter_conexao()
+        resultado = bd.adicionar_coluna_custom(conn, chave, rotulo, bloco)
+        conn.close()
+        if resultado == "duplicada":
+            logger.warning(f"MOLDE | Nova coluna duplicada: {chave}")
+    except Exception as e:
+        logger.error(f"MOLDE | nova coluna | {e}")
+    return redirect("/molde", 303)
+
+
+@app.route("/molde/<chave>/excluir", methods=["POST"])
+def molde_excluir_coluna(chave):
+    """Exclui uma coluna personalizada definitivamente."""
+    if not BANCO_DISPONIVEL:
+        return redirect("/molde", 303)
+    try:
+        conn = bd.obter_conexao()
+        resultado = bd.excluir_coluna_custom(conn, chave)
+        conn.close()
+        if resultado == "sistema":
+            logger.warning(f"MOLDE | Tentativa de excluir coluna do sistema: {chave}")
+    except Exception as e:
+        logger.error(f"MOLDE | excluir {chave} | {e}")
+    return redirect("/molde", 303)
 
 
 # ── ROTA: FICHA DE CHECK-IN (tela de inserção local) ─────────────────────────

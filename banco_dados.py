@@ -599,6 +599,12 @@ def inicializar_banco():
     # profissional escolheu como classificação.
     migrar_schema_formularios_chips(conn)
 
+    # Migração incremental: cria a tabela molde_planilha se ainda não existir.
+    # Guarda quais colunas estão visíveis e quais colunas personalizadas o
+    # operador criou para este evento. O catálogo de colunas padrão é sincronizado
+    # pelo Flask (que é quem o define) via sincronizar_catalogo_molde().
+    migrar_schema_molde_planilha(conn)
+
     return conn
 
 
@@ -2269,6 +2275,198 @@ def chips_por_formulario(conn, formulario_ids=None):
     for lista in mapa.values():
         lista.sort(key=lambda it: (ordem.get(it["tipo"], 99), it["valor"].lower()))
     return mapa
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Molde da Planilha — quais colunas ficam visíveis e quais são personalizadas
+# ─────────────────────────────────────────────────────────────────────────────
+# Cada coluna da Planilha de Entrega tem um registro aqui:
+#   chave   — identificador único (fixo para colunas do sistema)
+#   rotulo  — nome exibido no cabeçalho (editável via interface)
+#   bloco   — agrupamento: identificacao | classificacao | tecnicas | pos_producao | custom
+#   ordem   — posição dentro do bloco
+#   visivel — 1 = aparece na planilha / 0 = oculta
+#   sistema — 1 = vem do catálogo do código (só pode ocultar, não excluir)
+#             0 = criada pelo operador (pode ser excluída)
+#
+# O catálogo de colunas padrão é definido em flask_gma.py (CATALOGO_PLANILHA) e
+# sincronizado no banco via sincronizar_catalogo_molde(). INSERT OR IGNORE garante
+# que colunas já existentes não perdem o estado visivel que o operador configurou.
+
+def migrar_schema_molde_planilha(conn):
+    """
+    Cria a tabela `molde_planilha` se ainda não existir.
+
+    Não-destrutiva: seguro chamar em bancos existentes. O estado de visibilidade
+    de colunas já configuradas pelo operador é preservado.
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS molde_planilha (
+            -- Identificador único da coluna (ex: "prof_nome", "chip_palco")
+            chave   TEXT PRIMARY KEY,
+
+            -- Rótulo exibido no cabeçalho da planilha
+            rotulo  TEXT NOT NULL,
+
+            -- Bloco ao qual pertence (identificacao/classificacao/tecnicas/pos_producao/custom)
+            bloco   TEXT NOT NULL,
+
+            -- Posição dentro do bloco (menor = primeiro)
+            ordem   INTEGER NOT NULL DEFAULT 0,
+
+            -- 1 = visível na planilha / 0 = oculta
+            visivel INTEGER NOT NULL DEFAULT 1,
+
+            -- 1 = coluna do sistema (não pode ser excluída, só ocultada)
+            -- 0 = coluna personalizada criada pelo operador (pode ser excluída)
+            sistema INTEGER NOT NULL DEFAULT 1
+        )
+    """)
+    conn.commit()
+
+
+def sincronizar_catalogo_molde(conn, catalogo):
+    """
+    Registra no banco as colunas do catálogo padrão que ainda não existem.
+
+    Usa INSERT OR IGNORE — colunas já existentes mantêm o estado visivel
+    que o operador configurou. Só insere entradas novas.
+
+    Args:
+        conn:     conexão SQLite aberta.
+        catalogo: CATALOGO_PLANILHA de flask_gma.py — lista de tuplas
+                  (chave, rotulo, bloco, tipo_render, campo, visivel_padrao).
+    """
+    for ordem, entrada in enumerate(catalogo):
+        chave, rotulo, bloco = entrada[0], entrada[1], entrada[2]
+        visivel_padrao = entrada[5] if len(entrada) > 5 else 1
+        conn.execute(
+            """INSERT OR IGNORE INTO molde_planilha
+               (chave, rotulo, bloco, ordem, visivel, sistema)
+               VALUES (?, ?, ?, ?, ?, 1)""",
+            (chave, rotulo, bloco, ordem, visivel_padrao),
+        )
+    conn.commit()
+
+
+def listar_molde(conn):
+    """
+    Retorna todas as colunas do molde, ordenadas por ordem global.
+
+    Returns:
+        Lista de dicts com chave, rotulo, bloco, ordem, visivel, sistema.
+    """
+    rows = conn.execute(
+        "SELECT chave, rotulo, bloco, ordem, visivel, sistema "
+        "FROM molde_planilha ORDER BY ordem"
+    ).fetchall()
+    return [
+        {"chave": r[0], "rotulo": r[1], "bloco": r[2],
+         "ordem": r[3], "visivel": bool(r[4]), "sistema": bool(r[5])}
+        for r in rows
+    ]
+
+
+def listar_molde_visivel(conn):
+    """
+    Retorna apenas as colunas marcadas como visíveis, em ordem.
+
+    Usada pela rota /planilha para decidir quais colunas renderizar.
+    """
+    rows = conn.execute(
+        "SELECT chave, rotulo, bloco, ordem, visivel, sistema "
+        "FROM molde_planilha WHERE visivel = 1 ORDER BY ordem"
+    ).fetchall()
+    return [
+        {"chave": r[0], "rotulo": r[1], "bloco": r[2],
+         "ordem": r[3], "visivel": True, "sistema": bool(r[5])}
+        for r in rows
+    ]
+
+
+def definir_visivel_coluna(conn, chave, visivel):
+    """
+    Liga ou desliga a visibilidade de uma coluna na planilha.
+
+    Args:
+        conn:    conexão SQLite aberta.
+        chave:   chave da coluna (ex: "prof_nome").
+        visivel: True/1 para mostrar, False/0 para ocultar.
+
+    Returns:
+        "ok" se atualizou, "inexistente" se a chave não existir.
+    """
+    row = conn.execute(
+        "SELECT chave FROM molde_planilha WHERE chave = ?", (chave,)
+    ).fetchone()
+    if row is None:
+        return "inexistente"
+    conn.execute(
+        "UPDATE molde_planilha SET visivel = ? WHERE chave = ?",
+        (1 if visivel else 0, chave),
+    )
+    conn.commit()
+    return "ok"
+
+
+def adicionar_coluna_custom(conn, chave, rotulo, bloco):
+    """
+    Adiciona uma coluna personalizada ao molde (sistema=0, pode ser excluída).
+
+    Args:
+        conn:   conexão SQLite aberta.
+        chave:  chave única derivada do rótulo (sem espaços/acentos).
+        rotulo: nome exibido no cabeçalho.
+        bloco:  bloco onde aparece (ex: "pos_producao", "custom").
+
+    Returns:
+        "ok"        — adicionada com sucesso.
+        "duplicada" — já existe uma coluna com esta chave.
+        "invalida"  — chave ou rótulo vazio.
+    """
+    chave = (chave or "").strip()
+    rotulo = (rotulo or "").strip()
+    if not chave or not rotulo:
+        return "invalida"
+
+    ordem = conn.execute(
+        "SELECT COALESCE(MAX(ordem), 0) + 1 FROM molde_planilha"
+    ).fetchone()[0]
+
+    try:
+        conn.execute(
+            """INSERT INTO molde_planilha (chave, rotulo, bloco, ordem, visivel, sistema)
+               VALUES (?, ?, ?, ?, 1, 0)""",
+            (chave, rotulo, bloco, ordem),
+        )
+        conn.commit()
+        return "ok"
+    except Exception:
+        return "duplicada"
+
+
+def excluir_coluna_custom(conn, chave):
+    """
+    Exclui uma coluna personalizada (sistema=0) definitivamente.
+
+    Colunas do sistema (sistema=1) não podem ser excluídas — use
+    definir_visivel_coluna para ocultá-las.
+
+    Returns:
+        "excluido"   — removida com sucesso.
+        "sistema"    — coluna protegida, não pode excluir.
+        "inexistente"— não havia coluna com esta chave.
+    """
+    row = conn.execute(
+        "SELECT sistema FROM molde_planilha WHERE chave = ?", (chave,)
+    ).fetchone()
+    if row is None:
+        return "inexistente"
+    if row[0] == 1:
+        return "sistema"
+    conn.execute("DELETE FROM molde_planilha WHERE chave = ?", (chave,))
+    conn.commit()
+    return "excluido"
 
 
 # ── PONTO DE ENTRADA (INICIALIZAÇÃO DIRETA) ───────────────────────────────────
