@@ -610,6 +610,10 @@ def inicializar_banco():
     # ser fixos no código e viram dados editáveis pelo operador (s33).
     migrar_schema_grupos_classificacao(conn)
 
+    # Migração incremental: cria a tabela formularios_textos (grupos de modo 'texto':
+    # valores de preenchimento livre por ficha, ex.: nome do entrevistado).
+    migrar_schema_formularios_textos(conn)
+
     return conn
 
 
@@ -1979,6 +1983,29 @@ def migrar_schema_grupos_classificacao(conn):
             "(chave, rotulo, multipla, ordem, ativo, sistema) VALUES (?, ?, ?, ?, 1, 1)",
             (chave, rotulo, multipla, ordem),
         )
+    # Migração: coluna `modo` — 'lista' (escolhe chips) | 'texto' (escreve na hora).
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(grupos_classificacao)").fetchall()]
+    if "modo" not in cols:
+        conn.execute("ALTER TABLE grupos_classificacao ADD COLUMN modo TEXT NOT NULL DEFAULT 'lista'")
+    conn.commit()
+
+
+def migrar_schema_formularios_textos(conn):
+    """
+    Cria a tabela `formularios_textos` se ainda não existir.
+
+    Guarda os valores de texto livre que o profissional escreve nos grupos de
+    modo 'texto' (ex.: nome do entrevistado). Vários valores por (ficha, grupo) —
+    uma linha por valor. Não-destrutivo.
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS formularios_textos (
+            formulario_id INTEGER NOT NULL REFERENCES formularios(id),
+            grupo_chave   TEXT NOT NULL,
+            valor         TEXT NOT NULL,
+            PRIMARY KEY (formulario_id, grupo_chave, valor)
+        )
+    """)
     conn.commit()
 
 
@@ -1986,12 +2013,14 @@ def listar_grupos(conn, apenas_ativos=False):
     """Retorna os grupos de classificação, ordenados por `ordem`."""
     where = " WHERE ativo = 1" if apenas_ativos else ""
     rows = conn.execute(
-        f"SELECT chave, rotulo, multipla, ordem, ativo, sistema "
+        f"SELECT chave, rotulo, multipla, ordem, ativo, sistema, "
+        f"COALESCE(modo, 'lista') AS modo "
         f"FROM grupos_classificacao{where} ORDER BY ordem, rotulo"
     ).fetchall()
     return [
         {"chave": r[0], "rotulo": r[1], "multipla": bool(r[2]),
-         "ordem": r[3], "ativo": bool(r[4]), "sistema": bool(r[5])}
+         "ordem": r[3], "ativo": bool(r[4]), "sistema": bool(r[5]),
+         "modo": r[6]}
         for r in rows
     ]
 
@@ -2003,9 +2032,12 @@ def _slug_grupo(rotulo):
     return "custom_" + base.strip("_")
 
 
-def criar_grupo(conn, rotulo, multipla=True):
+def criar_grupo(conn, rotulo, multipla=True, modo="lista"):
     """
     Cria um grupo de classificação novo (sistema=0). A chave é derivada do rótulo.
+
+    modo: 'lista' (escolhe chips de itens cadastrados) | 'texto' (o profissional
+    escreve o valor na hora, ex.: nome do entrevistado).
 
     Returns: dict do grupo criado, ou levanta ValueError se rótulo vazio /
     sqlite3.IntegrityError se a chave colidir.
@@ -2013,6 +2045,7 @@ def criar_grupo(conn, rotulo, multipla=True):
     rotulo = (rotulo or "").strip()
     if not rotulo:
         raise ValueError("O nome do grupo não pode ser vazio.")
+    modo = modo if modo in ("lista", "texto") else "lista"
     chave = _slug_grupo(rotulo)
     if chave == "custom_":
         raise ValueError("Nome inválido para o grupo.")
@@ -2020,15 +2053,15 @@ def criar_grupo(conn, rotulo, multipla=True):
         "SELECT COALESCE(MAX(ordem), -1) + 1 FROM grupos_classificacao"
     ).fetchone()[0]
     conn.execute(
-        "INSERT INTO grupos_classificacao (chave, rotulo, multipla, ordem, ativo, sistema) "
-        "VALUES (?, ?, ?, ?, 1, 0)",
-        (chave, rotulo, 1 if multipla else 0, ordem),
+        "INSERT INTO grupos_classificacao (chave, rotulo, multipla, ordem, ativo, sistema, modo) "
+        "VALUES (?, ?, ?, ?, 1, 0, ?)",
+        (chave, rotulo, 1 if multipla else 0, ordem, modo),
     )
     conn.commit()
     registrar_evento(conn, "grupo_criado", f"Grupo de classificação criado: {rotulo}",
-                     dados={"chave": chave, "multipla": bool(multipla)})
+                     dados={"chave": chave, "multipla": bool(multipla), "modo": modo})
     return {"chave": chave, "rotulo": rotulo, "multipla": bool(multipla),
-            "ordem": ordem, "ativo": True, "sistema": False}
+            "ordem": ordem, "ativo": True, "sistema": False, "modo": modo}
 
 
 def renomear_grupo(conn, chave, novo_rotulo):
@@ -2108,14 +2141,22 @@ def mover_grupo(conn, chave, direcao):
 
 def grupo_em_uso(conn, chave):
     """
-    True se algum item deste grupo já aparece em alguma ficha (formularios_chips).
-    Usa a chave do grupo = listas_contexto.tipo.
+    True se este grupo já aparece em alguma ficha — seja por chips (modo lista,
+    via formularios_chips) ou por texto livre (modo texto, via formularios_textos).
     """
     try:
         n = conn.execute(
             "SELECT COUNT(*) FROM formularios_chips fc "
             "JOIN listas_contexto lc ON lc.id = fc.item_id "
             "WHERE lc.tipo = ?", (chave,)
+        ).fetchone()[0]
+        if n > 0:
+            return True
+    except sqlite3.OperationalError:
+        pass
+    try:
+        n = conn.execute(
+            "SELECT COUNT(*) FROM formularios_textos WHERE grupo_chave = ?", (chave,)
         ).fetchone()[0]
         return n > 0
     except sqlite3.OperationalError:
@@ -2506,6 +2547,72 @@ def chips_por_formulario(conn, formulario_ids=None):
         )
     for lista in mapa.values():
         lista.sort(key=lambda it: (ordem.get(it["tipo"], 99), it["valor"].lower()))
+    return mapa
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Valores de texto livre (grupos de modo 'texto') — tabela formularios_textos
+# ─────────────────────────────────────────────────────────────────────────────
+
+def definir_textos_formulario(conn, formulario_id, mapa):
+    """
+    Define (substitui) os valores de texto livre de uma ficha.
+
+    mapa: {grupo_chave: [valores]}. Apaga os anteriores da ficha e grava os novos.
+    Ignora valores vazios e duplicados dentro do mesmo grupo. Retorna o total gravado.
+    """
+    conn.execute("DELETE FROM formularios_textos WHERE formulario_id = ?", (formulario_id,))
+    total = 0
+    for grupo_chave, valores in (mapa or {}).items():
+        vistos = set()
+        for v in (valores or []):
+            v = (v or "").strip()
+            if not v or v.lower() in vistos:
+                continue
+            vistos.add(v.lower())
+            conn.execute(
+                "INSERT OR IGNORE INTO formularios_textos (formulario_id, grupo_chave, valor) "
+                "VALUES (?, ?, ?)", (formulario_id, grupo_chave, v)
+            )
+            total += 1
+    conn.commit()
+    return total
+
+
+def listar_textos_formulario(conn, formulario_id):
+    """Retorna {grupo_chave: [valores]} de uma ficha (para reabrir/editar)."""
+    rows = conn.execute(
+        "SELECT grupo_chave, valor FROM formularios_textos WHERE formulario_id = ? "
+        "ORDER BY grupo_chave, valor", (formulario_id,)
+    ).fetchall()
+    mapa = {}
+    for r in rows:
+        mapa.setdefault(r[0], []).append(r[1])
+    return mapa
+
+
+def textos_por_formulario(conn, formulario_ids=None):
+    """
+    Versão em lote — para a Planilha. Retorna
+    {formulario_id: {grupo_chave: [valores]}}.
+    """
+    where, params = "", []
+    if formulario_ids:
+        ids = [int(x) for x in formulario_ids]
+        if not ids:
+            return {}
+        where = f" WHERE formulario_id IN ({','.join('?' for _ in ids)})"
+        params = ids
+    try:
+        rows = conn.execute(
+            f"SELECT formulario_id, grupo_chave, valor FROM formularios_textos{where} "
+            f"ORDER BY grupo_chave, valor", params
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    mapa = {}
+    for r in rows:
+        mapa.setdefault(r[0], {}).setdefault(r[1], []).append(r[2])
     return mapa
 
 

@@ -612,13 +612,19 @@ def _processar_e_salvar_formulario(dados_recebidos, origem="FORMS",
         # é lista vazia. Numa entrega dividida (áudio à parte), as duas metades
         # carregam os mesmos chips — ambas descrevem o mesmo conteúdo.
         _chips = dados_recebidos.get("chips") or []
+        # Grupos de TEXTO (escreve na hora): {grupo_chave: [valores]} (s33).
+        _textos = dados_recebidos.get("textos") or {}
         if _db_id is not None:
             _bd.definir_chips_formulario(_conn_flask, _db_id, _chips)
+            if _textos:
+                _bd.definir_textos_formulario(_conn_flask, _db_id, _textos)
         _conn_flask.close()
         # Salva o ID do banco de volta no JSON (ponte para o Matcher e Transferência)
         dados_form["db_formulario_id"] = _db_id
         if _chips:
             dados_form["chips"] = list(_chips)
+        if _textos:
+            dados_form["textos"] = _textos
         with open(caminho_arquivo, "w", encoding="utf-8") as _f:
             json.dump(dados_form, _f, ensure_ascii=False, indent=2)
         logger.info(f"BANCO | Formulário gravado | db_id={_db_id}")
@@ -1804,15 +1810,15 @@ def _valores_chip(chips, tipo):
     return _esc(" · ".join(vals)) if vals else "—"
 
 
-def _celula_planilha(col, linha, chips):
+def _celula_planilha(col, linha, chips, textos=None):
     """
     Renderiza o valor de uma célula para uma linha da planilha.
 
     Args:
-        col:   dict do molde (chave, rotulo, bloco, …) enriquecido com
-               tipo_render e campo vindos do CATALOGO_PLANILHA.
-        linha: linha do banco (sqlite3.Row).
-        chips: lista de chips desta ficha vinda de chips_por_formulario.
+        col:    dict do molde enriquecido com tipo_render e campo.
+        linha:  linha do banco (sqlite3.Row).
+        chips:  lista de chips desta ficha (bd.chips_por_formulario).
+        textos: dict {grupo_chave: [valores]} desta ficha (bd.textos_por_formulario).
     """
     tipo = col.get("tipo_render", "dado")
     campo = col.get("campo")
@@ -1829,6 +1835,10 @@ def _celula_planilha(col, linha, chips):
 
     if tipo == "chip":
         return _valores_chip(chips, campo)
+
+    if tipo == "texto":  # grupo de preenchimento livre
+        vals = (textos or {}).get(campo, [])
+        return _esc(" · ".join(vals)) if vals else "—"
 
     if tipo == "n_arq":
         v = linha["total_arquivos_transferidos"]
@@ -1862,9 +1872,9 @@ def _colunas_visiveis():
     try:
         conn = bd.obter_conexao()
         cols = bd.listar_molde_visivel(conn)
-        # Conjunto de grupos ATIVOS: uma coluna chip_<chave> só aparece se o grupo
-        # estiver ativo (desativar um grupo some a coluna da planilha).
-        grupos_ativos = {g["chave"] for g in bd.listar_grupos(conn, apenas_ativos=True)}
+        # Grupos ATIVOS (por chave): uma coluna chip_<chave> só aparece se o grupo
+        # estiver ativo. O modo decide se a célula lê chips ou texto livre.
+        grupos_ativos = {g["chave"]: g for g in bd.listar_grupos(conn, apenas_ativos=True)}
         conn.close()
     except Exception as e:
         logger.error(f"MOLDE | Erro ao listar | {e}")
@@ -1876,9 +1886,10 @@ def _colunas_visiveis():
         if chave.startswith("chip_"):
             # Coluna de grupo: só entra se o grupo estiver ativo.
             grupo_chave = chave[len("chip_"):]
-            if grupo_chave not in grupos_ativos:
+            g = grupos_ativos.get(grupo_chave)
+            if not g:
                 continue
-            c["tipo_render"] = "chip"
+            c["tipo_render"] = "texto" if g.get("modo") == "texto" else "chip"
             c["campo"]       = grupo_chave
         else:
             cat = _CATALOGO_IDX.get(chave)
@@ -1926,18 +1937,21 @@ def planilha():
         """).fetchall()
         form_ids = [l["form_id"] for l in linhas if l["form_id"]]
         chips_map = bd.chips_por_formulario(conn, form_ids) if form_ids else {}
+        textos_map = bd.textos_por_formulario(conn, form_ids) if form_ids else {}
         conn.close()
     except Exception as erro:
         logger.error(f"PLANILHA | Erro ao ler | {erro}")
         linhas = []
         chips_map = {}
+        textos_map = {}
 
     linhas_html = ""
     for linha in linhas:
         chips = chips_map.get(linha["form_id"], [])
+        textos = textos_map.get(linha["form_id"], {})
         celulas = "".join(
             f'<td class="{"mono" if c["chave"] == "destino_pasta" else ""}">'
-            f'{_celula_planilha(c, linha, chips)}</td>'
+            f'{_celula_planilha(c, linha, chips, textos)}</td>'
             for c in colunas
         )
         linhas_html += f"<tr>{celulas}</tr>"
@@ -2251,6 +2265,18 @@ CSS_FICHA = """
         font-size:1em; padding:0 4px; }
     .chip-novo-ok { color:#1D9E75; font-weight:700; }
     .chip-novo-cancel { color:#adb5bd; }
+    /* Grupos de TEXTO: tags de valores livres + caixa de adicionar */
+    .texto-tag { display:inline-flex; align-items:center; gap:6px; background:#1D9E75;
+        color:#fff; border-radius:16px; padding:5px 12px; font-size:0.88em; font-weight:600; }
+    .texto-rm { background:none; border:none; color:#fff; cursor:pointer; font-size:0.9em;
+        padding:0; line-height:1; opacity:0.8; }
+    .texto-rm:hover { opacity:1; }
+    .texto-input { border:1px solid #ced4da; border-radius:16px; padding:5px 13px;
+        font-size:0.88em; font-family:inherit; outline:none; min-width:180px; }
+    .texto-input:focus { border-color:#1D9E75; }
+    .texto-add { background:none; border:1px dashed #ced4da; border-radius:12px;
+        padding:4px 12px; font-size:0.8em; color:#6c757d; cursor:pointer; }
+    .texto-add:hover { border-color:#1D9E75; color:#1D9E75; }
     /* Toggles "Quando foi gravado?" e "Quem está preenchendo?" */
     .radio-linha { display:flex; gap:18px; align-items:center; margin-top:2px; }
     .radio-op { font-size:0.92em; font-weight:600; color:#495057;
@@ -2432,6 +2458,66 @@ JS_CHIP_NOVO = """
       })
       .catch(function(){ alert('Erro de conexão.'); okBtn.disabled = false; });
   }
+})();
+</script>"""
+
+# JS dos grupos de TEXTO: adicionar/remover valores livres (tags). Vive no <head>.
+JS_TEXTO_GRUPO = """
+<script>
+(function(){
+  function init(){
+    function atualiza(tipo){
+      var cont = document.querySelector('.chip-contador[data-tipo="'+tipo+'"]');
+      var box  = document.getElementById('texto-tags-'+tipo);
+      if (cont && box){
+        var n = box.querySelectorAll('input[type=hidden]').length;
+        cont.textContent = n ? ('· '+n+(n>1?' valores':' valor')) : '';
+        cont.classList.toggle('tem', n>0);
+      }
+    }
+    function add(tipo){
+      var inp = document.getElementById('texto-input-'+tipo);
+      var box = document.getElementById('texto-tags-'+tipo);
+      if (!inp || !box) return;
+      var v = inp.value.trim();
+      if (!v){ inp.focus(); return; }
+      var bloco = box.closest('.chip-bloco');
+      if (bloco && bloco.getAttribute('data-umso') === '1') box.innerHTML = '';
+      var dup = [].some.call(box.querySelectorAll('input[type=hidden]'),
+                 function(h){ return h.value.toLowerCase() === v.toLowerCase(); });
+      if (!dup){
+        var tag = document.createElement('span'); tag.className = 'texto-tag';
+        tag.appendChild(document.createTextNode(v));
+        var h = document.createElement('input'); h.type='hidden'; h.name='texto_'+tipo; h.value=v;
+        tag.appendChild(h);
+        var rm = document.createElement('button'); rm.type='button'; rm.className='texto-rm';
+        rm.title='remover'; rm.textContent='✕'; tag.appendChild(rm);
+        box.appendChild(tag);
+      }
+      inp.value=''; inp.focus(); atualiza(tipo);
+    }
+    document.querySelectorAll('.texto-add').forEach(function(b){
+      b.addEventListener('click', function(){ add(b.getAttribute('data-tipo')); });
+    });
+    document.querySelectorAll('.texto-input').forEach(function(inp){
+      inp.addEventListener('keydown', function(e){
+        if (e.key === 'Enter'){ e.preventDefault(); add(inp.getAttribute('data-tipo')); }
+      });
+    });
+    document.addEventListener('click', function(e){
+      var t = e.target;
+      if (t && t.classList && t.classList.contains('texto-rm')){
+        var tag = t.closest('.texto-tag'); var box = tag.closest('.texto-tags');
+        var tipo = box.id.replace('texto-tags-','');
+        tag.remove(); atualiza(tipo);
+      }
+    });
+    document.querySelectorAll('.texto-tags').forEach(function(box){
+      atualiza(box.id.replace('texto-tags-',''));
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
 })();
 </script>"""
 
@@ -2872,7 +2958,52 @@ def _fichas_recentes_html(limite=12):
     </div>"""
 
 
-def _bloco_classificacao_ficha(chips_selecionados, eh_operador=False):
+def _bloco_texto_grupo_html(g, valores):
+    """
+    Bloco de um grupo de modo 'texto' na ficha: o profissional escreve valores
+    livres (ex.: nome do entrevistado) e pode adicionar vários. Cada valor vira
+    uma "tag" com um input escondido name="texto_<chave>"; o JS adiciona/remove.
+    """
+    tipo = g["chave"]
+    rotulo = _esc(g["rotulo"])
+    um_so = not g["multipla"]
+
+    tags_html = ""
+    for v in (valores or []):
+        vesc = _esc(v)
+        tags_html += (
+            f'<span class="texto-tag">{vesc}'
+            f'<input type="hidden" name="texto_{tipo}" value="{vesc}">'
+            f'<button type="button" class="texto-rm" title="remover">✕</button></span>'
+        )
+
+    dica = ' <span class="ajuda">(um valor)</span>' if um_so else \
+           f' <span class="chip-contador" data-tipo="{tipo}"></span>'
+    return (
+        f'<div class="chip-bloco" data-modo="texto" data-umso="{1 if um_so else 0}">'
+        f'<div class="chip-rotulo">{rotulo}{dica}</div>'
+        f'<div class="texto-tags chip-linha" id="texto-tags-{tipo}">{tags_html}</div>'
+        f'<div class="chip-acao">'
+        f'<input type="text" class="texto-input" id="texto-input-{tipo}" data-tipo="{tipo}" '
+        f'placeholder="escrever e Enter…" maxlength="80" autocomplete="off">'
+        f'<button type="button" class="chip-btn-novo texto-add" data-tipo="{tipo}">adicionar</button>'
+        f'</div></div>'
+    )
+
+
+def _coletar_textos_form(form):
+    """Extrai {grupo_chave: [valores]} dos campos 'texto_<chave>' do formulário."""
+    out = {}
+    for key in list(form.keys()):
+        if key.startswith("texto_"):
+            chave = key[len("texto_"):]
+            vals = [v.strip() for v in form.getlist(key) if v and v.strip()]
+            if vals:
+                out[chave] = vals
+    return out
+
+
+def _bloco_classificacao_ficha(chips_selecionados, eh_operador=False, textos_selecionados=None):
     """
     Monta o bloco de CLASSIFICAÇÃO da ficha: chips clicáveis montados a partir das
     listas de contexto ATIVAS (palco, marca, pauta, serviço, tags), que o operador
@@ -2908,6 +3039,7 @@ def _bloco_classificacao_ficha(chips_selecionados, eh_operador=False):
         por_tipo.setdefault(it["tipo"], []).append(it)
 
     sel = {str(s) for s in (chips_selecionados or set())}
+    textos_sel = textos_selecionados or {}
 
     blocos = []
     # Itera os GRUPOS ativos do banco (não mais a lista fixa) — Fatia 2 (s33).
@@ -2916,6 +3048,12 @@ def _bloco_classificacao_ficha(chips_selecionados, eh_operador=False):
     # remoto (profissional), grupos vazios são omitidos.
     for g in grupos:
         tipo = g["chave"]
+
+        # Grupo de TEXTO (escreve na hora) — caixa de múltiplos valores (s33).
+        if g.get("modo") == "texto":
+            blocos.append(_bloco_texto_grupo_html(g, textos_sel.get(tipo, [])))
+            continue
+
         lista = por_tipo.get(tipo, [])
         if not lista and not eh_operador:
             continue
@@ -3044,7 +3182,7 @@ def _bloco_operador_ficha(d, eh_operador):
 
 def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
                 bloquear_criticos=False, mostrar_recentes=True,
-                chips_selecionados=None):
+                chips_selecionados=None, textos_selecionados=None):
     """
     Monta o HTML do formulário de check-in.
 
@@ -3097,7 +3235,8 @@ def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
 
     # Monta o bloco CLASSIFICAÇÃO (chips das listas de contexto) — ponte chips→ficha.
     bloco_classificacao = _bloco_classificacao_ficha(chips_selecionados,
-                                                     eh_operador=eh_operador)
+                                                     eh_operador=eh_operador,
+                                                     textos_selecionados=textos_selecionados)
 
     corpo = f"""
     <p class="legenda">{legenda}</p>
@@ -3137,7 +3276,7 @@ def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
     </form>
     {_fichas_recentes_html() if (mostrar_recentes and not editando) else ''}"""
 
-    head_extra = f"<style>{CSS_FICHA}</style>{JS_CHIPS}{JS_CHIP_NOVO}{JS_FICHA_TOGGLES}"
+    head_extra = f"<style>{CSS_FICHA}</style>{JS_CHIPS}{JS_CHIP_NOVO}{JS_TEXTO_GRUPO}{JS_FICHA_TOGGLES}"
     titulo = "Editar ficha" if editando else "Nova Ficha"
     return _pagina(titulo, "ficha", corpo, head_extra)
 
@@ -3211,6 +3350,9 @@ def ficha_enviar():
     # to_dict() perde valores repetidos — os chips chegam como vários campos "chip".
     chips = request.form.getlist("chip")
     dados["chips"] = chips
+    # Grupos de texto: campos "texto_<chave>" (vários por grupo) — Fatia texto (s33).
+    textos = _coletar_textos_form(request.form)
+    dados["textos"] = textos
 
     # A função central devolve (resposta_json, codigo_http). Reutilizamos toda a
     # lógica testada e só interpretamos o resultado para montar uma tela amigável.
@@ -3221,7 +3363,7 @@ def ficha_enviar():
         # Validação falhou — remostra o formulário com o erro, os valores digitados
         # e os chips que o profissional já tinha marcado.
         corpo = _html_ficha(dados=dados, erro=payload.get("erro", "Erro ao salvar a ficha."),
-                            chips_selecionados=set(chips))
+                            chips_selecionados=set(chips), textos_selecionados=textos)
         return corpo, codigo, {"Content-Type": "text/html; charset=utf-8"}
 
     # Sucesso — tela de confirmação com o resumo do que foi gravado.
@@ -3302,16 +3444,19 @@ def ficha_editar_form(ficha_id):
             {"Content-Type": "text/html; charset=utf-8"}
 
     bloquear = ficha.get("status") not in STATUS_FICHA_LIVRE
-    # Carrega os chips de classificação já escolhidos, para remarcá-los na ficha.
+    # Carrega os chips e os textos já preenchidos, para repor na ficha.
     chips_sel = set()
+    textos_sel = {}
     try:
         conn = bd.obter_conexao()
         chips_sel = {str(c["item_id"]) for c in bd.listar_chips_formulario(conn, ficha_id)}
+        textos_sel = bd.listar_textos_formulario(conn, ficha_id)
         conn.close()
     except Exception as erro:
-        logger.error(f"FICHA | Erro ao carregar chips da ficha {ficha_id} | {erro}")
+        logger.error(f"FICHA | Erro ao carregar chips/textos da ficha {ficha_id} | {erro}")
     corpo = _html_ficha(dados=ficha, modo="editar", ficha_id=ficha_id,
-                        bloquear_criticos=bloquear, chips_selecionados=chips_sel)
+                        bloquear_criticos=bloquear, chips_selecionados=chips_sel,
+                        textos_selecionados=textos_sel)
     return corpo, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
@@ -3332,6 +3477,8 @@ def ficha_editar_salvar(ficha_id):
     enviados = request.form.to_dict()
     # Chips de classificação (editoriais): editáveis mesmo com a ficha já casada.
     chips = request.form.getlist("chip")
+    # Valores de texto (grupos de modo 'texto') — também editoriais.
+    textos = _coletar_textos_form(request.form)
 
     # Se os críticos estão travados, descarta-os do que veio (defesa no servidor —
     # não confia só no 'disabled' do HTML).
@@ -3350,6 +3497,7 @@ def ficha_editar_salvar(ficha_id):
             corpo = _html_ficha(
                 dados=dados_reexibir, modo="editar", ficha_id=ficha_id,
                 bloquear_criticos=bloquear, chips_selecionados=set(chips),
+                textos_selecionados=textos,
                 erro=f"Formato de data inválido: '{campos['data_gravacao']}'. Use AAAA-MM-DD.",
             )
             return corpo, 422, {"Content-Type": "text/html; charset=utf-8"}
@@ -3361,9 +3509,10 @@ def ficha_editar_salvar(ficha_id):
         conn = bd.obter_conexao()
         bd.atualizar_formulario(conn, ficha_id, campos)
         bd.definir_chips_formulario(conn, ficha_id, chips)
+        bd.definir_textos_formulario(conn, ficha_id, textos)
         conn.close()
         _atualizar_json_fila(ficha.get("id_form_original"), campos)
-        logger.info(f"FICHA | Ficha {ficha_id} editada | campos={list(campos.keys())} | chips={len(chips)}")
+        logger.info(f"FICHA | Ficha {ficha_id} editada | campos={list(campos.keys())} | chips={len(chips)} | textos={sum(len(v) for v in textos.values())}")
     except Exception as erro:
         logger.error(f"FICHA | Erro ao salvar edição da ficha {ficha_id} | {erro}")
         corpo = _html_ficha(
@@ -4354,11 +4503,12 @@ def grupos_criar():
         return _pagina_listas(erro="Banco de dados indisponível.")
     rotulo = (request.form.get("rotulo") or "").strip()
     multipla = (request.form.get("multipla", "1") == "1")
+    modo = (request.form.get("modo") or "lista").strip()
     try:
         conn = bd.obter_conexao()
-        novo = bd.criar_grupo(conn, rotulo, multipla=multipla)
+        novo = bd.criar_grupo(conn, rotulo, multipla=multipla, modo=modo)
         conn.close()
-        logger.info(f"GRUPOS | criado '{rotulo}' ({novo['chave']})")
+        logger.info(f"GRUPOS | criado '{rotulo}' ({novo['chave']}, modo={modo})")
     except ValueError as e:
         return _pagina_listas(erro=str(e))
     except Exception as e:
@@ -4509,12 +4659,19 @@ def _cabecalho_grupo_html(g, total, em_uso):
             f'padding:0">excluir</button></form>'
         )
 
-    badge = (f'<span style="background:#e9ecef;color:#6c757d;border-radius:12px;'
-             f'padding:1px 10px;font-size:0.8em;font-weight:700">{total}</span>')
+    # Grupo de texto não tem itens — mostra o nº só nos de lista.
+    eh_texto = g.get("modo") == "texto"
+    badge = "" if eh_texto else (
+        f'<span style="background:#e9ecef;color:#6c757d;border-radius:12px;'
+        f'padding:1px 10px;font-size:0.8em;font-weight:700">{total}</span>')
+    badge_modo = (
+        '<span style="background:#e6f1fb;color:#185fa5;border-radius:4px;'
+        'padding:1px 8px;font-size:0.72em;font-weight:600">escreve na hora</span>'
+        if eh_texto else "")
 
     return (
         '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">'
-        f'{form_editar}{badge}{selo}'
+        f'{form_editar}{badge}{badge_modo}{selo}'
         '<div style="display:flex;gap:6px;align-items:center">'
         f'{btn_mover}{btn_ativo}{btn_excluir}</div>'
         '</div>'
@@ -4570,6 +4727,19 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
         itens_do_tipo = itens_por_tipo.get(tipo, [])
         total = len(itens_do_tipo)
         cabecalho_grupo = _cabecalho_grupo_html(g, total, tipo in grupos_em_uso)
+
+        # Grupo de TEXTO: não tem itens a cadastrar — o profissional escreve na
+        # ficha. Mostra só uma nota no lugar da tabela.
+        if g.get("modo") == "texto":
+            dim = ";opacity:0.55" if not g["ativo"] else ""
+            blocos_grupos += (
+                f'<div style="margin-bottom:28px{dim}">{cabecalho_grupo}'
+                '<p style="color:#adb5bd;font-size:0.85em;background:#fff;border-radius:8px;'
+                'padding:12px 16px;box-shadow:0 1px 4px rgba(0,0,0,0.08);margin:0">'
+                'Grupo de preenchimento — o profissional escreve o valor na ficha '
+                '(ex.: nome do entrevistado). Não tem itens a cadastrar aqui.</p></div>'
+            )
+            continue
 
         # Monta as linhas da tabela deste grupo
         if itens_do_tipo:
@@ -4690,10 +4860,11 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
             {_esc(aviso_banco)}
         </div>"""
 
-    # Monta as <option> do select de tipo no formulário de adição (grupos ativos)
+    # Monta as <option> do select de tipo no formulário de adição (grupos ativos
+    # de LISTA — grupos de texto não recebem itens cadastrados).
     opcoes_tipo = ""
     for g in grupos_def:
-        if not g["ativo"]:
+        if not g["ativo"] or g.get("modo") == "texto":
             continue
         sel = " selected" if g["chave"] == tipo_digitado else ""
         opcoes_tipo += f'<option value="{_esc(g["chave"])}"{sel}>{_esc(g["rotulo"])}</option>'
@@ -4736,14 +4907,24 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
                            style="width:100%;padding:9px 12px;border:1px solid #ced4da;
                                   border-radius:6px;font-size:0.9em;font-family:inherit">
                 </div>
+                <div style="margin-bottom:12px">
+                    <label style="display:block;font-size:0.85em;font-weight:600;
+                                  color:#495057;margin-bottom:5px">Como preenche?</label>
+                    <select name="modo"
+                            style="width:100%;padding:9px 12px;border:1px solid #ced4da;
+                                   border-radius:6px;font-size:0.9em;font-family:inherit">
+                        <option value="lista">Escolhe da lista (chips)</option>
+                        <option value="texto">Escreve na hora (texto)</option>
+                    </select>
+                </div>
                 <div style="margin-bottom:16px">
                     <label style="display:block;font-size:0.85em;font-weight:600;
-                                  color:#495057;margin-bottom:5px">Seleção na ficha</label>
+                                  color:#495057;margin-bottom:5px">Quantos por ficha</label>
                     <select name="multipla"
                             style="width:100%;padding:9px 12px;border:1px solid #ced4da;
                                    border-radius:6px;font-size:0.9em;font-family:inherit">
-                        <option value="1">Marca vários</option>
-                        <option value="0">Escolhe um</option>
+                        <option value="1">Vários</option>
+                        <option value="0">Um só</option>
                     </select>
                 </div>
                 <button type="submit"
