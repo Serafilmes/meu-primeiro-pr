@@ -1402,6 +1402,10 @@ def _fmt_tamanho(num_bytes):
 #
 # visivel_padrao: 1 = visível por padrão / 0 = oculta (operador liga quando precisar)
 # Colunas de pós-produção chegam ocultas — o operador ativa quando o evento precisar.
+# NOTA (Fatia 4, s33): as colunas de CLASSIFICAÇÃO não estão mais aqui — elas são
+# GERADAS a partir dos grupos (grupos_classificacao), uma coluna "chip_<chave>" por
+# grupo, sincronizadas no molde via bd.sincronizar_colunas_grupos(). Aqui ficam só
+# as colunas fixas do sistema (identificação · técnicas · pós-produção).
 CATALOGO_PLANILHA = [
     # chave               rótulo            bloco            tipo        campo                          vis
     ("prof_nome",    "Profissional",  "identificacao", "especial", "prof_nome",                    1),
@@ -1409,11 +1413,6 @@ CATALOGO_PLANILHA = [
     ("tipo_material","Tipo",          "identificacao", "dado",     "tipo_material",                 1),
     ("data_gravacao","Data",          "identificacao", "dado",     "data_gravacao",                 1),
     ("numero_cartao","Nº cartão",     "identificacao", "dado",     "numero_cartao",                 1),
-    ("chip_palco",   "Palco",         "classificacao", "chip",     "palco",                         1),
-    ("chip_marca",   "Marca",         "classificacao", "chip",     "marca",                         1),
-    ("chip_pauta",   "Pauta",         "classificacao", "chip",     "pauta",                         1),
-    ("chip_servico", "Serviço",       "classificacao", "chip",     "servico",                       1),
-    ("chip_tag",     "Tags",          "classificacao", "chip",     "tag",                           1),
     ("n_arquivos",   "Nº arquivos",   "tecnicas",      "n_arq",    "total_arquivos_transferidos",   1),
     ("tamanho",      "Tamanho",       "tecnicas",      "tamanho",  "tamanho_transferido_bytes",     1),
     ("status",       "Status",        "tecnicas",      "dado",     "status",                        1),
@@ -1422,6 +1421,12 @@ CATALOGO_PLANILHA = [
     ("pos_edicao",   "Edição",        "pos_producao",  "dado",     None,                            0),
     ("pos_upload",   "Upload",        "pos_producao",  "dado",     None,                            0),
 ]
+
+# Posto na ordem dos blocos (para ordenar colunas por bloco, não só por `ordem`).
+_RANK_BLOCO = {b[0]: i for i, b in enumerate([
+    ("identificacao", ""), ("classificacao", ""), ("tecnicas", ""),
+    ("pos_producao", ""), ("custom", ""),
+])}
 
 # Ordem e rótulos dos blocos (para a página /molde)
 BLOCOS_PLANILHA = [
@@ -1435,22 +1440,30 @@ BLOCOS_PLANILHA = [
 # Índice rápido chave → definição do catálogo padrão
 _CATALOGO_IDX = {e[0]: e for e in CATALOGO_PLANILHA}
 
-# Controla se o catálogo já foi sincronizado com o banco nesta execução
-_MOLDE_SINCRONIZADO = False
+# Garante que a tabela molde_planilha existe (migração roda uma vez só).
+_MOLDE_TABELA_OK = False
 
 
 def _garantir_molde():
-    """Cria a tabela molde_planilha (se necessário) e sincroniza o catálogo padrão."""
-    global _MOLDE_SINCRONIZADO
-    if _MOLDE_SINCRONIZADO or not BANCO_DISPONIVEL:
+    """
+    Garante a tabela molde_planilha + sincroniza as colunas:
+      • catálogo fixo (identificação/técnicas/pós) — INSERT OR IGNORE
+      • colunas dos GRUPOS (chip_<chave>) — criadas/atualizadas/removidas conforme
+        os grupos de classificação (Fatia 4). Roda a cada chamada (barato) para
+        refletir grupos criados/renomeados/excluídos depois do boot.
+    """
+    global _MOLDE_TABELA_OK
+    if not BANCO_DISPONIVEL:
         return
     try:
-        # inicializar_banco() roda todas as migrações (CREATE TABLE IF NOT EXISTS),
-        # incluindo molde_planilha. É idempotente — seguro chamar várias vezes.
-        conn = bd.inicializar_banco()
+        if not _MOLDE_TABELA_OK:
+            conn = bd.inicializar_banco()  # cria todas as tabelas (idempotente)
+            _MOLDE_TABELA_OK = True
+        else:
+            conn = bd.obter_conexao()
         bd.sincronizar_catalogo_molde(conn, CATALOGO_PLANILHA)
+        bd.sincronizar_colunas_grupos(conn)
         conn.close()
-        _MOLDE_SINCRONIZADO = True
     except Exception as e:
         logger.error(f"MOLDE | Erro ao sincronizar catálogo | {e}")
 
@@ -1849,6 +1862,9 @@ def _colunas_visiveis():
     try:
         conn = bd.obter_conexao()
         cols = bd.listar_molde_visivel(conn)
+        # Conjunto de grupos ATIVOS: uma coluna chip_<chave> só aparece se o grupo
+        # estiver ativo (desativar um grupo some a coluna da planilha).
+        grupos_ativos = {g["chave"] for g in bd.listar_grupos(conn, apenas_ativos=True)}
         conn.close()
     except Exception as e:
         logger.error(f"MOLDE | Erro ao listar | {e}")
@@ -1856,10 +1872,24 @@ def _colunas_visiveis():
 
     resultado = []
     for c in cols:
-        cat = _CATALOGO_IDX.get(c["chave"])
-        c["tipo_render"] = cat[3] if cat else "dado"
-        c["campo"]       = cat[4] if cat else None
+        chave = c["chave"]
+        if chave.startswith("chip_"):
+            # Coluna de grupo: só entra se o grupo estiver ativo.
+            grupo_chave = chave[len("chip_"):]
+            if grupo_chave not in grupos_ativos:
+                continue
+            c["tipo_render"] = "chip"
+            c["campo"]       = grupo_chave
+        else:
+            cat = _CATALOGO_IDX.get(chave)
+            c["tipo_render"] = cat[3] if cat else "dado"
+            c["campo"]       = cat[4] if cat else None
         resultado.append(c)
+
+    # Ordena por bloco (identificação → classificação → técnicas → pós → custom)
+    # e, dentro do bloco, pela ordem. Mantém as colunas de grupo agrupadas mesmo
+    # quando criadas depois (ordem alta no molde).
+    resultado.sort(key=lambda c: (_RANK_BLOCO.get(c["bloco"], 99), c["ordem"]))
     return resultado
 
 

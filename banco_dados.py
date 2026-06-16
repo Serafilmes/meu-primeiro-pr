@@ -2581,6 +2581,50 @@ def sincronizar_catalogo_molde(conn, catalogo):
     conn.commit()
 
 
+def sincronizar_colunas_grupos(conn):
+    """
+    Garante uma coluna de planilha por grupo de classificação (Fatia 4, s33).
+
+    Para cada grupo existente cria/atualiza a coluna `chip_<chave>` no molde
+    (bloco 'classificacao', visível por padrão — decisão s33). Propaga o rótulo
+    e a ordem do grupo. Remove colunas `chip_*` órfãs (grupo excluído).
+
+    A coluna existir não significa aparecer: a planilha só mostra a coluna de um
+    grupo ATIVO (filtro na renderização) e respeitando o liga/desliga do molde.
+    """
+    try:
+        grupos = listar_grupos(conn)
+    except sqlite3.OperationalError:
+        return  # tabela de grupos ainda não existe (banco muito antigo)
+
+    chaves_validas = set()
+    for g in grupos:
+        col = "chip_" + g["chave"]
+        chaves_validas.add(col)
+        existe = conn.execute(
+            "SELECT 1 FROM molde_planilha WHERE chave = ?", (col,)
+        ).fetchone()
+        if existe is None:
+            conn.execute(
+                "INSERT INTO molde_planilha (chave, rotulo, bloco, ordem, visivel, sistema) "
+                "VALUES (?, ?, 'classificacao', ?, 1, 1)",
+                (col, g["rotulo"], g["ordem"]),
+            )
+        else:
+            # Propaga rótulo e ordem do grupo (renomear/reordenar reflete na planilha).
+            conn.execute(
+                "UPDATE molde_planilha SET rotulo = ?, ordem = ? WHERE chave = ?",
+                (g["rotulo"], g["ordem"], col),
+            )
+    # Limpa colunas chip_* de grupos que não existem mais.
+    for r in conn.execute(
+        "SELECT chave FROM molde_planilha WHERE chave LIKE 'chip\\_%' ESCAPE '\\'"
+    ).fetchall():
+        if r[0] not in chaves_validas:
+            conn.execute("DELETE FROM molde_planilha WHERE chave = ?", (r[0],))
+    conn.commit()
+
+
 def listar_molde(conn):
     """
     Retorna todas as colunas do molde, ordenadas por ordem global.
