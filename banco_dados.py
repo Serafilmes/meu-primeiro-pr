@@ -2177,10 +2177,21 @@ def adicionar_item_lista(conn, tipo, valor):
         sqlite3.IntegrityError: se já existir (tipo, valor) idêntico.
     """
     tipo = (tipo or "").strip().lower()
-    if tipo not in TIPOS_LISTA_CONTEXTO:
-        raise ValueError(
-            f"Tipo '{tipo}' inválido. Use: {', '.join(sorted(TIPOS_LISTA_CONTEXTO))}"
-        )
+    # O tipo precisa ser uma chave de grupo cadastrada (fonte de verdade dinâmica,
+    # s33). Cai no conjunto fixo só se a tabela de grupos ainda não existir.
+    try:
+        existe = conn.execute(
+            "SELECT 1 FROM grupos_classificacao WHERE chave = ?", (tipo,)
+        ).fetchone()
+        if existe is None:
+            validos = [r[0] for r in conn.execute(
+                "SELECT chave FROM grupos_classificacao ORDER BY ordem")]
+            raise ValueError(f"Tipo '{tipo}' inválido. Use: {', '.join(validos)}")
+    except sqlite3.OperationalError:
+        if tipo not in TIPOS_LISTA_CONTEXTO:
+            raise ValueError(
+                f"Tipo '{tipo}' inválido. Use: {', '.join(sorted(TIPOS_LISTA_CONTEXTO))}"
+            )
 
     valor = (valor or "").strip()
     if not valor:

@@ -2930,15 +2930,16 @@ def _bloco_classificacao_ficha(chips_selecionados, eh_operador=False):
     try:
         conn = bd.obter_conexao()
         itens = bd.listar_itens_lista(conn, apenas_ativos=True)
+        grupos = bd.listar_grupos(conn, apenas_ativos=True)
         conn.close()
     except Exception as erro:
         logger.error(f"FICHA | Erro ao carregar listas de contexto | {erro}")
         return ""
 
-    if not itens:
+    if not grupos:
         return ""
 
-    # Agrupa por tipo, preservando a ordem oficial de exibição.
+    # Agrupa os itens por tipo (= chave do grupo).
     por_tipo = {}
     for it in itens:
         por_tipo.setdefault(it["tipo"], []).append(it)
@@ -2946,12 +2947,17 @@ def _bloco_classificacao_ficha(chips_selecionados, eh_operador=False):
     sel = {str(s) for s in (chips_selecionados or set())}
 
     blocos = []
-    for tipo in bd.ORDEM_TIPOS_LISTA:
-        lista = por_tipo.get(tipo)
-        if not lista:
+    # Itera os GRUPOS ativos do banco (não mais a lista fixa) — Fatia 2 (s33).
+    # Cada grupo traz seu rótulo e sua regra única/múltipla. Um grupo sem itens
+    # ainda aparece para o operador (que pode criar via "+ novo"); no acesso
+    # remoto (profissional), grupos vazios são omitidos.
+    for g in grupos:
+        tipo = g["chave"]
+        lista = por_tipo.get(tipo, [])
+        if not lista and not eh_operador:
             continue
-        rotulo = bd.ROTULOS_LISTA_CONTEXTO.get(tipo, tipo.title())
-        unico = tipo in CLASSIF_UNICA
+        rotulo = g["rotulo"]
+        unico = not g["multipla"]
         # data-grupo só nos grupos de escolha única (o JS usa para desmarcar irmãos).
         grupo_attr = tipo if unico else ""
         chips_html = ""
