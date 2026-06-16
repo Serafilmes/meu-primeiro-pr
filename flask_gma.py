@@ -1349,7 +1349,7 @@ CSS_ABAS = """
 
 def barra_abas(ativa):
     """Barra de navegação entre as telas.
-    'ativa' = ficha|operacao|kanban|planilha|profissionais|listas"""
+    'ativa' = ficha|operacao|kanban|planilha|molde|profissionais|listas"""
     def classe(nome):
         return "aba ativa" if nome == ativa else "aba"
     return f"""
@@ -1958,7 +1958,7 @@ def molde_planilha():
     _garantir_molde()
     if not BANCO_DISPONIVEL:
         corpo = "<p class='vazio'>Banco de dados indisponível.</p>"
-        return _pagina("Configurar Colunas", "planilha", corpo), 200, {"Content-Type": "text/html; charset=utf-8"}
+        return _pagina("Configurar Colunas", "molde", corpo), 200, {"Content-Type": "text/html; charset=utf-8"}
 
     try:
         conn = bd.obter_conexao()
@@ -2096,7 +2096,7 @@ def molde_planilha():
     {secoes_html}
     {form_nova}"""
 
-    return _pagina("Configurar Colunas", "planilha", corpo), 200, {"Content-Type": "text/html; charset=utf-8"}
+    return _pagina("Configurar Colunas", "molde", corpo), 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
 @app.route("/molde/<chave>/visivel", methods=["POST"])
@@ -2270,6 +2270,17 @@ CSS_FICHA = """
     .chip input { position:absolute; opacity:0; width:0; height:0; margin:0; }
     .chip.sel { background:#1D9E75; border-color:#1D9E75; color:#fff; font-weight:600; }
     .chip-vazio { font-size:0.84em; color:#adb5bd; font-style:italic; }
+    .chip-acao  { margin-top:5px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+    .chip-btn-novo { background:none; border:1px dashed #ced4da; border-radius:12px;
+        padding:3px 10px; font-size:0.8em; color:#6c757d; cursor:pointer; }
+    .chip-btn-novo:hover { border-color:#1D9E75; color:#1D9E75; }
+    .chip-novo-form { display:inline-flex; align-items:center; gap:4px; }
+    .chip-novo-input { border:1px solid #1D9E75; border-radius:12px; padding:3px 10px;
+        font-size:0.85em; outline:none; width:160px; }
+    .chip-novo-ok, .chip-novo-cancel { background:none; border:none; cursor:pointer;
+        font-size:1em; padding:0 4px; }
+    .chip-novo-ok { color:#1D9E75; font-weight:700; }
+    .chip-novo-cancel { color:#adb5bd; }
 """
 
 # JS dos chips: torna o chip clicável (pinta quando marcado) e aplica escolha
@@ -2292,6 +2303,117 @@ JS_CHIPS = """
       pinta(lbl);
     });
   });
+})();
+</script>"""
+
+JS_CHIP_NOVO = """
+<script>
+(function(){
+  // Abre/fecha o mini-formulário de "+ novo"
+  document.querySelectorAll('.chip-btn-novo').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var tipo = btn.getAttribute('data-tipo');
+      var form = document.getElementById('novo-form-' + tipo);
+      var inp  = document.getElementById('novo-input-' + tipo);
+      btn.style.display = 'none';
+      form.style.display = 'inline-flex';
+      if (inp) inp.focus();
+    });
+  });
+
+  // Cancelar
+  document.querySelectorAll('.chip-novo-cancel').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var tipo = btn.getAttribute('data-tipo');
+      fecharNovo(tipo);
+    });
+  });
+
+  // Confirmar (botão ✓ ou Enter no campo)
+  document.querySelectorAll('.chip-novo-ok').forEach(function(btn){
+    btn.addEventListener('click', function(){ criarNovo(btn); });
+  });
+  document.querySelectorAll('.chip-novo-input').forEach(function(inp){
+    inp.addEventListener('keydown', function(e){
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        var tipo = inp.id.replace('novo-input-', '');
+        var ok = document.querySelector('.chip-novo-ok[data-tipo="' + tipo + '"]');
+        if (ok) criarNovo(ok);
+      }
+      if (e.key === 'Escape') {
+        var tipo = inp.id.replace('novo-input-', '');
+        fecharNovo(tipo);
+      }
+    });
+  });
+
+  function fecharNovo(tipo){
+    var form = document.getElementById('novo-form-' + tipo);
+    var inp  = document.getElementById('novo-input-' + tipo);
+    var btn  = document.querySelector('.chip-btn-novo[data-tipo="' + tipo + '"]');
+    if (inp)  inp.value = '';
+    if (form) form.style.display = 'none';
+    if (btn)  btn.style.display = '';
+  }
+
+  function criarNovo(okBtn){
+    var tipo  = okBtn.getAttribute('data-tipo');
+    var grupo = okBtn.getAttribute('data-grupo');
+    var inp   = document.getElementById('novo-input-' + tipo);
+    var valor = (inp ? inp.value : '').trim();
+    if (!valor) { if (inp) inp.focus(); return; }
+
+    okBtn.disabled = true;
+    var fd = new FormData();
+    fd.append('tipo',  tipo);
+    fd.append('valor', valor);
+
+    fetch('/listas/criar-inline', { method: 'POST', body: fd })
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        if (!data.ok) {
+          alert(data.erro || 'Erro ao criar item.');
+          okBtn.disabled = false;
+          return;
+        }
+        // Cria o chip dinamicamente e o marca como selecionado
+        var linha = document.getElementById('chip-linha-' + tipo);
+        if (linha) {
+          var lbl = document.createElement('label');
+          lbl.className = 'chip sel';
+          if (grupo) lbl.setAttribute('data-grupo', grupo);
+          var chk = document.createElement('input');
+          chk.type = 'checkbox';
+          chk.name = 'chip';
+          chk.value = String(data.id);
+          chk.checked = true;
+          // Se escolha única, desmarca irmãos
+          if (grupo) {
+            document.querySelectorAll('.chip[data-grupo="' + grupo + '"] input').forEach(function(o){
+              o.checked = false;
+              o.closest('.chip').classList.remove('sel');
+            });
+          }
+          lbl.appendChild(chk);
+          lbl.appendChild(document.createTextNode(data.valor));
+          // Re-aplica listener do JS_CHIPS
+          chk.addEventListener('change', function(){
+            var g = lbl.getAttribute('data-grupo');
+            if (g && chk.checked) {
+              document.querySelectorAll('.chip[data-grupo="' + g + '"] input').forEach(function(o){
+                if (o !== chk) { o.checked = false; o.closest('.chip').classList.remove('sel'); }
+              });
+            }
+            lbl.classList.toggle('sel', chk.checked);
+          });
+          linha.appendChild(lbl);
+        }
+        fecharNovo(tipo);
+        okBtn.disabled = false;
+      })
+      .catch(function(){ alert('Erro de conexão.'); okBtn.disabled = false; });
+  }
 })();
 </script>"""
 
@@ -2700,7 +2822,7 @@ def _fichas_recentes_html(limite=12):
     </div>"""
 
 
-def _bloco_classificacao_ficha(chips_selecionados):
+def _bloco_classificacao_ficha(chips_selecionados, eh_operador=False):
     """
     Monta o bloco de CLASSIFICAÇÃO da ficha: chips clicáveis montados a partir das
     listas de contexto ATIVAS (palco, marca, pauta, serviço, tags), que o operador
@@ -2757,9 +2879,25 @@ def _bloco_classificacao_ficha(chips_selecionados):
                 f'{_esc(it["valor"])}</label>'
             )
         dica = "" if unico else ' <span class="ajuda">(pode marcar várias)</span>'
+        # Botão "+ novo" — só para o operador (acesso local). O profissional
+        # de captação (acesso remoto) só escolhe; nunca vê a opção de criar.
+        btn_novo = ""
+        if eh_operador:
+            btn_novo = (
+                f'<button type="button" class="chip-btn-novo" data-tipo="{tipo}" '
+                f'title="Criar novo item em {_esc(rotulo)}">+ novo</button>'
+                f'<span class="chip-novo-form" id="novo-form-{tipo}" style="display:none">'
+                f'<input type="text" class="chip-novo-input" id="novo-input-{tipo}" '
+                f'placeholder="nome do item…" maxlength="60" autocomplete="off">'
+                f'<button type="button" class="chip-novo-ok" data-tipo="{tipo}" '
+                f'data-grupo="{grupo_attr}">✓</button>'
+                f'<button type="button" class="chip-novo-cancel" data-tipo="{tipo}">✕</button>'
+                f'</span>'
+            )
         blocos.append(
             f'<div class="chip-bloco"><div class="chip-rotulo">{_esc(rotulo)}{dica}</div>'
-            f'<div class="chip-linha">{chips_html}</div></div>'
+            f'<div class="chip-linha" id="chip-linha-{tipo}">{chips_html}</div>'
+            f'<div class="chip-acao">{btn_novo}</div></div>'
         )
 
     if not blocos:
@@ -2819,7 +2957,8 @@ def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
     bloco_tipo_nome = _bloco_tipo_nome_ficha(d, trava, profissionais)
 
     # Monta o bloco CLASSIFICAÇÃO (chips das listas de contexto) — ponte chips→ficha.
-    bloco_classificacao = _bloco_classificacao_ficha(chips_selecionados)
+    bloco_classificacao = _bloco_classificacao_ficha(chips_selecionados,
+                                                     eh_operador=_host_local())
 
     corpo = f"""
     <p class="legenda">{legenda}</p>
@@ -2875,7 +3014,7 @@ def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
     </form>
     {_fichas_recentes_html() if (mostrar_recentes and not editando) else ''}"""
 
-    head_extra = f"<style>{CSS_FICHA}</style>{JS_CHIPS}"
+    head_extra = f"<style>{CSS_FICHA}</style>{JS_CHIPS}{JS_CHIP_NOVO}"
     titulo = "Editar ficha" if editando else "Nova Ficha"
     return _pagina(titulo, "ficha", corpo, head_extra)
 
@@ -4029,6 +4168,57 @@ def listas_excluir(item_id):
 
     logger.info(f"LISTAS | id={item_id} EXCLUÍDO")
     return redirect("/listas")
+
+
+@app.route("/listas/criar-inline", methods=["POST"])
+def listas_criar_inline():
+    """
+    Cria um item de lista de contexto inline, direto da ficha (AJAX).
+
+    Só acessível localmente (operador na base). O profissional de captação
+    acessa a ficha remotamente e nunca vê este botão nem esta rota.
+
+    Recebe: tipo (palco/marca/pauta/servico/tag) + valor (texto do item).
+    Devolve JSON: {ok, id, valor} em sucesso ou {ok: false, erro} em falha.
+    """
+    # Dupla proteção: portão já bloquearia remoto, mas garantimos aqui também.
+    if not _host_local():
+        return jsonify({"ok": False, "erro": "Acesso restrito ao operador."}), 403
+
+    if not BANCO_DISPONIVEL:
+        return jsonify({"ok": False, "erro": "Banco indisponível."}), 503
+
+    tipo  = (request.form.get("tipo")  or "").strip().lower()
+    valor = (request.form.get("valor") or "").strip()
+
+    if not tipo or not valor:
+        return jsonify({"ok": False, "erro": "Tipo e valor são obrigatórios."}), 400
+
+    try:
+        conn = bd.obter_conexao()
+        item = bd.adicionar_item_lista(conn, tipo, valor)
+        conn.close()
+        logger.info(f"LISTAS-INLINE | {tipo} → '{valor}' (id={item['id']})")
+        return jsonify({"ok": True, "id": item["id"], "valor": item["valor"]})
+    except Exception as e:
+        msg = str(e)
+        # Duplicata: item já existe — informa para o operador não criar de novo
+        if "UNIQUE" in msg or "já existe" in msg.lower():
+            # Tenta devolver o id existente para que o chip seja selecionado
+            try:
+                conn = bd.obter_conexao()
+                row = conn.execute(
+                    "SELECT id, valor FROM listas_contexto WHERE tipo=? AND valor=?",
+                    (tipo, valor)
+                ).fetchone()
+                conn.close()
+                if row:
+                    return jsonify({"ok": True, "id": row["id"], "valor": row["valor"]})
+            except Exception:
+                pass
+            return jsonify({"ok": False, "erro": f'"{valor}" já existe nesta lista.'}), 409
+        logger.error(f"LISTAS-INLINE | Erro ao criar {tipo}='{valor}': {e}")
+        return jsonify({"ok": False, "erro": "Erro interno ao criar item."}), 500
 
 
 def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
