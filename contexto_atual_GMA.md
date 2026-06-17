@@ -230,7 +230,7 @@ Candidatos naturais para a próxima sessão:
 
 ## Arquivos com mudanças não commitadas (atenção)
 
-Tudo commitado até a s35. **S36 sem commit** (sugerido commitar): `banco_dados.py` (GMA_DB + programação do dia), `flask_gma.py` (cascata Show + banner + /dia-ativo), `projetos/rock_in_rio/` (seed + carregar_lineup + lineup_2026.json + gma.db do festival), `.claude/launch.json`. Branch: `fatia5-sheets-multiprojeto`. Backup do laboratório em `gma.db.bak_20260617_*`.
+Tudo commitado e enviado ao `origin` até a **S36** (commits `8b0b53e` Rock in Rio + programação do dia, `151047f` Listas colapsável, `2709dd5` fix reordenar grupos). Branch: `fatia5-sheets-multiprojeto`. Backup do laboratório em `gma.db.bak_20260617_*`. Nada solto na árvore de trabalho.
 
 ---
 
