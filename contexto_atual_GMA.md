@@ -36,6 +36,7 @@
   - **Fatia B2 (adicionar show ao dia) CONSTRUÍDA:** controle "+ adicionar show" no bloco Show (só operador) com dropdown de palco → rota `POST /programacao/add-show` cria o show e liga ao dia ativo. Generaliza p/ RIO2C (sala→palestra num dia). Testado.
   - **Ficha mais limpa:** Serviços, Tags e Pautas **desativados** no festival (o idealizador não usa). Lição: **desativar** (ativo=0), não excluir — excluir um grupo de sistema faz o re-seed do boot recriá-lo ativo (o `INSERT OR IGNORE` respeita a linha desativada). Ativos: Palcos · Marcas · Lugares · Momentos · Show.
   - **Marcas reais** lidas do site (com o MCP do Chrome, via screenshot dos logos): Itaú (master) + Heineken, Coca-Cola, Seara, Ipiranga, KitKat, Prudential, TIM, Natura, Doritos, Superbet, iFood, C&A, Volkswagen. (Institucionais = poder público, fora.)
+  - **Aba "Listas" colapsável:** cada grupo tem botão minimizar/expandir + "minimizar/expandir todas"; estado lembrado em `localStorage` (reordenar recarrega a página e mantém o que estava fechado). Deixa a tela limpa e facilita reordenar os grupos (ex.: Show logo após Palcos).
 - **🔶 Observação restante:** o grupo Show aparece no fim da ficha (recriado com `ordem` alta) — ideal seria logo após Palcos; reordenável no painel (ou ajustar no carregador).
 
 ### ✅ Sessão 36 (BUILD) — Projeto-festival "Rock in Rio (teste)" + banco por projeto (Fatia A)

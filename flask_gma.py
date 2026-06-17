@@ -4817,6 +4817,70 @@ def _cabecalho_grupo_html(g, total, em_uso):
     )
 
 
+def _grupo_colapsavel_html(chave, dim, cabecalho, corpo):
+    """
+    Envolve um grupo da aba Listas num bloco colapsável: um botão de minimizar ao
+    lado do cabeçalho e o corpo (tabela/nota) escondível. O estado minimizado é
+    lembrado em localStorage (ver JS_LISTAS_COLAPSAR), então reordenar os grupos
+    — que recarrega a página — mantém minimizado o que estava fechado.
+    """
+    return (
+        f'<div class="grupo-bloco" data-chave="{_esc(chave)}" style="margin-bottom:24px{dim}">'
+        '<div style="display:flex;align-items:flex-start;gap:8px">'
+        '<button type="button" class="grupo-toggle" onclick="gmaToggleGrupo(this)" '
+        'title="Minimizar / expandir" style="background:#fff;border:1px solid #ced4da;'
+        'border-radius:5px;cursor:pointer;font-size:0.8em;line-height:1;padding:6px 9px;'
+        'margin-top:1px;font-family:inherit">▾</button>'
+        f'<div style="flex:1;min-width:0">{cabecalho}</div>'
+        '</div>'
+        f'<div class="grupo-corpo" style="margin-top:8px">{corpo}</div>'
+        '</div>'
+    )
+
+
+# JS da aba Listas: minimizar/expandir grupos, com estado lembrado por localStorage.
+JS_LISTAS_COLAPSAR = """
+<script>
+(function(){
+  var KEY = 'gma_listas_minimizados';
+  function lerSet(){ try { return new Set(JSON.parse(localStorage.getItem(KEY) || '[]')); } catch(e){ return new Set(); } }
+  function salvar(s){ try { localStorage.setItem(KEY, JSON.stringify(Array.from(s))); } catch(e){} }
+  function aplicar(bloco, min){
+    var corpo = bloco.querySelector('.grupo-corpo');
+    var btn = bloco.querySelector('.grupo-toggle');
+    if (corpo) corpo.style.display = min ? 'none' : '';
+    if (btn) btn.textContent = min ? '▸' : '▾';  // ▸ / ▾
+  }
+  window.gmaToggleGrupo = function(btn){
+    var bloco = btn.closest('.grupo-bloco'); if (!bloco) return;
+    var corpo = bloco.querySelector('.grupo-corpo');
+    var min = corpo.style.display !== 'none';
+    aplicar(bloco, min);
+    var s = lerSet(), c = bloco.getAttribute('data-chave');
+    if (min) s.add(c); else s.delete(c);
+    salvar(s);
+  };
+  window.gmaTodasGrupos = function(min){
+    var s = lerSet();
+    document.querySelectorAll('.grupo-bloco').forEach(function(b){
+      aplicar(b, min);
+      var c = b.getAttribute('data-chave');
+      if (min) s.add(c); else s.delete(c);
+    });
+    salvar(s);
+  };
+  function init(){
+    var s = lerSet();
+    document.querySelectorAll('.grupo-bloco').forEach(function(b){
+      if (s.has(b.getAttribute('data-chave'))) aplicar(b, true);
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+</script>"""
+
+
 def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
     """
     Renderiza a aba de Listas de Contexto.
@@ -4871,13 +4935,13 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
         # ficha. Mostra só uma nota no lugar da tabela.
         if g.get("modo") == "texto":
             dim = ";opacity:0.55" if not g["ativo"] else ""
-            blocos_grupos += (
-                f'<div style="margin-bottom:28px{dim}">{cabecalho_grupo}'
+            corpo_grupo = (
                 '<p style="color:#adb5bd;font-size:0.85em;background:#fff;border-radius:8px;'
                 'padding:12px 16px;box-shadow:0 1px 4px rgba(0,0,0,0.08);margin:0">'
                 'Grupo de preenchimento — o profissional escreve o valor na ficha '
-                '(ex.: nome do entrevistado). Não tem itens a cadastrar aqui.</p></div>'
+                '(ex.: nome do entrevistado). Não tem itens a cadastrar aqui.</p>'
             )
+            blocos_grupos += _grupo_colapsavel_html(tipo, dim, cabecalho_grupo, corpo_grupo)
             continue
 
         # Monta as linhas da tabela deste grupo
@@ -4948,9 +5012,7 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
                     </td>
                 </tr>"""
 
-        blocos_grupos += f"""
-        <div style="margin-bottom:28px{';opacity:0.55' if not g['ativo'] else ''}">
-            {cabecalho_grupo}
+        corpo_grupo = f"""
             <table style="width:100%;border-collapse:collapse;background:#fff;
                           border-radius:8px;overflow:hidden;
                           box-shadow:0 1px 4px rgba(0,0,0,0.08);font-size:0.88em">
@@ -4978,8 +5040,9 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
                 <tbody>
                     {linhas_tipo}
                 </tbody>
-            </table>
-        </div>"""
+            </table>"""
+        dim = ";opacity:0.55" if not g['ativo'] else ""
+        blocos_grupos += _grupo_colapsavel_html(tipo, dim, cabecalho_grupo, corpo_grupo)
 
     # ── Bloco de erro (POST com problema) ─────────────────────────────────────
     bloco_erro = ""
@@ -5020,6 +5083,16 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
                 da lista — nunca digita livremente. Itens desativados preservam o
                 histórico mas somem das próximas fichas.
             </p>
+            <div style="display:flex;gap:8px;margin-bottom:16px">
+                <button type="button" onclick="gmaTodasGrupos(true)"
+                        style="background:#fff;border:1px solid #ced4da;border-radius:5px;
+                               padding:5px 11px;font-size:0.82em;cursor:pointer;font-family:inherit">
+                    ▸ minimizar todas</button>
+                <button type="button" onclick="gmaTodasGrupos(false)"
+                        style="background:#fff;border:1px solid #ced4da;border-radius:5px;
+                               padding:5px 11px;font-size:0.82em;cursor:pointer;font-family:inherit">
+                    ▾ expandir todas</button>
+            </div>
             {bloco_aviso}
             {blocos_grupos}
         </div>
@@ -5130,7 +5203,7 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
         </div><!-- fim da coluna de formulários -->
     </div>"""
 
-    return _pagina("Listas de Contexto", "listas", corpo)
+    return _pagina("Listas de Contexto", "listas", corpo, JS_LISTAS_COLAPSAR)
 
 
 # ── TRATAMENTO DE ERROS GLOBAIS ───────────────────────────────────────────────
