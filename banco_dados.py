@@ -2852,6 +2852,226 @@ def excluir_coluna_custom(conn, chave):
     return "excluido"
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Montador da Planilha de Entrega — FONTE ÚNICA das colunas e dos valores
+# ─────────────────────────────────────────────────────────────────────────────
+# Tanto a /planilha local (Flask, em HTML) quanto o exportador do Google Sheets
+# (exportador_sheets.py, em texto puro) montam a planilha A PARTIR DAQUI. Assim
+# os dois NUNCA divergem: criar um grupo, renomear uma coluna ou ligar/desligar
+# uma coluna no Molde reflete automaticamente nos dois lugares.
+#
+# CATALOGO_PLANILHA define as colunas FIXAS do sistema (identificação · técnicas ·
+# pós-produção). As colunas de CLASSIFICAÇÃO não estão aqui — são geradas dos
+# grupos editáveis (uma coluna chip_<chave> por grupo), via sincronizar_colunas_grupos.
+#
+# tipo_render:
+#   "especial" — coluna Profissional (nome + 2º nome de áudio)
+#   "chip"     — lê de chips_por_formulario (campo = chave do grupo, modo lista)
+#   "texto"    — lê de textos_por_formulario (campo = chave do grupo, modo texto livre)
+#   "n_arq"    — total_arquivos_transferidos (fallback "—")
+#   "tamanho"  — bytes → texto legível
+#   "dado"     — campo SQL direto; campo=None → sempre "—"
+CATALOGO_PLANILHA = [
+    # chave            rótulo           bloco            tipo        campo                          vis
+    ("prof_nome",    "Profissional",  "identificacao", "especial", "prof_nome",                    1),
+    ("marca_camera", "Câmera",        "identificacao", "dado",     "marca_camera",                 1),
+    ("tipo_material","Tipo",          "identificacao", "dado",     "tipo_material",                 1),
+    ("data_gravacao","Data",          "identificacao", "dado",     "data_gravacao",                 1),
+    ("numero_cartao","Nº cartão",     "identificacao", "dado",     "numero_cartao",                 1),
+    ("n_arquivos",   "Nº arquivos",   "tecnicas",      "n_arq",    "total_arquivos_transferidos",   1),
+    ("tamanho",      "Tamanho",       "tecnicas",      "tamanho",  "tamanho_transferido_bytes",     1),
+    ("status",       "Status",        "tecnicas",      "dado",     "status",                        1),
+    ("destino_pasta","Caminho no HD", "tecnicas",      "dado",     "destino_pasta",                 1),
+    ("pos_editor",   "Editor",        "pos_producao",  "dado",     None,                            0),
+    ("pos_edicao",   "Edição",        "pos_producao",  "dado",     None,                            0),
+    ("pos_upload",   "Upload",        "pos_producao",  "dado",     None,                            0),
+]
+
+_CATALOGO_PLANILHA_IDX = {e[0]: e for e in CATALOGO_PLANILHA}
+
+# Ordem dos blocos (agrupa colunas por bloco mesmo quando criadas depois).
+_RANK_BLOCO_PLANILHA = {b: i for i, b in enumerate(
+    ["identificacao", "classificacao", "tecnicas", "pos_producao", "custom"]
+)}
+
+# Consulta base da planilha. Duas fontes somadas, ordenadas da mais recente:
+#   (1) CARTÕES — material já recebido (com a ficha casada, se houver).
+#   (2) "POST IN" — fichas recebidas que AINDA NÃO têm cartão. Aparecem na hora,
+#       para os editores já verem o material a caminho. Quando o cartão chega e
+#       casa, a ficha passa a ser representada pela linha do cartão (sem duplicar:
+#       o NOT EXISTS exclui da fonte 2 toda ficha que já tem match).
+# Os campos aqui precisam cobrir todos os `campo` referenciados pelo catálogo.
+_SQL_PLANILHA = """
+    SELECT c.id, c.numero_cartao, c.volume, c.marca_camera, c.tipo_material,
+           c.status, c.total_arquivos_transferidos, c.tamanho_transferido_bytes,
+           c.destino_pasta,
+           f.id AS form_id,
+           f.nome AS prof_nome, f.nome_audio AS prof_nome_audio, f.data_gravacao,
+           c.criado_em AS _ordenacao
+    FROM cartoes c
+    LEFT JOIN matches m ON m.id = (
+        SELECT id FROM matches WHERE cartao_id = c.id ORDER BY id DESC LIMIT 1
+    )
+    LEFT JOIN formularios f ON f.id = m.formulario_id
+
+    UNION ALL
+
+    SELECT NULL AS id, NULL AS numero_cartao, NULL AS volume,
+           f.camera AS marca_camera, f.tipo_material AS tipo_material,
+           'Post in' AS status, NULL AS total_arquivos_transferidos,
+           NULL AS tamanho_transferido_bytes, NULL AS destino_pasta,
+           f.id AS form_id,
+           f.nome AS prof_nome, f.nome_audio AS prof_nome_audio, f.data_gravacao,
+           f.recebido_em AS _ordenacao
+    FROM formularios f
+    WHERE NOT EXISTS (SELECT 1 FROM matches m WHERE m.formulario_id = f.id)
+
+    ORDER BY _ordenacao DESC
+"""
+
+
+def _fmt_tamanho_planilha(num_bytes):
+    """Bytes → texto legível (B/KB/MB/GB/TB). Mesma regra da /planilha do Flask."""
+    try:
+        tamanho = float(num_bytes or 0)
+    except (TypeError, ValueError):
+        return "—"
+    if tamanho <= 0:
+        return "—"
+    for unidade in ("B", "KB", "MB", "GB", "TB"):
+        if tamanho < 1024:
+            return f"{tamanho:.1f} {unidade}"
+        tamanho /= 1024
+    return f"{tamanho:.1f} PB"
+
+
+def sincronizar_molde_completo(conn):
+    """Garante o molde em dia: colunas do sistema (catálogo) + colunas dos grupos.
+
+    Idempotente e barato. Chamado antes de montar a planilha, para refletir grupos
+    criados/renomeados/excluídos depois do boot.
+    """
+    sincronizar_catalogo_molde(conn, CATALOGO_PLANILHA)
+    sincronizar_colunas_grupos(conn)
+
+
+def colunas_planilha(conn):
+    """Colunas VISÍVEIS da planilha, na ordem, enriquecidas com tipo_render e campo.
+
+    Fonte única usada pela /planilha (Flask) e pelo exportador do Sheets. Uma coluna
+    de grupo (chip_<chave>) só entra se o grupo estiver ATIVO; o modo do grupo decide
+    se a célula lê chips (lista) ou texto livre.
+
+    Se o banco ainda não tem as tabelas de molde/grupos, cai para o catálogo do
+    sistema (colunas fixas), nunca quebra.
+
+    Returns:
+        Lista de dicts: chave · rotulo · bloco · ordem · visivel · sistema ·
+        tipo_render · campo.
+    """
+    try:
+        sincronizar_molde_completo(conn)
+        cols = listar_molde_visivel(conn)
+        grupos_ativos = {g["chave"]: g for g in listar_grupos(conn, apenas_ativos=True)}
+    except sqlite3.OperationalError:
+        return [
+            {"chave": e[0], "rotulo": e[1], "bloco": e[2], "ordem": i,
+             "visivel": True, "sistema": True, "tipo_render": e[3], "campo": e[4]}
+            for i, e in enumerate(CATALOGO_PLANILHA) if e[5]
+        ]
+
+    resultado = []
+    for c in cols:
+        chave = c["chave"]
+        if chave.startswith("chip_"):
+            # Coluna de grupo: só entra se o grupo estiver ativo.
+            grupo_chave = chave[len("chip_"):]
+            g = grupos_ativos.get(grupo_chave)
+            if not g:
+                continue
+            c["tipo_render"] = "texto" if g.get("modo") == "texto" else "chip"
+            c["campo"] = grupo_chave
+        else:
+            cat = _CATALOGO_PLANILHA_IDX.get(chave)
+            c["tipo_render"] = cat[3] if cat else "dado"
+            c["campo"] = cat[4] if cat else None
+        resultado.append(c)
+
+    resultado.sort(key=lambda c: (_RANK_BLOCO_PLANILHA.get(c["bloco"], 99), c["ordem"]))
+    return resultado
+
+
+def valor_celula_planilha(col, linha, chips, textos=None):
+    """Valor de UMA célula em TEXTO PURO (sem HTML).
+
+    Usado direto pelo exportador do Sheets; a /planilha do Flask embrulha em HTML.
+
+    Args:
+        col:    dict de colunas_planilha (tem tipo_render e campo).
+        linha:  sqlite3.Row da consulta de planilha (_SQL_PLANILHA).
+        chips:  lista de chips desta ficha (chips_por_formulario).
+        textos: {grupo_chave: [valores]} desta ficha (textos_por_formulario).
+    """
+    tipo = col.get("tipo_render", "dado")
+    campo = col.get("campo")
+
+    if tipo == "especial":  # Profissional (nome + 2º nome de áudio)
+        prof = linha["prof_nome"]
+        if not prof and linha["numero_cartao"]:
+            prof = linha["numero_cartao"].rsplit("_", 1)[0]
+        val = prof or "—"
+        if linha["prof_nome_audio"]:
+            val += f" + {linha['prof_nome_audio']} (áudio)"
+        return val
+
+    if tipo == "chip":
+        vals = [c["valor"] for c in chips if c["tipo"] == campo]
+        return " · ".join(vals) if vals else "—"
+
+    if tipo == "texto":  # grupo de preenchimento livre
+        vals = (textos or {}).get(campo, [])
+        return " · ".join(vals) if vals else "—"
+
+    if tipo == "n_arq":
+        v = linha["total_arquivos_transferidos"]
+        return str(v) if v is not None else "—"
+
+    if tipo == "tamanho":
+        return _fmt_tamanho_planilha(linha["tamanho_transferido_bytes"])
+
+    # tipo == "dado" (campo SQL direto)
+    if not campo:
+        return "—"
+    try:
+        v = linha[campo]
+        return str(v) if v not in (None, "") else "—"
+    except (IndexError, KeyError):
+        return "—"
+
+
+def montar_planilha(conn):
+    """Monta a Planilha de Entrega inteira em TEXTO PURO (para o Google Sheets).
+
+    Returns:
+        (colunas, linhas):
+          colunas — lista de dicts de colunas_planilha (cabeçalho = rotulo de cada).
+          linhas  — lista de listas de strings, já na ordem das colunas.
+    """
+    colunas = colunas_planilha(conn)
+    rows = conn.execute(_SQL_PLANILHA).fetchall()
+
+    form_ids = [r["form_id"] for r in rows if r["form_id"]]
+    chips_map = chips_por_formulario(conn, form_ids) if form_ids else {}
+    textos_map = textos_por_formulario(conn, form_ids) if form_ids else {}
+
+    linhas = []
+    for r in rows:
+        chips = chips_map.get(r["form_id"], [])
+        textos = textos_map.get(r["form_id"], {})
+        linhas.append([valor_celula_planilha(c, r, chips, textos) for c in colunas])
+    return colunas, linhas
+
+
 # ── PONTO DE ENTRADA (INICIALIZAÇÃO DIRETA) ───────────────────────────────────
 
 if __name__ == "__main__":

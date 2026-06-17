@@ -109,6 +109,41 @@ Tudo isto é responsabilidade da plataforma (não das camadas operacionais, que 
 - **Fronteira:** lógica (match, cópia, banco, liberação, análise) continua das camadas 1–4/6;
   **orquestração, janelas, tempo real, acesso por papel, túnel e despacho** são da C5.
 
+### 1.3. PAINEL DE CONTROLE do sistema + troca de projeto/usuário AO VIVO (idealizador, sessão 34, 2026-06-16)
+
+Refinamento importante da §1.1.A. Ao desenhar a Fatia 5 (Sheets dinâmico + multi-projeto), o
+idealizador detalhou como imagina a troca de projeto — e isso **muda o mecanismo** (não o
+princípio de isolamento):
+
+- **Não desligar para trocar de projeto.** A §1.1.A dizia "cada evento = nova instância" (na
+  prática, reabrir/reiniciar). O idealizador prefere **trocar o projeto ativo AO VIVO**, com o
+  sistema rodando. O **isolamento continua sagrado** (cada projeto = sua pasta, seu `gma.db`, sua
+  planilha Google, contadores/perfis próprios) — o que muda é que a troca vira uma **operação do
+  painel**, não um reinício do programa.
+- **Troca de projeto é AÇÃO PRIVILEGIADA (usuário + senha).** Mudar de projeto exige autenticação
+  sempre — é mudança estrutural. O mesmo vale para **trocar de usuário ao vivo** (login/logout com
+  senha). Isto **unifica três coisas** que estavam soltas: login do operador (a "2.3" adiada da
+  ficha), troca de projeto e troca de usuário → todas são "ações estruturais protegidas".
+- **Painel de Controle visual = a config externa virando UI.** Hoje a config por máquina/evento é
+  arquivo na unha (`.env`, `evento.toml`, §2/§3). A visão é um **painel** com todos os acessos:
+  **direcionamento das pastas** (origem/destino), **integrações** (Google Sheets, Tally/Forms,
+  IA), e **ajustes de sistema/máquina(s)**. O operador configura clicando, não editando texto.
+- **Cada projeto cria a sua pasta sozinho.** Ao abrir um projeto novo no painel, o sistema
+  **cria automaticamente** a pasta isolada daquele trabalho dentro da estrutura (casando com a
+  separação cérebro/config/**dados** da §3 e com "banco próprio por trabalho" da §1.1.A) — o
+  operador não cria pastas à mão.
+
+**Reconciliação com o que já estava decidido:** mantém §1.1.A (isolamento total, perfis zeram por
+evento) e §1.1.B (acesso por papel/credencial); **evolui** o "trocar = reiniciar" para "trocar =
+operação autenticada do painel, sem derrubar o sistema". Continua sendo **configuração, não
+recompilação**.
+
+**Posição no roteiro:** é peça GRANDE da C5 (toca config externa, §3, acesso por papel e o
+empacotamento). Entra junto da Fase 1/2 do roteiro (§4), **depois** dos pré-requisitos do §7
+(rodar 2–3 cartões simultâneos + alinhamentos). **Não construir agora** — registrado para nascer
+certo. A parte da Fatia 5 que **não depende** disto (Sheets dinâmico — colunas do molde+grupos
+espelhadas na nuvem) **já foi construída na sessão 34** (Camada 3), independente do painel.
+
 ---
 
 ## 2. Decisão de stack (justificada)
@@ -255,6 +290,8 @@ Outros já mapeados (dívidas que a C5 deve carregar):
 - Migrar o painel de Operação para ler do banco (hoje lê filas JSON).
 - Refinar informações/colunas das telas (Kanban e Planilha) — pendência da sessão 19.
 - **Multi-projeto por trabalho** (seção 1.1.A) — "novo projeto do zero" como configuração externa.
+- **PAINEL DE CONTROLE + troca de projeto/usuário ao vivo** (seção 1.3) — config externa virando
+  UI; trocar projeto/usuário sem desligar, com usuário+senha; pasta por projeto criada sozinha.
 - **Papel SUPERVISÃO remoto** (seção 1.1.B) — 2º link read-only de monitoramento, escopo por papel.
 - **QR code do link da ficha + janela de status do câmera** (seção 1.1.B) — desenhar juntos.
 
@@ -281,3 +318,8 @@ Outros já mapeados (dívidas que a C5 deve carregar):
   ~2,2M–4,5M tokens), modelo de **configuração externa**, **ampliação de escopo** (§1.2:
   janelas/SSE/2º monitor/porta de IA) e **segurança/licenciamento** (§6.1). Perfis **zeram por
   evento** (§1.1.A); distribuição p/ terceiros **indecisa**. Segue em PLANEJAMENTO.
+- **Sessão 34 (2026-06-16):** o idealizador detalhou o **Painel de Controle** e a **troca de
+  projeto/usuário ao vivo** (§1.3) — refina a §1.1.A (trocar = operação autenticada do painel, não
+  reinício). Registrado para construir junto da Fase 1/2, depois dos pré-requisitos do §7. Segue em
+  PLANEJAMENTO. A parte da Fatia 5 independente do painel (**Sheets dinâmico**) foi construída na
+  Camada 3 nesta sessão.

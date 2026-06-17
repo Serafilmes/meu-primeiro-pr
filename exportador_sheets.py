@@ -44,26 +44,10 @@ RAIZ_GMA = "/Users/serafa/GMA"
 # Intervalo entre tentativas de sincronização (segundos)
 INTERVALO_SYNC = 60
 
-# Colunas exportadas para o Sheets (cabeçalho — 26 colunas)
-# Ordem: identificação → classificação (Camada 1, inclui os chips) →
-#        status/integridade (Camada 2) → timestamps.
-# Mantém a MESMA ordem/blocos da planilha local (/planilha do Flask).
-CABECALHO = [
-    "ID", "Cartão", "Profissional", "Câmera", "Modelo Câmera",
-    "Tipo", "Tipo Conteúdo", "Local / Cena",
-    # Classificação por chips (listas de contexto) — ponte chips→ficha→planilha (s32)
-    "Palco", "Marca", "Pauta", "Serviço", "Tags",
-    "Data Gravação", "Prioridade",
-    "Status", "Arquivos", "Tamanho", "Falhos", "Avisos",
-    "Início Cópia", "Fim Cópia", "Pasta Destino",
-    "Obs. Operador", "Obs. Formulário", "Criado em"
-]
-
-
-def _valores_chip_texto(chips, tipo):
-    """Junta os valores de um tipo de chip (palco/marca/pauta/servico/tag) em texto
-    puro para a célula do Sheets. Devolve '' quando não houver."""
-    return " · ".join(c["valor"] for c in chips if c["tipo"] == tipo)
+# As COLUNAS são DINÂMICAS (s34 — Fatia 5): vêm do mesmo montador que a /planilha
+# local (banco_dados.montar_planilha), refletindo o Molde + os grupos editáveis.
+# Criar/renomear/ligar/desligar uma coluna ou um grupo aparece aqui automaticamente,
+# sem mexer neste arquivo. O Sheets é espelho FIEL da /planilha do Flask.
 
 # ── LOG ────────────────────────────────────────────────────────────────────────
 
@@ -186,89 +170,6 @@ def _tem_internet(host="www.google.com", porta=443, timeout=5):
         return False
 
 
-# ── LEITURA DO BANCO ───────────────────────────────────────────────────────────
-
-def _ler_dados_do_banco(conn):
-    """
-    Consulta o banco e retorna uma lista de listas pronta para escrita no Sheets.
-    Cada lista interna = uma linha (um cartão).
-    """
-    cursor = conn.execute("""
-        SELECT
-            c.id,
-            c.numero_cartao,
-            f.id                                               AS form_id,
-            COALESCE(f.nome, '—')                              AS nome,
-            COALESCE(f.camera, '—')                            AS camera,
-            COALESCE(f.modelo_camera, '')                      AS modelo_camera,
-            COALESCE(f.tipo_material, c.tipo_material, '—')   AS tipo_material,
-            COALESCE(f.tipo_conteudo, '')                      AS tipo_conteudo,
-            COALESCE(f.local_cena, '')                         AS local_cena,
-            COALESCE(f.data_gravacao, '—')                     AS data_gravacao,
-            COALESCE(f.prioridade, 'NORMAL')                   AS prioridade,
-            c.status,
-            COALESCE(c.total_arquivos_transferidos, 0)         AS total_arquivos,
-            COALESCE(c.tamanho_transferido_bytes, 0)           AS tamanho_bytes,
-            COALESCE(c.total_falhos, 0)                        AS falhos,
-            COALESCE(c.total_avisos, 0)                        AS avisos,
-            COALESCE(c.transferencia_timestamp_inicio, '')     AS inicio,
-            COALESCE(c.transferencia_timestamp_fim, '')        AS fim,
-            COALESCE(c.destino_pasta, '')                      AS destino,
-            COALESCE(c.observacoes, '')                        AS obs_operador,
-            COALESCE(f.observacoes, '')                        AS obs_form,
-            c.criado_em
-        FROM cartoes c
-        LEFT JOIN matches m    ON m.cartao_id    = c.id
-        LEFT JOIN formularios f ON f.id          = m.formulario_id
-        ORDER BY c.id
-    """)
-
-    registros = cursor.fetchall()
-
-    # Busca a classificação por chips de todas as fichas envolvidas (1 query só).
-    form_ids = [r["form_id"] for r in registros if r["form_id"]]
-    chips_map = banco_dados.chips_por_formulario(conn, form_ids) if form_ids else {}
-
-    linhas = []
-    for r in registros:
-        tamanho_fmt = (
-            f"{r['tamanho_bytes'] / 1_073_741_824:.2f} GB"
-            if r["tamanho_bytes"]
-            else "—"
-        )
-        chips = chips_map.get(r["form_id"], [])
-        linhas.append([
-            str(r["id"]),
-            r["numero_cartao"] or "—",
-            r["nome"],
-            r["camera"],
-            r["modelo_camera"],       # modelo específico da câmera
-            r["tipo_material"],
-            r["tipo_conteudo"],       # classificação editorial (B-ROLL, ENTREVISTA...)
-            r["local_cena"],          # local ou cena de gravação
-            _valores_chip_texto(chips, "palco"),    # chips de classificação (s32)
-            _valores_chip_texto(chips, "marca"),
-            _valores_chip_texto(chips, "pauta"),
-            _valores_chip_texto(chips, "servico"),
-            _valores_chip_texto(chips, "tag"),
-            r["data_gravacao"],
-            r["prioridade"],          # nível de urgência do cartão
-            r["status"],
-            str(r["total_arquivos"]),
-            tamanho_fmt,
-            str(r["falhos"]),
-            str(r["avisos"]),
-            r["inicio"],
-            r["fim"],
-            r["destino"],
-            r["obs_operador"],        # notas do operador no painel
-            r["obs_form"],            # observações do profissional no formulário
-            r["criado_em"],
-        ])
-
-    return linhas
-
-
 # ── SINCRONIZAÇÃO COM O SHEETS ─────────────────────────────────────────────────
 
 def _abrir_planilha():
@@ -315,18 +216,20 @@ def sincronizar(conn):
         return False
 
     try:
+        # Monta colunas + linhas a partir da MESMA fonte da /planilha local
+        # (Molde + grupos editáveis). É o que torna o Sheets dinâmico (s34).
+        colunas, linhas = banco_dados.montar_planilha(conn)
+        cabecalho = [c["rotulo"] for c in colunas]
+        n_cols = len(cabecalho)
+        conteudo = [cabecalho] + linhas
+
         planilha = _abrir_planilha()
 
         # Garante que a aba 'GMA' existe (cria se não existir)
         try:
             aba = planilha.worksheet("GMA")
         except Exception:
-            aba = planilha.add_worksheet(title="GMA", rows=2000, cols=len(CABECALHO) + 2)
-
-        linhas = _ler_dados_do_banco(conn)
-
-        # Monta o conteúdo completo: cabeçalho + linhas de dados
-        conteudo = [CABECALHO] + linhas
+            aba = planilha.add_worksheet(title="GMA", rows=2000, cols=n_cols + 4)
 
         # Limpa a aba e reescreve tudo de uma vez (uma única chamada à API).
         # gspread 6.x: update(values, range_name) — usamos argumentos nomeados
@@ -336,9 +239,10 @@ def sincronizar(conn):
             aba.update(values=conteudo, range_name="A1")
 
         # Formata o cabeçalho em negrito
-        aba.format(f"A1:{_coluna_letra(len(CABECALHO))}1", {"textFormat": {"bold": True}})
+        if n_cols:
+            aba.format(f"A1:{_coluna_letra(n_cols)}1", {"textFormat": {"bold": True}})
 
-        log.info(f"Sheets sincronizado com sucesso: {len(linhas)} cartão(ões).")
+        log.info(f"Sheets sincronizado: {len(linhas)} cartão(ões), {n_cols} coluna(s).")
         return True
 
     except Exception as e:

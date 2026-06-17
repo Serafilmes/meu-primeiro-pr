@@ -1,7 +1,7 @@
 # Contexto Atual — Sistema GMA
 ## Estado vivo do projeto (carregar em TODA sessão junto com `arquitetura_GMA.md`)
 
-> Última atualização: 2026-06-16 (sessão 33)
+> Última atualização: 2026-06-17 (sessão 34)
 > Para detalhes técnicos históricos, ver `historico_GMA.md` (não carregar por padrão).
 
 ---
@@ -12,7 +12,7 @@
 |---|---|---|
 | 1 | Check-in e identificação | ⚠️ Quase completa — Nova Ficha v2 ✅ + multi-seleção/data inteligente/"quem preencheu" (s33); falta mural dos câmeras, login do operador (2.3) e domínio fixo do túnel |
 | 2 | Transferência | ✅ Concluída e testada com cartão real |
-| 3 | Controle e segurança das informações | ✅ Quase completa — Kanban + Planilha + Molde; **grupos editáveis (lista/texto) → chip+coluna automáticos (s33)**; Google Sheets real NO AR via impersonação (s32); falta Fatia 5 (Sheets dinâmico + multi-projeto) |
+| 3 | Controle e segurança das informações | ✅ Quase completa — Kanban + Planilha + Molde; grupos editáveis (lista/texto) → chip+coluna automáticos (s33); **Sheets dinâmico ✅ (s34): exportador espelha molde+grupos via montador compartilhado**; Google Sheets real NO AR via impersonação (s32); **multi-projeto migrou p/ Camada 5 (painel)** |
 | 4 | Auditoria + liberação do cartão | ✅ Concluída — ciclo integrado testado |
 | 5 | Plataforma profissional + multi-máquina | 🔧 Em planejamento — agente `plataforma-gma` + blueprint criados |
 | 6 | IA assíncrona | 📋 Futura |
@@ -21,6 +21,18 @@
 ---
 
 ## O que acabou de ser feito (sessões recentes)
+
+### ✅ Sessão 34 (BUILD) — Sheets DINÂMICO + montador compartilhado (Camada 3, Fatia 5 parte mecânica)
+**Arquivos:** `banco_dados.py`, `exportador_sheets.py`, `flask_gma.py`. **Sem commit.** Testado ponta a ponta (banco isolado + test client); `gma.db` real intocado.
+> Problema: o `exportador_sheets.py` tinha **26 colunas FIXAS** e ignorava qualquer grupo editável criado depois (s33). A `/planilha` local já era dinâmica, mas a lógica estava colada em HTML dentro do Flask.
+
+- **Montador compartilhado em `banco_dados.py`** (fonte ÚNICA): `CATALOGO_PLANILHA` (colunas fixas do sistema, **movido do Flask**), `sincronizar_molde_completo`, `colunas_planilha` (resolve colunas visíveis = molde + grupos ativos, com modo lista/texto), `valor_celula_planilha` (valor em **texto puro**, sem HTML) e `montar_planilha(conn)` → `(colunas, linhas)` prontas. Fallback sem tabelas = catálogo do sistema (nunca quebra).
+- **`exportador_sheets.py`**: adeus `CABECALHO`/`_ler_dados_do_banco`/`_valores_chip_texto`; agora `colunas, linhas = bd.montar_planilha(conn)` e escreve no Sheets. **Cabeçalho e largura dinâmicos.** Grupo novo vira coluna na nuvem sozinho; grupo desativado some. Espelho FIEL da `/planilha`.
+- **`flask_gma.py`**: `_colunas_visiveis` e `_celula_planilha` agora **delegam** ao montador (Flask só embrulha em HTML + mantém o "+áudio" do nome). `CATALOGO_PLANILHA` virou alias de `bd.CATALOGO_PLANILHA`; removidos `_RANK_BLOCO`/`_CATALOGO_IDX`/`_valores_chip`/`_fmt_tamanho` (mortos). Os dois lados **nunca mais divergem**.
+- **🔶 Nota de consistência:** o Sheets agora mostra EXATAMENTE as colunas do molde (as do operador). As colunas fixas antigas que o exportador tinha a mais e a `/planilha` não tem (Modelo Câmera, Tipo Conteúdo, Local/Cena, Prioridade, Falhos, Avisos, Início/Fim Cópia, Obs., Criado em) **saíram** — se o idealizador quiser alguma de volta, vira coluna de sistema no `CATALOGO_PLANILHA` (fácil).
+- **Multi-projeto (a outra metade da Fatia 5) virou Camada 5:** o idealizador desenhou um **Painel de Controle** com troca de projeto/usuário **ao vivo** (sem desligar), protegida por senha; pasta por projeto criada sozinha. Registrado em `plano_camada5_GMA.md` §1.3 — **não construir agora**.
+- **➕ "POST IN" na planilha (ajuste pós-Fatia 5):** a planilha agora soma duas fontes — os **cartões** (como antes) **+ as fichas recebidas que ainda não têm cartão**, que aparecem na hora com status **"Post in"** (técnicas em "—"). Os editores já veem o material a caminho. Mudança única em `montar_planilha` (`_SQL_PLANILHA` vira UNION ALL; `NOT EXISTS` evita duplicar quando o cartão casa). Vale p/ planilha local **e** Google Sheets. Testado isolado.
+- **🔧 Bug Serviço/Tags investigado — NÃO era bug:** os grupos foram excluídos certo (sumiram de `grupos_classificacao` e do molde); o código novo já gera as colunas certas. O Google Sheets estava **congelado** na sync das 00:05 (antes da exclusão) porque o processo do exportador não estava rodando — só o Flask. Sobe o sistema completo (ou roda `exportador_sheets.py`) e a nuvem se corrige.
 
 ### ✅ Sessão 33 (BUILD) — GRUPOS EDITÁVEIS de classificação (Camada 3, peça grande)
 **Arquivos:** `banco_dados.py`, `flask_gma.py`. **Tudo commitado.** Testado em navegador real (preview) + curl.
@@ -141,16 +153,18 @@ Depois de testar a Fatia 1, o idealizador esclareceu e expandiu:
 
 ---
 
-## 🎯 Próxima sessão — FATIA 5: Sheets dinâmico + multi-projeto
+## 🎯 Próxima sessão — candidatos (a escolher com o idealizador)
 
-**Objetivo:** fechar o ciclo dos grupos editáveis na nuvem e introduzir o multi-projeto.
+A **Fatia 5 (Sheets dinâmico)** foi entregue na s34. A outra metade (multi-projeto) virou **Painel de
+Controle da Camada 5** (`plano_camada5_GMA.md` §1.3) — peça grande, só depois dos pré-requisitos.
 
-Duas frentes que se cruzam (Camada 3 + Camada 5):
-1. **Sheets dinâmico** — `exportador_sheets.py` hoje tem 26 colunas FIXAS. Precisa ler as colunas do **molde + grupos** (mesma lógica de `_colunas_visiveis`/`_celula_planilha` da `/planilha`), incluindo os grupos de **texto** (`textos_por_formulario`). Ideal: extrair um "montador de linhas da planilha" compartilhado entre a `/planilha` local e o exportador, p/ não duplicar.
-2. **Multi-projeto** — cada evento = uma **planilha Google nova conectada**. Hoje o `.env` tem 1 `GMA_SHEETS_ID` fixo. Decidir: como o operador cria/troca o projeto ativo? (tabela `projetos`? seleção na central? uma planilha por projeto criada pelo idealizador e colada o ID?). O `gma.db` é por-instância/por-trabalho (princípio C5, ver [[multi-projeto-por-trabalho]]) — alinhar se multi-projeto é trocar de instância ou conviver num só banco.
+Candidatos naturais para a próxima sessão:
+1. **Testar o exportador dentro do sistema completo** — até agora o Sheets foi rodado à mão; rodar pelo `inicializar_gma` (loop de 60s) e ver o espelho dinâmico subir de verdade. Lembrar: `/usr/bin/python3` (3.9 tem gspread), `gcloud` no PATH, impersonação ([[sheets-auth-impersonacao]]).
+2. **Agrupar a planilha por profissional** (modelo das planilhas antigas), não só por dia — pendência registrada da C3.
+3. **Central de Entrada — importação de fontes** (começar pela planilha remota/CSV, já provada) — montar o vocabulário sem digitar item a item.
+4. **Mural dos câmeras** (2º monitor, read-only) — desenho pronto da s21.
 
-**Antes de codar:** desenhar o multi-projeto com o idealizador (como fizemos com os grupos) — é decisão de arquitetura. O Sheets dinâmico em si é mecânico.
-**Lembrar:** roda com `/usr/bin/python3` (3.9 tem gspread); precisa do `gcloud` no PATH; auth por impersonação ([[sheets-auth-impersonacao]]).
+**Commit pendente:** o trabalho da s34 (`banco_dados.py`, `exportador_sheets.py`, `flask_gma.py` + docs) ainda **não foi commitado** — sugerir commit no início da próxima sessão.
 
 ---
 
@@ -158,6 +172,8 @@ Duas frentes que se cruzam (Camada 3 + Camada 5):
 
 | Decisão | Sessão |
 |---|---|
+| **Sheets espelha EXATAMENTE a /planilha (molde+grupos)** — exportador deixou de ter colunas fixas; um **montador compartilhado** em `banco_dados.py` (`montar_planilha`) é a fonte única de colunas/valores p/ a /planilha local e o Google Sheets — nunca divergem | S34 |
+| **Multi-projeto NÃO é "trocar de instância" — é Painel de Controle (C5)** com troca de projeto/usuário **ao vivo** (sem desligar), protegida por usuário+senha; pasta por projeto criada sozinha; isolamento mantido. Constrói depois dos pré-requisitos da C5 | S34 |
 | **Grupos de classificação são EDITÁVEIS (dados, não código)** — 1 ponto de criação: criar um grupo → vira chip na ficha **e** coluna na planilha (visível por padrão). Cada grupo tem regra própria (lista/texto, único/vários). Grupo do sistema ou em uso: só desativa; não usado: pode excluir | S33 |
 | **Grupo tem 2 modos: "escolhe da lista" (chips) e "escreve na hora" (texto livre)** — texto guarda vários valores por ficha em `formularios_textos` | S33 |
 | **Colunas da planilha vêm SÓ de grupos cadastrados + sistema** — sem coluna "personalizada" solta (removida); Molde só liga/desliga | S33 |
@@ -180,9 +196,11 @@ Duas frentes que se cruzam (Camada 3 + Camada 5):
 
 ## Arquivos com mudanças não commitadas (atenção)
 
-- `exportador_sheets.py` — auth por impersonação (`GMA_SHEETS_SA`), fix gspread 6.x, 5 colunas de chips, carrega `.env` sozinho (s32). **Sem commit.** ⚠️ Ainda tem só 26 colunas FIXAS — **na Fatia 5 precisa virar dinâmico** (ler os grupos, igual à `/planilha`).
-- `contexto_atual_GMA.md` + `arquitetura_GMA.md` — docs de fim da s33 (este commit).
-- Todos os demais (`banco_dados.py`, `flask_gma.py`, `.claude/launch.json`) **já commitados** na s33.
+- `exportador_sheets.py` — agora **DINÂMICO** (s34): usa `bd.montar_planilha`; auth por impersonação, fix gspread 6.x, carrega `.env` sozinho. **Sem commit.**
+- `banco_dados.py` — **montador compartilhado da planilha** (s34): `CATALOGO_PLANILHA`, `colunas_planilha`, `valor_celula_planilha`, `montar_planilha`, `sincronizar_molde_completo`. **Sem commit.**
+- `flask_gma.py` — `/planilha` delega ao montador (s34); símbolos mortos removidos. **Sem commit.**
+- `plano_camada5_GMA.md` — §1.3 nova (Painel de Controle + troca ao vivo) (s34). **Sem commit.**
+- `contexto_atual_GMA.md` + `arquitetura_GMA.md` — docs de fim da s34.
 
 ---
 
