@@ -1,7 +1,7 @@
 # Contexto Atual — Sistema GMA
 ## Estado vivo do projeto (carregar em TODA sessão junto com `arquitetura_GMA.md`)
 
-> Última atualização: 2026-06-17 (sessão 34)
+> Última atualização: 2026-06-17 (sessão 35)
 > Para detalhes técnicos históricos, ver `historico_GMA.md` (não carregar por padrão).
 
 ---
@@ -12,7 +12,7 @@
 |---|---|---|
 | 1 | Check-in e identificação | ⚠️ Quase completa — Nova Ficha v2 ✅ + multi-seleção/data inteligente/"quem preencheu" (s33); falta mural dos câmeras, login do operador (2.3) e domínio fixo do túnel |
 | 2 | Transferência | ✅ Concluída e testada com cartão real |
-| 3 | Controle e segurança das informações | ✅ Quase completa — Kanban + Planilha + Molde; grupos editáveis (lista/texto) → chip+coluna automáticos (s33); **Sheets dinâmico ✅ (s34): exportador espelha molde+grupos via montador compartilhado**; Google Sheets real NO AR via impersonação (s32); **multi-projeto migrou p/ Camada 5 (painel)** |
+| 3 | Controle e segurança das informações | ✅ Quase completa — Kanban + Planilha + Molde; grupos editáveis (s33); Sheets dinâmico (s34); **exportador rodando em loop contínuo dentro do sistema completo (s35)** |
 | 4 | Auditoria + liberação do cartão | ✅ Concluída — ciclo integrado testado |
 | 5 | Plataforma profissional + multi-máquina | 🔧 Em planejamento — agente `plataforma-gma` + blueprint criados |
 | 6 | IA assíncrona | 📋 Futura |
@@ -21,6 +21,16 @@
 ---
 
 ## O que acabou de ser feito (sessões recentes)
+
+### ✅ Sessão 35 (BUILD) — Exportador integrado ao sistema completo + fix Python
+**Arquivos:** `inicializar_gma.py`, `exportador_sheets.py`. **Commitado.**
+
+- **Raiz do problema:** `python3` no PATH é o Homebrew 3.14, que não tem Flask, gspread nem google-auth. O `inicializar_gma.py` usava `sys.executable`, então todos os subprocessos (Flask, Sheets) falhavam.
+- **Fix em `inicializar_gma.py`:** `PYTHON` fixado em `/usr/bin/python3` (3.9, onde todas as libs estão instaladas). Parâmetro `python=None` removido — agora é uniforme para todos os processos.
+- **Fix em `exportador_sheets.py`:** o `__main__` sem argumento → `loop_exportador()` (produção, 60s); com `--teste` → sincroniza uma vez e sai (diagnóstico manual). Antes rodava sempre em modo de teste (executava uma vez e encerrava).
+- **Re-auth do gcloud:** a sessão tinha expirado (`gcloud auth login` refeito pelo idealizador).
+- **Resultado testado:** 6/6 processos sobem; `[SHEETS] Planilha atualizada em 11:06:56` confirmado no primeiro ciclo.
+- **Organograma atualizado:** projeto em 62% total (núcleo C1–C4 em ~84%; C5–C7 em ~5%).
 
 ### ✅ Sessão 34 (BUILD) — Sheets DINÂMICO + montador compartilhado (Camada 3, Fatia 5 parte mecânica)
 **Arquivos:** `banco_dados.py`, `exportador_sheets.py`, `flask_gma.py`. **Sem commit.** Testado ponta a ponta (banco isolado + test client); `gma.db` real intocado.
@@ -155,16 +165,13 @@ Depois de testar a Fatia 1, o idealizador esclareceu e expandiu:
 
 ## 🎯 Próxima sessão — candidatos (a escolher com o idealizador)
 
-A **Fatia 5 (Sheets dinâmico)** foi entregue na s34. A outra metade (multi-projeto) virou **Painel de
-Controle da Camada 5** (`plano_camada5_GMA.md` §1.3) — peça grande, só depois dos pré-requisitos.
-
 Candidatos naturais para a próxima sessão:
-1. **Testar o exportador dentro do sistema completo** — até agora o Sheets foi rodado à mão; rodar pelo `inicializar_gma` (loop de 60s) e ver o espelho dinâmico subir de verdade. Lembrar: `/usr/bin/python3` (3.9 tem gspread), `gcloud` no PATH, impersonação ([[sheets-auth-impersonacao]]).
-2. **Agrupar a planilha por profissional** (modelo das planilhas antigas), não só por dia — pendência registrada da C3.
-3. **Central de Entrada — importação de fontes** (começar pela planilha remota/CSV, já provada) — montar o vocabulário sem digitar item a item.
-4. **Mural dos câmeras** (2º monitor, read-only) — desenho pronto da s21.
+1. **Agrupar a planilha por profissional** (modelo das planilhas antigas), não só por dia — pendência registrada da C3.
+2. **Central de Entrada — importação de fontes** (começar pela planilha remota/CSV, já provada) — montar o vocabulário sem digitar item a item.
+3. **Mural dos câmeras** (2º monitor, read-only) — desenho pronto da s21.
+4. **PDF Overview** — reescrever gerador no estilo dashboard + folha de contato; material de teste pronto (224 frames, 62 mídias).
 
-**Commit pendente:** o trabalho da s34 (`banco_dados.py`, `exportador_sheets.py`, `flask_gma.py` + docs) ainda **não foi commitado** — sugerir commit no início da próxima sessão.
+**Nota técnica:** para testar o exportador manualmente: `/usr/bin/python3 exportador_sheets.py --teste`. O `gcloud auth login` pode precisar ser refeito eventualmente quando a sessão expirar.
 
 ---
 
@@ -196,11 +203,7 @@ Candidatos naturais para a próxima sessão:
 
 ## Arquivos com mudanças não commitadas (atenção)
 
-- `exportador_sheets.py` — agora **DINÂMICO** (s34): usa `bd.montar_planilha`; auth por impersonação, fix gspread 6.x, carrega `.env` sozinho. **Sem commit.**
-- `banco_dados.py` — **montador compartilhado da planilha** (s34): `CATALOGO_PLANILHA`, `colunas_planilha`, `valor_celula_planilha`, `montar_planilha`, `sincronizar_molde_completo`. **Sem commit.**
-- `flask_gma.py` — `/planilha` delega ao montador (s34); símbolos mortos removidos. **Sem commit.**
-- `plano_camada5_GMA.md` — §1.3 nova (Painel de Controle + troca ao vivo) (s34). **Sem commit.**
-- `contexto_atual_GMA.md` + `arquitetura_GMA.md` — docs de fim da s34.
+Tudo commitado até a s35. Branch: `fatia5-sheets-multiprojeto`.
 
 ---
 
