@@ -1,0 +1,545 @@
+# Mapa Vivo do GMA
+## Gerenciamento de Mídia Audiovisual — onde estamos, o que fizemos, pra onde vamos
+
+> Este é o **mapa do processo**. Sempre que bater a sensação de "estou perdido,
+> o que já fizemos?", abra este arquivo: ele mostra o quadro inteiro de uma vez.
+> Para os detalhes técnicos, ver `arquitetura_GMA.md`; para o histórico completo, `historico_GMA.md`.
+>
+> Princípio central de tudo: **UMA fonte de verdade → TRÊS vistas.**
+> O sistema guarda o dado em um lugar só; as telas são jeitos diferentes de LER
+> esse mesmo dado. Nada diverge.
+>
+> Última atualização: 2026-06-15 (sessão 31 — DESENHO da Planilha de Entrega (4 blocos: identificação · classificação · técnicas · futuro), do rumo da IA (Missão A → transcrição local → imagem) e da Central de Entrada (2 modos: aba "Listas" ao vivo + importação de fontes, com revisão do operador). BUILD: aba "Listas" (Fatia 1 da gestão de vocabulário). Sem commit ainda.)
+
+---
+
+## 1. Onde estamos — o prédio de 7 andares
+
+Pense no GMA como um prédio. Cada andar só faz sentido depois do anterior.
+O coração do sistema (andares 1 e 2 — o trabalho mais difícil) está pronto e
+testado com cartão de verdade.
+
+```
+ANDAR                                       PROGRESSO
+──────────────────────────────────────────────────────────────────
+1 · Check-in (identificar o cartão)         ████████████  PRONTO ✅
+        └─ Matcher seguro + perfil que aprende cada pessoa
+        └─ ficha PRÓPRIA no GMA (gabarito + edição) · online c/ senha · QR
+        └─ NOVO: cartão SEM MÍDIA tratado em 2 níveis (ignora × chama operador)
+        └─ Nova Ficha v2 COMPLETA ✅ (Fatias 1-5): aba Profissionais com
+           ativar/desativar/excluir + CÂMERA no cadastro; TIPO em caixinhas +
+           NOME dropdown fechado; câmera saiu da ficha → Matcher lê do cadastro;
+           grava multi-tipo (booleanos) + 2º nome (áudio) — Matcher entende multi-tipo
+2 · Transferência (copiar com segurança)    ████████████  PRONTO ✅
+3 · Banco de dados (guardar tudo)           ██████████░░  QUASE
+                                                          (Kanban + Planilha no ar; falta Google Sheets real)
+        └─ NOVO (s31): aba "Listas" (vocabulário do operador) + desenho da Planilha
+           de Entrega (4 blocos) e da Central de Entrada (ao vivo + importação)
+4 · Auditoria + devolver o cartão           ████████████  PRONTO ✅
+        └─ embaralha · ejeta · RESTAURA pelo Parashoot — testado com cartão real
+5 · Tela bonita + várias máquinas           █░░░░░░░░░░░  EM PLANEJAMENTO
+        └─ agente plataforma-gma + blueprint · acesso por papel e mural já desenhados
+6 · Inteligência artificial (opcional)      ░░░░░░░░░░░░  futuro
+7 · Marca e identidade visual               ░░░░░░░░░░░░  sem prazo (próximo foco)
+──────────────────────────────────────────────────────────────────
+```
+
+---
+
+## 2. O que o sistema faz — em linguagem de set
+
+Quando um cartão chega na base, isto acontece **sozinho**, sem operador clicando:
+
+```
+  📷 Cartão chega na base
+        │
+        ▼
+  🚪 PORTEIRO          "Chegou um cartão!" (detecta sozinho em 2s)
+        │
+        ▼
+  🔍 LEITOR            "É uma GoPro, 106 arquivos, gravado dia 7.
+        │               Atenção: tem material de 2 dias diferentes.
+        │               Se NÃO houver mídia nenhuma, eu decido:
+        │                · só config/lixo  → 'sem mídia, ignoro' (não copia)
+        │                · arquivos grandes que não reconheço → 'verificar!'
+        │                  (chamo o operador — pode ser footage estranho)."
+        ▼
+  🔗 MATCHER           "Esse cartão é do João — bate com a ficha.
+        │               Se dois empatam, eu NÃO chuto: pergunto ao operador.
+        │               E aprendo a 'assinatura' de cada um (câmera, numeração)."
+        ▼
+  📋 (a ficha do celular, via formulário, entra aqui)
+        │
+        ▼
+  📦 TRANSFERÊNCIA     "É o 3º cartão do João → pasta JOAO_003.
+        │               Copiando... conferindo cada arquivo (MD5)...
+        │               7,7 GB copiados, 106 de 106 conferidos ✅"
+        ▼
+  🎞️  FRAMES            "Tirei 10 fotinhas de cada vídeo pro relatório."
+        │
+        ▼
+  📄 RELATÓRIO PDF     "Pronto: relatório com miniaturas pra editora ver."
+        │
+        ▼
+  🗄️  BANCO             "Anotei tudo. (e vou espelhar no Google Sheets)"
+        │
+        ▼
+  ✂️  ANDAR 4 — AUDITORIA E DEVOLUÇÃO ✅
+       "1. Confiro a estrutura toda (contagem + tamanho).
+        2. Peço pro Parashoot conferir arquivo por arquivo (check).
+        3. Tudo certo? Mando embaralhar e ejetar o cartão.
+        4. Status → CONCLUÍDO. Cartão pronto pra voltar pro set."
+        │
+        ▼
+  ↩️  RESTORE (quando precisar)
+       "Embaralhei um cartão e preciso dele de volta? O Parashoot
+        desfaz na hora — o material nunca foi apagado, só escondido."
+```
+
+A regra que segura tudo: **os arquivos de vídeo nunca saem do HD físico.**
+Pra nuvem só vai *informação sobre* os arquivos (nome, tamanho, quem gravou) —
+nunca o vídeo em si.
+
+---
+
+## 3. Linha do tempo — por que tomamos tantas decisões
+
+Nenhuma decisão foi à toa. Cada uma resolveu um problema que apareceu
+**testando com cartão de verdade**. As decisões GRANDES (🔶) sempre foram sobre
+*organizar quem faz o quê* — o objetivo nunca mudou.
+
+```
+06/06  S1  🧪 1º teste real (GoPro 7,7GB) → funcionou ponta a ponta! Achou 4 bugs.
+
+06/06  S2  🔧 Consertou os 4 bugs
+           🔶 DECISÃO: chamar de "match" (não "casamento")
+
+06/06  S3  🔶 DECISÃO: arquivo de sistema com erro = AVISO, não estraga a cópia
+              (3 arquivinhos da GoPro reprovavam 103 vídeos perfeitos)
+
+07/06  S4  🔶 DECISÃO: numeração de cartão muda de andar + reorganiza o que cada
+              andar faz (C3 = só informação · C4 = auditoria · C5 = multi-máquina)
+
+07/06  S5  🗄️ Ligou o banco de dados em todos os processos
+
+07/06  S6  📱 Ficha online (Tally) + segurança (senhas fora do código)
+
+07/06  S7  🧪 2º teste real → passou tudo! Mas achou 1 bug: banco gravou 0 arquivos 🐛
+
+07/06  S8  📄 Relatório PDF bonito, com miniaturas
+
+07/06  S9  🔶 DECISÃO: tirar fotinha do vídeo é trabalho de "robô braçal"
+              (grátis, offline) → fica no ciclo.
+              ENTENDER a foto é trabalho de IA → só no andar 6 (paga, depois)
+
+07/06  S10 🗺️ Mapa vivo (este documento) — parar e olhar o todo
+
+08/06  S11 🗄️ Exportador Sheets + auditoria.py (andares 3 e 4 ganham código)
+08/06  S12 🔍 Revisão crítica: C3 e C4 não estavam fechadas (buracos mapeados)
+08/06  S13 📱 Ficha enxuta e personalizável por trabalho (festival ≠ congresso)
+           🔶 DECISÃO: câmera/tipo o sistema detecta sozinho; ficha fica mínima
+           🔗 Matcher SEGURO: em empate, nunca troca material — pergunta ao operador
+           🧠 Perfil do profissional (Fase 1): aprende câmera, modelo, prefixo e
+              numeração de cada pessoa a cada match
+
+08/06  S14 ✂️ Agente da Camada 4 criado (auditoria-gma)
+
+09/06  S15 🔍 DESCOBERTA: o Parashoot tem CLI automatizável (check + erase)
+           🔶 DECISÃO: o GMA aciona o Parashoot sozinho (sem operador clicar)
+              + embaralhamento é REVERSÍVEL (só inverte 2MB; material intacto)
+           ✂️ Camada 4 reescrita para usar o CLI do Parashoot
+
+09/06  S16 🧪 3º teste real (Sony "Joe", 1,6GB) → CICLO DE VIDA COMPLETO ✅
+              detecta → copia → frames → audita → check → embaralha → ejeta → RESTAURA
+           🐛 Achou e consertou 1 bug (Parashoot fala "JSON em linhas")
+           ↩️ Restore validado: cartão voltou inteiro pela GUI do Parashoot
+           🔶 DECISÃO: feedback — relatório PDF abaixo do esperado;
+              Camada 7 (marca/design) vira o próximo foco
+
+10/06  S17 🔶 DESENHO: identidade do cartão em camadas (Matcher = autoridade)
+10/06  S18 🔶 DESENHO: fronteira C1 ↔ C3 nas fichas (quem cria o quê)
+10/06  S19 🖥️ Telas no ar: Acompanhamento (Kanban) + Planilha, lendo da fonte única
+           📌 post-it por cartão testado (grava no banco + registra na auditoria)
+
+10/06  S20 🔶 VIRADA protótipo → produto: planeja a Camada 5 (a plataforma)
+           🤖 Cria o agente plataforma-gma + blueprint; NÃO constrói ainda
+              (1º o laboratório passa nos testes de 2–3 cartões simultâneos)
+
+10/06  S21 📱 Ficha PRÓPRIA dentro do GMA (não depende mais só do Tally)
+           🧩 Gabarito (campos que se sugerem do histórico) + edição de fichas
+           🔶 DECISÃO: nossa ficha é o canal PRINCIPAL; Tally vira reserva
+           🌐 Ficha ONLINE (ngrok) com SENHA — princípio "nunca expor sem senha"
+           🔒 Link da câmera é SÓ-FICHA (não vê gestão nem edita ficha alheia)
+           📷 QR da ficha na tela de Acompanhamento (auto-detecta a URL do ngrok)
+           🔶 REPORTADO ao C5: cada trabalho = um novo projeto de sistema
+           📋 DESENHO: mural dos câmeras (2º monitor, status em linguagem de set)
+           💾 Versão salva no git (1ª foto do sistema inteiro) + README próprio do GMA
+
+14/06  S24 📐 DESENHO: Passo 2 do Matcher — botão de resolução de empate
+           🔶 DECISÃO: operador vê nome + câmera + 3–4 primeiros nomes de arquivo
+              → clica "Confirmar" → tela de resumo (nome · câmera · nº arq · destino previsto)
+              → "Iniciar transferência" registra match, descarta candidatos, dispara cópia
+           🔶 DECISÃO: candidatos descartados ficam com status 'descartado' na tabela
+              match_candidatos (auditável); fichas voltam a aguardando_match
+           🔶 DECISÃO: confirmação chama atualizar_perfil (perfil acumula assinatura)
+           📄 Referência: desenho_passo2_matcher_GMA.md · Status: aprovado, NÃO implementado
+           ⏭️ Build: agente checkin-gma + banco-dados-gma (sem bloqueios)
+
+12/06  S21+ 🐛 Teste pós-commit pegou um cartão ARRI só de CONFIGURAÇÃO (0 mídia)
+              passando reto pelo fluxo → 2 falhas: Porteiro decidia a marca só pelo
+              nome da pasta; Leitor via "sem mídia" mas deixava seguir.
+           🔧 CORREÇÃO (Camada 1): quando o cartão tem 0 mídia, o Leitor classifica
+              em DOIS níveis — 'sem_midia' (config/lixo → ignora, não copia) e
+              'revisar' (tem arquivo grande não reconhecido → chama o operador).
+           🛡️ A lista EXTENSOES é a guardiã; em dúvida prefere 'revisar' a pular footage.
+              ⚠️ mudanças ainda NÃO commitadas (leitor_midia.py, flask_gma.py)
+
+14/06  S25 🛠️ BUILD do Passo 2 do Matcher (resolução de empate no painel)
+           🐛 Teste ponta a ponta pegou 2 bugs que os autotestes dos agentes não viram:
+              Flask 500 (variável html sombreava o módulo) + Matcher não gravava candidatos
+           ✅ Corrigidos; botão "Confirmar" funcionando no painel
+
+15/06  S26 🧪 TESTE ponta a ponta do Passo 2 com o sistema INTEIRO no ar → APROVADO ✅
+              empate JOAO×PAULO: operador confirma JOAO → match manual gravado,
+              PAULO descartado e devolvido à fila, cartão segue pra Camada 2
+           🐛 O produto estava certo; o SCRIPT de teste precisou de 3 ajustes pelo
+              descompasso "cartão forjado × processos vigias rodando":
+              (1) material marcado como já analisado p/ o Leitor não rebaixar o volume falso;
+              (2) modo --verificar com len>=4 (remontava o cenário e apagava o match);
+              (3) verificador aceita "matched ou além" (Camada 2 avança o status)
+           🔶 NOTA: cada profissional cadastrado ganha uma LETRA (A,B,C…) p/ as câmeras
+              de identificação — pista visual, NUNCA autoridade de identidade
+              (a "câmera B" do set pode não ser a B). Em desenho_nova_ficha_v2 §5.1
+           🔶 NOTA (sessão 28): a aba "Profissionais" é, na verdade, uma FONTE DE
+              MATERIAL — quase sempre uma pessoa, mas pode ser um feed/sistema (PGM,
+              online), gerido pelo operador. A origem (cartão × pasta satélite/link)
+              mora no cadastro mas funciona no check-in. Em desenho_nova_ficha_v2 §12
+           💾 Commitado (sessão 26): teste + nota da ficha
+           💾 Commitado (sessão 28): Fatia 3 + ativar/desativar/excluir profissional + §12
+
+15/06  S29 🛠️ BUILD Fatia 4 — a CÂMERA saiu da ficha e foi pro cadastro do profissional
+           🔶 DECISÃO (já era da S23): câmera não se pergunta mais na ficha; mora no
+              cadastro (coluna `camera` em profissionais) — sai de CAMPOS_OBRIGATORIOS
+           🔗 Matcher: o critério +3 agora lê a câmera do cadastro pelo nome da ficha
+              (cai de volta pra câmera da ficha se não houver cadastro — preserva o Tally)
+           🖥️ Aba Profissionais: coluna Câmera com edição inline + campo no cadastro
+           🧪 Testado: JOÃO/Sony cadastrado → cartão Sony → +3 SEM campo na ficha ✅
+           🐛 Bug pego no teste do idealizador: ao excluir um profissional do MEIO, a letra
+              colidia (era por COUNT) e travava qualquer cadastro novo dizendo "nome já existe"
+           🔧 _proxima_letra passou a usar a MAIOR letra já dada; letra de quem sai fica
+              queimada (não volta) — todo cadastro novo recebe a próxima letra
+           💾 Sem commit ainda (a critério do idealizador)
+
+15/06  S30 🛠️ BUILD Fatia 5 (a ÚLTIMA) — a ficha passa a GRAVAR a forma nova de verdade
+           🗄️ formularios ganha booleanos tem_foto/tem_audio/tem_video + nome_audio
+              (antes o multi-tipo e o 2º nome viajavam em hidden e o backend ignorava)
+           🔗 Matcher entende multi-tipo no +1 (predominante do cartão ∈ tipos marcados)
+           🖥️ Planilha e fichas recentes exibem multi-tipo (Foto · Vídeo) e o 2º nome (áudio)
+           🔶 REGRA: ÁUDIO é SEMPRE transferência à parte (vem em outro cartão). A ficha
+              mista vira DUAS fichas ligadas por entrega_id (foto/vídeo + áudio) → cada uma
+              com match/linha/transferência próprios. Os 2 nomes na tela = só facilitar a entrada
+           🔶 ADIADO p/ Camada 2: foto+vídeo do mesmo profissional na estrutura de PASTAS
+           🧪 Testado ponta a ponta: Foto+Áudio → 2 fichas; Foto+Vídeo → 1; só Áudio → 1 ✅
+           🎉 Nova Ficha v2 COMPLETA (Fatias 1-5)
+           💾 Sem commit ainda (a critério do idealizador)
+
+15/06  S31 📊 DESENHO da Planilha de Entrega — a partir da "Loggagem" (RIO2C) + 5 planilhas
+              antigas. Núcleo: BLOCO POR PROFISSIONAL com cartão sequencial (= o NOME_NNN do GMA).
+              4 blocos: identificação · classificação · técnicas (o sistema gera) · futuro.
+           🔶 DECISÃO: a CLASSIFICAÇÃO (palco/marca/pauta/tags) é preenchida pelo PROFISSIONAL
+              na ficha, por chips de listas prontas; operador revisa opcional. Ficha objetiva.
+           🔶 DECISÃO: listas de contexto DINÂMICAS, geridas só pelo operador; numeração
+              NOME_NNN independente e contínua (a ficha muda de um dia pro outro, o nº não).
+           🔶 DECISÃO: bloco de PÓS (editor/edição/upload) incluído, mas VARIÁVEL por evento —
+              editores preenchem após a entrega; blocos/colunas ligam-desligam por evento.
+           🔶 DECISÃO (IA): Missão A (busca conversacional) + transcrição de áudio LOCAL
+              (Whisper, offline/grátis) primeiro; análise de imagem (Missão B) por último.
+           🛠️ BUILD Fatia 1: aba "Listas" no painel (tabela listas_contexto + add/ativar/excluir,
+              só na base). Testado ponta a ponta. Sem commit.
+           🔶 ALINHAMENTO (no papel): Central de Entrada — 2 modos para a MESMA lista:
+              (a) ao vivo (aba Listas) · (b) importar fontes (colar/CSV/PDF/print-OCR) →
+              Extração → Revisão do operador (gate) → listas_contexto. Nada entra cru.
+           ⏭️ A fazer: a "ponte" chips→ficha→planilha (faz tudo aparecer); depois a importação.
+           💾 Sem commit ainda (a critério do idealizador)
+```
+
+---
+
+## 4. As regras de ouro (não se mexe mais)
+
+| Regra | Por quê |
+|---|---|
+| 🐍 **Motor de cópia é o `copiador.py` (Python)**, não o ShotPutPro | O ShotPutPro não deixa ser automatizado — seria sempre um gargalo manual |
+| 🛡️ **Material insubstituível nunca é apagado/movido sem conferir** | É a regra nº 1. Em dúvida, não destrói |
+| ☁️ **Vídeo nunca sobe pra nuvem** — só informação sobre ele | Segurança + custo |
+| 💰 **Sem IA no ciclo principal** — só no andar 6, opcional | Custo mínimo; o ciclo roda grátis e offline |
+| ⚡ **Tudo funciona sem internet** | A nuvem só sincroniza depois |
+| 🤖 **Autonomia máxima** — o operador é o último recurso | Sem filas no set |
+| 🎙️ **Áudio é SEMPRE transferência à parte** | Vem em outro cartão (gravador); juntar áudio a vídeo na ficha é só conveniência de digitação — por baixo são match/linha/transferência separados |
+
+---
+
+## 5. O que pede atenção agora
+
+Em ordem de impacto:
+
+1. 🎨 **Marca / identidade visual (andar 7)** — sem prazo de data + o relatório PDF de hoje
+   ficou abaixo do esperado (sem padrão, layout fraco). Definir logo, paleta,
+   tipografia e grid ANTES de refazer o PDF, pra ele nascer bonito e consistente.
+2. 📄 **PDF Overview** — refazer o gerador no estilo dashboard + folha de contato
+   (briefing pronto na §12 do `arquitetura_GMA.md`, material de teste já gerado),
+   já aplicando o padrão visual do andar 7.
+3. 🔌 **Ligar frames + PDF ao fluxo automático** — hoje o extrator de frames roda
+   à mão depois da cópia; falta plugá-lo dentro da transferência.
+4. 🧠 **Fase 2 do perfil** — fazer o sistema USAR o que aprende (câmera, prefixo,
+   numeração) para desempatar sozinho, com tolerância a gaps. Tira o operador do caminho.
+5. 📊 **Google Sheets real** (andar 3) — criar a planilha na nuvem + credenciais.
+   (O Kanban e a Planilha locais já estão no ar desde a sessão 19, lendo da fonte única.)
+6. 🖥️ **Mural dos câmeras** (2º monitor) — construir a tela read-only de status em
+   linguagem de set + QR fixo (desenho pronto na sessão 21; layout em aberto).
+7. 🌐 **Endereço fixo do túnel** (opcional) — hoje a ficha online usa URL temporária
+   do ngrok (o QR se auto-atualiza). Um domínio fixo deixa o link estável.
+8. 🧩 **Ponte chips→ficha→planilha** — ligar os itens das "Listas" como chips na ficha e
+   fazê-los aparecer na planilha (foi o que faltou no teste da s31). Próxima fatia natural.
+9. 📥 **Central de Entrada (importação)** — montar as listas a partir de planilha remota/CSV,
+   colar texto, PDF e print (OCR). Desenho alinhado na s31; começar pela planilha/CSV.
+
+> ✅ Resolvido na S21: a **entrada de dados** não depende mais do Tally — a ficha própria
+> do GMA é o canal principal (Tally vira reserva opcional). Guia do Tally segue válido
+> (`guia_tally_gma.md`) só se quiser o canal de reserva.
+>
+> Pendências menores guardadas: bug do "0 arquivos no banco" (S7); consistência do
+> banco quando dois cartões têm o mesmo nome de volume ("Untitled") — visto no teste do Joe;
+> Passo 2 (tela de confirmação de match no clique); loop automático da auditoria.py.
+
+---
+
+# PARTE TÉCNICA — os detalhes do mapa
+
+> As seções acima são o "estou perdido, me situa". As de baixo são o detalhe
+> de engenharia, para quando você quiser entrar a fundo.
+
+## 6. Visão de cima — o fluxo em 3 zonas
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  ZONA 1 — CAMPO / SET                                                 │
+│                                                                       │
+│   📷 Câmeras  ───►  💾 Cartão de memória  ───►  entregue na base      │
+│                                                                       │
+│   📱 Formulário (celular do operador)                                 │
+│      nome do profissional · câmera · tipo · data de gravação          │
+└───────────────────────────────┬─────────────────────────────────────┘
+                                 │  (cartão físico + dados do form)
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  ZONA 2 — MÁQUINA GMA  (offline-first · ciclo crítico)               │
+│                                                                       │
+│   PORTEIRO ─► LEITOR ─► MATCHER ─► TRANSFERÊNCIA ─► FRAMES ─► PDF     │
+│   detecta    analisa   material   copiador.py +     fotinhas  relat.  │
+│   cartão     conteúdo  + form     checksum MD5      do vídeo          │
+│                                                                       │
+│                 ▼ tudo grava em ▼                                     │
+│        ┌──────────────────────────────────────┐                      │
+│        │  FONTE ÚNICA DE VERDADE               │                      │
+│        │  SQLite local (gma.db)                │  ← Camada 3          │
+│        │  (filas JSON ainda existem de backup) │                      │
+│        └──────────────────────────────────────┘                      │
+│                                                                       │
+│   CAMADA 4 ✅ auditoria → Parashoot check → embaralha → ejeta        │
+│             (e RESTAURA quando precisar — material nunca se perde)    │
+└───────────────────────────────┬─────────────────────────────────────┘
+                                 │  (SÓ metadados — nunca a mídia)
+                                 ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  ZONA 3 — NUVEM / ENTREGA                                            │
+│                                                                       │
+│   📊 Google Sheets (espelho de entrega para editores) — a integrar   │
+│   📋 Notion (vitrine opcional — espelho do Kanban)                    │
+│                                                                       │
+│   ⚠️  Os arquivos de mídia NUNCA sobem. Ficam no HD físico.          │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 7. Os 3 pontos de acesso (telas) — UMA fonte, TRÊS vistas
+
+```
+                  ┌────────────────────────────────────┐
+                  │   FONTE ÚNICA DE VERDADE            │
+                  │   SQLite local (gma.db)             │
+                  └───────┬───────────┬───────────┬─────┘
+                          │           │           │
+            ┌─────────────┘           │           └─────────────┐
+            ▼                         ▼                         ▼
+ ┌────────────────────┐  ┌─────────────────────────┐  ┌────────────────────┐
+ │ ACESSO 1           │  │ ACESSO 2                │  │ ACESSO 3           │
+ │ PAINEL DO OPERADOR │  │ QUADRO DE ACOMPANHAMENTO│  │ PLANILHA DE ANÁLISE│
+ │ (Centro de Comando)│  │ (Kanban dos cartões)    │  │ (Entrega)          │
+ ├────────────────────┤  ├─────────────────────────┤  ├────────────────────┤
+ │ Para: OPERADOR     │  │ Para: operador + set    │  │ Para: EDITORES +   │
+ │ (base + 2ª/3ª máq.)│  │ (equipes, read-only)    │  │ cliente            │
+ ├────────────────────┤  ├─────────────────────────┤  ├────────────────────┤
+ │ "O que faço agora? │  │ "Em que etapa está cada │  │ "Onde está o       │
+ │  Algo travou?"     │  │  cartão? Já devolvo?"   │  │  material X?"      │
+ ├────────────────────┤  ├─────────────────────────┤  ├────────────────────┤
+ │ • Ativar/Desativar │  │ Colunas (o card anda):  │  │ Tabela filtrável:  │
+ │ • Alertas:         │  │  Detectado →            │  │ • profissional     │
+ │   – multidia       │  │  Match →                │  │ • câmera · tipo    │
+ │   – órfão          │  │  Copiando →             │  │ • data · nº cartão │
+ │   – checksum falhou│  │  Verificado ✅ →         │  │ • nº arquivos      │
+ │ • Fila atual       │  │  Concluído              │  │ • tamanho          │
+ │ • Status dos       │  │ + POST-ITS (observações │  │ • caminho no HD    │
+ │   processos        │  │   livres por cartão)    │  │ • status verif.    │
+ ├────────────────────┤  ├─────────────────────────┤  ├────────────────────┤
+ │ ONDE VIVE:         │  │ ONDE VIVE:              │  │ ONDE VIVE:         │
+ │ Flask local :5050  │  │ Flask local :5050       │  │ Google Sheets      │
+ │ OFFLINE-FIRST      │  │ (read-only)             │  │ (nuvem)            │
+ │                    │  │ + espelho Notion (opc.) │  │                    │
+ ├────────────────────┤  ├─────────────────────────┤  ├────────────────────┤
+ │ STATUS: no ar      │  │ STATUS: rascunho        │  │ STATUS: espelho    │
+ │ (abas; lê JSON)    │  │ (/kanban + post-it)     │  │ local; Sheets falta│
+ └────────────────────┘  └─────────────────────────┘  └────────────────────┘
+
+  CRÍTICO / OFFLINE  ◄──────────────────────────────►  ENTREGA / NUVEM
+```
+
+**Regra de ouro das telas:** Acessos 1 e 2 são **operação** → offline-first, vivem
+no Flask. Acesso 3 é **entrega** → nuvem (Google Sheets). O Notion é sempre só
+vitrine espelhada, nunca o operacional.
+
+**Novidades da sessão 21 (a entrada e o acesso remoto):**
+
+- 📥 **Porta de entrada própria — "Nova Ficha"** (`/ficha`): uma aba a mais, servida pelo
+  próprio Flask, que alimenta a mesma fonte única. Tem **gabarito** (nome/câmera se sugerem
+  do histórico) e **edição** de fichas. É o **canal principal**; o Tally fica de reserva.
+- 🔒 **Acesso remoto POR PAPEL** (régua de segurança): a operação completa só existe na
+  **base** (localhost). Pela **internet/rede**, o **link da câmera** alcança **só a ficha nova**
+  — não vê Kanban/Planilha, não edita ficha de ninguém, não mexe no Porteiro. Exige **senha**.
+- 📷 **QR da ficha no Acesso 2:** a tela de Acompanhamento mostra o QR do link (auto-detecta a
+  URL ativa do ngrok). O operador aponta pros câmeras.
+- 🖥️ **Mural dos câmeras (a desenhar):** a **metade read-only do Acesso 2**, para um **2º monitor**,
+  com status em linguagem de set ("Material salvo ✅", "Copiando… não retire"). É a tela que
+  comunica aos câmeras se o cartão deles já foi copiado.
+
+**Novidades da sessão 31 (a Planilha de Entrega — Acesso 3 — toma forma):**
+
+- 📊 **Planilha de Entrega = ficha do profissional + colunas técnicas do sistema**, em 4 blocos:
+  **identificação** (data · nome/fonte · material F/A/V · nº cartão) · **classificação** (conteúdo ·
+  tags · palco · marca · pauta — chips escolhidos na ficha) · **técnicas** (nº arquivos · tamanho ·
+  íntegro? · status, que o sistema gera) · **futuro** (transcrição do áudio).
+- 🧩 **Listas de contexto** (palco/marca/pauta/tags): vocabulário controlado, gerido pelo operador,
+  dinâmico por evento. Os itens viram **chips na ficha**; nada entra na planilha sem essa ponte.
+- 🧱 **Blocos variáveis por evento:** o operador "monta o molde" — classificação e pós-produção
+  (editor/edição/upload, preenchida pelos editores) ligam-desligam conforme o trabalho.
+- 📥 **Duas portas de entrada do vocabulário:** ao vivo (aba "Listas") + importação de fontes
+  (planilha/CSV · colar · PDF · print-OCR), com revisão do operador antes de gravar.
+- 🗂️ Referências reais: Notion "Loggagem" (RIO2C) + 5 planilhas Google antigas.
+
+---
+
+## 8. Organograma dos processos (Zona 2 em detalhe)
+
+```
+                        inicializar_gma.py
+                  (sobe tudo com um comando)
+                                │
+        ┌───────────┬───────────┼───────────┬────────────┐
+        ▼           ▼           ▼           ▼            ▼
+   ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌──────────┐ ┌───────────────┐
+   │PORTEIRO │ │ LEITOR  │ │ MATCHER │ │  FLASK   │ │ TRANSFERÊNCIA │
+   │porteiro │ │leitor_  │ │matcher  │ │flask_gma │ │transferencia  │
+   │.py      │ │midia.py │ │.py      │ │.py       │ │.py            │
+   ├─────────┤ ├─────────┤ ├─────────┤ ├──────────┤ ├───────────────┤
+   │detecta  │ │analisa  │ │cruza    │ │recebe    │ │monta destino, │
+   │volumes  │ │conteúdo,│ │material │ │Forms,    │ │chama copiador,│
+   │novos    │ │multidia │ │+ form   │ │serve     │ │valida, frames,│
+   │(2s)     │ │(3s)     │ │(score≥3)│ │painel    │ │gera PDF       │
+   └────┬────┘ └────┬────┘ └────┬────┘ └────┬─────┘ └───────┬───────┘
+        │           │           │           │               │
+        └───────────┴───────────┴───────────┴───────────────┘
+                                │
+                                ▼
+                    🗄️ SQLite (gma.db) — fonte única
+                    (filas JSON mantidas como backup)
+                                │
+                                ▼
+                    ┌───────────────────────┐
+                    │  AUDITORIA (Camada 4) │  auditoria.py
+                    │  detecta cartões       │
+                    │  'transferencia_ok'    │
+                    └───────────┬───────────┘
+                                ▼
+        pré-check (contagem+tamanho) → Parashoot check (arquivo a arquivo)
+                                │
+                                ▼
+        Parashoot erase → embaralha + ejeta → status CONCLUÍDO
+                                │
+                                ▼
+        ↩️ Parashoot restore (quando precisar desfazer — material intacto)
+
+   Na transferência:
+   copiador.py (MOTOR) → cópia + checksum MD5 + gera .sppo
+        │
+        ▼
+   extrator_frames.py → 10 frames por vídeo + manifesto.json
+        │
+        ▼
+   gma_relatorio_pdf.py → PDF rico (frames + metadados + auditoria)
+   ⚠️ PDF a refazer (estilo Overview + padrão visual do andar 7)
+
+   encerrar_gma.py  →  encerramento de emergência (desliga tudo)
+   .gma_ativo       →  sentinela: existe = sistema processando
+```
+
+---
+
+## 9. Organograma de desenvolvimento (orquestrador + subagentes)
+
+> Como o trabalho de CONSTRUÇÃO do sistema é dividido (não confundir com a operação).
+
+```
+                    ┌────────────────────────────┐
+                    │  ORQUESTRADOR (Claude Code) │
+                    │  visão geral · arquitetura · │
+                    │  conversa com o idealizador │
+                    │  cuida dos mapas e documentos│
+                    └──────────────┬─────────────┘
+                                   │ delega por camada
+       ┌───────────────┬──────────┼──────────┬───────────────┐
+       ▼               ▼          ▼          ▼               ▼
+ ┌───────────┐  ┌──────────────┐ ┌────────┐ ┌─────────┐ ┌──────────────┐
+ │checkin-gma│  │transferencia-│ │banco-  │ │auditoria│ │ testes /     │
+ │ Camada 1  │  │gma           │ │dados-  │ │-gma     │ │ documentação │
+ │  ✅        │  │ Camada 2 ✅  │ │gma     │ │Camada 4 │ │ (futuros)    │
+ │           │  │              │ │Camada3 │ │  ✅     │ │              │
+ │leitura,   │  │copiador.py,  │ │🔧      │ │Parashoot│ │              │
+ │Forms,     │  │checksum MD5, │ │SQLite, │ │check/   │ │              │
+ │numeração  │  │.sppo, PDF    │ │Sheets, │ │erase/   │ │              │
+ │           │  │              │ │3 telas │ │restore  │ │              │
+ └───────────┘  └──────────────┘ └────────┘ └─────────┘ └──────────────┘
+   EXISTE         EXISTE          EXISTE     EXISTE ✅    a criar
+```
+
+**Onde as 3 telas entram no roadmap:**
+- Acesso 1 (Operador): evolui do Flask atual — Camadas 1 → 5.
+- Acesso 2 (Kanban): banco (C3) + tela (C5) + espelho Notion.
+- Acesso 3 (Planilha): exportação para Google Sheets — Camada 3.
+
+---
+
+## 10. Legenda rápida
+
+| Símbolo | Significado |
+|---|---|
+| ✅ | Concluído e testado |
+| 🔧 | Em construção |
+| 🔶 | Decisão grande (mudou a organização do projeto) |
+| 🐛 | Bug conhecido a resolver |
+| ⚠️ | Prazo ou risco a vigiar |
+| ►  / ▼ | Fluxo de dados / dependência |
+| Offline-first | Funciona sem internet; nuvem só sincroniza depois |
+| Fonte única de verdade | Um banco alimenta todas as telas — nada diverge |
+
+> Para a arquitetura completa e specs, ver `arquitetura_GMA.md`; para o estado e o histórico, `contexto_atual_GMA.md` e `historico_GMA.md`.

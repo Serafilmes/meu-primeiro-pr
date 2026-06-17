@@ -1,0 +1,42 @@
+# Variáveis de ambiente (segredos — nunca versionar)
+.env
+
+# Credenciais da conta de serviço do Google (chave privada — NUNCA versionar)
+credenciais_google.json
+*credentials*.json
+*-service-account*.json
+
+# Banco de dados local (é operacional, não vai para o repositório)
+gma.db
+gma.db-shm
+gma.db-wal
+
+# Sentinela de ativação (estado de runtime)
+.gma_ativo
+
+# Arquivos do macOS
+.DS_Store
+
+# Filas e logs (estado de runtime)
+fila_forms/*.json
+fila_material/*.json
+logs/*.log
+logs/*.out
+logs/backup_*
+
+# Config local do Claude Code (específica desta máquina — não versionar)
+.claude/settings.local.json
+
+# Contadores (estado operacional por profissional)
+contadores/*.json
+
+# Material de teste (mídia — insubstituível, pesada, nunca vai para o repositório)
+TESTE LOGAGEM/
+
+# Miniaturas geradas pelo extrator de frames (saída operacional, recriável)
+_GMA_frames/
+*_manifesto.json
+
+# Lixo de build do Python
+__pycache__/
+*.pyc
