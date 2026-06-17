@@ -293,49 +293,53 @@ def loop_exportador():
         time.sleep(INTERVALO_SYNC)
 
 
-# ── PONTO DE ENTRADA (MODO DE TESTE) ──────────────────────────────────────────
+# ── PONTO DE ENTRADA ──────────────────────────────────────────────────────────
+#
+# Sem argumentos → loop contínuo (modo de produção, chamado pelo inicializar_gma).
+# --teste         → sincroniza uma vez e sai (modo de diagnóstico manual).
 
 if __name__ == "__main__":
     import sys
     sys.path.insert(0, RAIZ_GMA)
 
-    _carregar_env_local()  # carrega GOOGLE_CREDENTIALS_JSON / GMA_SHEETS_ID do .env
+    _carregar_env_local()
 
-    print()
-    print("=" * 60)
-    print("  GMA — Exportador Google Sheets (teste imediato)")
-    print("=" * 60)
-    print()
+    modo_teste = "--teste" in sys.argv
 
-    ok, erro = _credenciais_configuradas()
-    if not ok:
-        print(f"ERRO: {erro}")
+    if modo_teste:
+        # ── Modo de teste: roda uma vez e mostra o resultado ──────────────────
         print()
-        print("Configure no .env:")
-        print("  GOOGLE_CREDENTIALS_JSON=/Users/serafa/GMA/credenciais_google.json")
-        print("  GMA_SHEETS_ID=cole_aqui_o_id_da_planilha")
+        print("=" * 60)
+        print("  GMA — Exportador Google Sheets (teste imediato)")
+        print("=" * 60)
         print()
-        print("Guia de configuração:")
-        print("  1. console.cloud.google.com → projeto → Ativar Google Sheets API")
-        print("  2. Credenciais → Criar → Conta de serviço → baixar JSON")
-        print("  3. Abrir a planilha → Compartilhar com o e-mail da conta de serviço")
-        print("  4. Copiar o ID da planilha do URL e colar em GMA_SHEETS_ID")
-        sys.exit(1)
 
-    print("Verificando internet...")
-    if not _tem_internet():
-        print("Sem conexão com a internet. Tente novamente quando conectado.")
-        sys.exit(1)
+        ok, erro = _credenciais_configuradas()
+        if not ok:
+            print(f"ERRO: {erro}")
+            print()
+            print("Configure no .env:")
+            print("  GMA_SHEETS_SA=conta-de-servico@projeto.iam.gserviceaccount.com")
+            print("  GMA_SHEETS_ID=cole_aqui_o_id_da_planilha")
+            sys.exit(1)
 
-    conn = banco_dados.obter_conexao()
-    print("Sincronizando...")
-    sucesso = sincronizar(conn)
-    conn.close()
+        print("Verificando internet...")
+        if not _tem_internet():
+            print("Sem conexão com a internet. Tente novamente quando conectado.")
+            sys.exit(1)
 
-    if sucesso:
-        sheet_id = os.environ.get("GMA_SHEETS_ID", "")
-        print(f"OK — planilha atualizada.")
-        print(f"URL: https://docs.google.com/spreadsheets/d/{sheet_id}")
+        conn = banco_dados.obter_conexao()
+        print("Sincronizando...")
+        sucesso = sincronizar(conn)
+        conn.close()
+
+        if sucesso:
+            sheet_id = os.environ.get("GMA_SHEETS_ID", "")
+            print("OK — planilha atualizada.")
+            print(f"URL: https://docs.google.com/spreadsheets/d/{sheet_id}")
+        else:
+            print("FALHA — verifique logs/exportador_sheets.log")
+            sys.exit(1)
     else:
-        print("FALHA — verifique logs/exportador_sheets.log")
-        sys.exit(1)
+        # ── Modo de produção: loop contínuo a cada INTERVALO_SYNC segundos ───
+        loop_exportador()

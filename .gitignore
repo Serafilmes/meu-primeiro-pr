@@ -6,10 +6,12 @@ credenciais_google.json
 *credentials*.json
 *-service-account*.json
 
-# Banco de dados local (é operacional, não vai para o repositório)
+# Banco de dados local (é operacional, não vai para o repositório).
+# O padrão sem barra pega gma.db em qualquer nível (inclui projetos/*/gma.db).
 gma.db
 gma.db-shm
 gma.db-wal
+gma.db.bak_*
 
 # Sentinela de ativação (estado de runtime)
 .gma_ativo

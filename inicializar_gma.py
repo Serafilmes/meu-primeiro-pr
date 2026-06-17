@@ -101,8 +101,10 @@ SCRIPT_TRANSFERENCIA = os.path.join(RAIZ_GMA, "transferencia.py")
 SCRIPT_AUDITORIA     = os.path.join(RAIZ_GMA, "auditoria.py")
 SCRIPT_SHEETS        = os.path.join(RAIZ_GMA, "exportador_sheets.py")
 
-# Nome do interpretador Python atual (mesmo que está rodando este script)
-PYTHON = sys.executable
+# Todos os scripts GMA dependem de pacotes instalados no /usr/bin/python3 (3.9):
+# Flask, gspread, google-auth, etc. O python3 do Homebrew (3.14) não os tem.
+# Por isso usamos o caminho fixo, independente de qual python roda este script.
+PYTHON = "/usr/bin/python3"
 
 # ── CONFIGURAÇÃO DE PREFIXOS ───────────────────────────────────────────────────
 #

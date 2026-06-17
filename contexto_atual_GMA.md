@@ -1,7 +1,7 @@
 # Contexto Atual — Sistema GMA
 ## Estado vivo do projeto (carregar em TODA sessão junto com `arquitetura_GMA.md`)
 
-> Última atualização: 2026-06-17 (sessão 34)
+> Última atualização: 2026-06-17 (sessão 35)
 > Para detalhes técnicos históricos, ver `historico_GMA.md` (não carregar por padrão).
 
 ---
@@ -12,7 +12,7 @@
 |---|---|---|
 | 1 | Check-in e identificação | ⚠️ Quase completa — Nova Ficha v2 ✅ + multi-seleção/data inteligente/"quem preencheu" (s33); falta mural dos câmeras, login do operador (2.3) e domínio fixo do túnel |
 | 2 | Transferência | ✅ Concluída e testada com cartão real |
-| 3 | Controle e segurança das informações | ✅ Quase completa — Kanban + Planilha + Molde; grupos editáveis (lista/texto) → chip+coluna automáticos (s33); **Sheets dinâmico ✅ (s34): exportador espelha molde+grupos via montador compartilhado**; Google Sheets real NO AR via impersonação (s32); **multi-projeto migrou p/ Camada 5 (painel)** |
+| 3 | Controle e segurança das informações | ✅ Quase completa — Kanban + Planilha + Molde; grupos editáveis (s33); Sheets dinâmico (s34); **exportador rodando em loop contínuo dentro do sistema completo (s35)** |
 | 4 | Auditoria + liberação do cartão | ✅ Concluída — ciclo integrado testado |
 | 5 | Plataforma profissional + multi-máquina | 🔧 Em planejamento — agente `plataforma-gma` + blueprint criados |
 | 6 | IA assíncrona | 📋 Futura |
@@ -21,6 +21,43 @@
 ---
 
 ## O que acabou de ser feito (sessões recentes)
+
+### ✅ Sessão 36 (BUILD) — Fatia B: PROGRAMAÇÃO DO DIA (a "virada das fichas")
+**Arquivos:** `banco_dados.py`, `flask_gma.py`, `projetos/rock_in_rio/carregar_lineup.py` (novo), `lineup_2026.json` (novo). **Sem commit.** Construído e testado no banco do festival; lab intocado.
+> A ficha é UMA SÓ e fixa; só o grupo **Show** troca conforme o **dia ativo**. Implementado o núcleo (edição ao vivo do line-up = Fatia B2).
+
+- **Banco:** tabelas `programacao` (data·palco·show, FKs para `listas_contexto`) e `configuracao` (chave-valor; guarda o `dia_ativo` — assume **hoje** se nada definido). Funções: `dia_ativo`/`definir_dia_ativo` (loga em `eventos`), `adicionar_programacao`, `shows_do_dia`, `dias_com_programacao`, `programacao_do_dia_por_palco`. Migração não-destrutiva em `inicializar_banco`.
+- **Line-up real carregado:** `carregar_lineup.py` lê o `lineup_2026.json` (155 shows reais, capturados do site com o MCP do Chrome) → cria os shows como itens do grupo **Show** (`custom_show`) + as 155 linhas de `programacao`. Idempotente; **recria o grupo Show se faltar** (o idealizador o excluíra no painel). Reaproveita TODO o mecanismo de chips (`formularios_chips` + coluna na planilha).
+- **Ficha (cascata):** ao escolher o **palco**, os chips de **Show** aparecem só com os shows daquele palco no dia ativo (via JS — `JS_SHOWS_CASCATA`; dados embutidos em `window.gmaProg`). Banner **"📅 Programação ativa: \<dia\>"** com seletor de dia (só operador). Retrocompatível: banco sem `programacao` (lab) → ficha normal.
+- **Trocar o dia:** rota `POST /dia-ativo` (local-only; o portão já barra remoto). O seletor usa `fetch`+reload (NÃO um `<form>` — estaria aninhado no form da ficha e submeteria a ficha; bug pego e corrigido no teste).
+- **Verificado:** cascata Palco Mundo→Foo Fighters/Rise Against/The Hives/Nova Twins (04/09); troca 04↔13/09 muda banner e shows (curl determinístico + navegador real, screenshot).
+- **➕ Refinos (mesma sessão, pós-feedback do idealizador):**
+  - **Palco virou MÚLTIPLA** (uma pessoa cobre vários palcos) e a **cascata SOMA os shows** dos palcos marcados (união sem repetir). Testado: Palco Mundo + Sunset → 8 shows.
+  - **Fatia B2 (adicionar show ao dia) CONSTRUÍDA:** controle "+ adicionar show" no bloco Show (só operador) com dropdown de palco → rota `POST /programacao/add-show` cria o show e liga ao dia ativo. Generaliza p/ RIO2C (sala→palestra num dia). Testado.
+  - **Ficha mais limpa:** Serviços, Tags e Pautas **desativados** no festival (o idealizador não usa). Lição: **desativar** (ativo=0), não excluir — excluir um grupo de sistema faz o re-seed do boot recriá-lo ativo (o `INSERT OR IGNORE` respeita a linha desativada). Ativos: Palcos · Marcas · Lugares · Momentos · Show.
+  - **Marcas reais** lidas do site (com o MCP do Chrome, via screenshot dos logos): Itaú (master) + Heineken, Coca-Cola, Seara, Ipiranga, KitKat, Prudential, TIM, Natura, Doritos, Superbet, iFood, C&A, Volkswagen. (Institucionais = poder público, fora.)
+  - **Aba "Listas" colapsável:** cada grupo tem botão minimizar/expandir + "minimizar/expandir todas"; estado lembrado em `localStorage` (reordenar recarrega a página e mantém o que estava fechado). Deixa a tela limpa e facilita reordenar os grupos (ex.: Show logo após Palcos).
+- **🔶 Observação restante:** o grupo Show aparece no fim da ficha (recriado com `ordem` alta) — ideal seria logo após Palcos; reordenável no painel (ou ajustar no carregador).
+
+### ✅ Sessão 36 (BUILD) — Projeto-festival "Rock in Rio (teste)" + banco por projeto (Fatia A)
+**Arquivos:** `banco_dados.py`, `projetos/rock_in_rio/seed_rock_in_rio.py` (novo), `.claude/launch.json`. **Sem commit.** Laboratório (`gma.db` da raiz) **intocado** (backup em `gma.db.bak_*`).
+> Objetivo: um projeto-exemplo do GMA pensado como **cobertura de festival**, para testes reais com cartões reais (material/datas fictícios). Categoria = **palco**, seleção = **show**. Referência: planilha do THE TOWN 2023 (coluna CONTEÚDO em texto livre → agora vira chips estruturados pelos grupos editáveis).
+
+- **Banco por projeto (mudança pequena e reversível):** `CAMINHO_BANCO` agora honra a variável `GMA_DB` (padrão = o `gma.db` de hoje, então nada muda no laboratório). Mesmo espírito do `PASTA_DESTINO_BASE` ("troque antes de cada evento"). **NÃO** é o Painel de Controle da Camada 5 (troca ao vivo) — é só configuração. Todos os processos usam `banco_dados.obter_conexao()`, então a variável alcança o sistema inteiro. Festival mora em `projetos/rock_in_rio/gma.db`.
+- **Seed idempotente** (`seed_rock_in_rio.py`): cadastra os **28 profissionais** (18 vídeo + 10 foto, da lista enviada, com letra sequencial) e monta os grupos do festival — **Palcos** (escolhe 1; os 6 reais), **Show** (vazio de propósito — line-up entra na Fatia B), **Lugares** (6), **Momentos** (6), **Marcas** (4 ativações). **Pautas** e **Serviços** desativados (não usados no festival; reversível pelo painel). Aponta `GMA_DB` antes de importar o `banco_dados`.
+- **Verificado:** banco do festival com 28 pros + grupos/itens certos; laboratório segue com 7 pros e Recap/Acessoria. Ficha real renderizada (`/ficha` no banco do festival, via `launch.json` "rock-in-rio-ficha", porta 5051) com o vocabulário do festival e sem vazar os grupos do laboratório.
+- **Line-up:** ✅ **capturado** (s36) — o site tem a grade por dia e palco em `https://rockinrio.com/rio/line-up/dia/DD-set/`, mas é montado por **JavaScript** (o WebFetch não isola o dia). Lido com o **MCP do Chrome** (renderiza JS) e salvo em `projetos/rock_in_rio/lineup_2026.json`: **155 shows**, 7 dias (04/05/06/07/11/12/13 set **2026**) × 6 palcos. É a fonte da tabela `programacao` da Fatia B.
+- **Decisão central — "virada das fichas" = PROGRAMAÇÃO DO DIA:** a ficha é **uma só** e fixa (palco/lugares/momentos/marca não mudam); só o grupo **Show** troca conforme o **dia ativo**. O sistema assume hoje, mostra aviso "Programação ativa: <dia> — trocar?", o operador edita o line-up ao vivo. Melhor que N fichas separadas (que duplicariam tudo e divergiriam). **Não construído ainda** — é a Fatia B (tabela `programacao` dia·palco·show + `dia_ativo` + cascata palco→shows-do-dia + confirmação).
+
+### ✅ Sessão 35 (BUILD) — Exportador integrado ao sistema completo + fix Python
+**Arquivos:** `inicializar_gma.py`, `exportador_sheets.py`. **Commitado.**
+
+- **Raiz do problema:** `python3` no PATH é o Homebrew 3.14, que não tem Flask, gspread nem google-auth. O `inicializar_gma.py` usava `sys.executable`, então todos os subprocessos (Flask, Sheets) falhavam.
+- **Fix em `inicializar_gma.py`:** `PYTHON` fixado em `/usr/bin/python3` (3.9, onde todas as libs estão instaladas). Parâmetro `python=None` removido — agora é uniforme para todos os processos.
+- **Fix em `exportador_sheets.py`:** o `__main__` sem argumento → `loop_exportador()` (produção, 60s); com `--teste` → sincroniza uma vez e sai (diagnóstico manual). Antes rodava sempre em modo de teste (executava uma vez e encerrava).
+- **Re-auth do gcloud:** a sessão tinha expirado (`gcloud auth login` refeito pelo idealizador).
+- **Resultado testado:** 6/6 processos sobem; `[SHEETS] Planilha atualizada em 11:06:56` confirmado no primeiro ciclo.
+- **Organograma atualizado:** projeto em 62% total (núcleo C1–C4 em ~84%; C5–C7 em ~5%).
 
 ### ✅ Sessão 34 (BUILD) — Sheets DINÂMICO + montador compartilhado (Camada 3, Fatia 5 parte mecânica)
 **Arquivos:** `banco_dados.py`, `exportador_sheets.py`, `flask_gma.py`. **Sem commit.** Testado ponta a ponta (banco isolado + test client); `gma.db` real intocado.
@@ -155,16 +192,13 @@ Depois de testar a Fatia 1, o idealizador esclareceu e expandiu:
 
 ## 🎯 Próxima sessão — candidatos (a escolher com o idealizador)
 
-A **Fatia 5 (Sheets dinâmico)** foi entregue na s34. A outra metade (multi-projeto) virou **Painel de
-Controle da Camada 5** (`plano_camada5_GMA.md` §1.3) — peça grande, só depois dos pré-requisitos.
-
 Candidatos naturais para a próxima sessão:
-1. **Testar o exportador dentro do sistema completo** — até agora o Sheets foi rodado à mão; rodar pelo `inicializar_gma` (loop de 60s) e ver o espelho dinâmico subir de verdade. Lembrar: `/usr/bin/python3` (3.9 tem gspread), `gcloud` no PATH, impersonação ([[sheets-auth-impersonacao]]).
-2. **Agrupar a planilha por profissional** (modelo das planilhas antigas), não só por dia — pendência registrada da C3.
-3. **Central de Entrada — importação de fontes** (começar pela planilha remota/CSV, já provada) — montar o vocabulário sem digitar item a item.
-4. **Mural dos câmeras** (2º monitor, read-only) — desenho pronto da s21.
+1. **Agrupar a planilha por profissional** (modelo das planilhas antigas), não só por dia — pendência registrada da C3.
+2. **Central de Entrada — importação de fontes** (começar pela planilha remota/CSV, já provada) — montar o vocabulário sem digitar item a item.
+3. **Mural dos câmeras** (2º monitor, read-only) — desenho pronto da s21.
+4. **PDF Overview** — reescrever gerador no estilo dashboard + folha de contato; material de teste pronto (224 frames, 62 mídias).
 
-**Commit pendente:** o trabalho da s34 (`banco_dados.py`, `exportador_sheets.py`, `flask_gma.py` + docs) ainda **não foi commitado** — sugerir commit no início da próxima sessão.
+**Nota técnica:** para testar o exportador manualmente: `/usr/bin/python3 exportador_sheets.py --teste`. O `gcloud auth login` pode precisar ser refeito eventualmente quando a sessão expirar.
 
 ---
 
@@ -196,11 +230,7 @@ Candidatos naturais para a próxima sessão:
 
 ## Arquivos com mudanças não commitadas (atenção)
 
-- `exportador_sheets.py` — agora **DINÂMICO** (s34): usa `bd.montar_planilha`; auth por impersonação, fix gspread 6.x, carrega `.env` sozinho. **Sem commit.**
-- `banco_dados.py` — **montador compartilhado da planilha** (s34): `CATALOGO_PLANILHA`, `colunas_planilha`, `valor_celula_planilha`, `montar_planilha`, `sincronizar_molde_completo`. **Sem commit.**
-- `flask_gma.py` — `/planilha` delega ao montador (s34); símbolos mortos removidos. **Sem commit.**
-- `plano_camada5_GMA.md` — §1.3 nova (Painel de Controle + troca ao vivo) (s34). **Sem commit.**
-- `contexto_atual_GMA.md` + `arquitetura_GMA.md` — docs de fim da s34.
+Tudo commitado e enviado ao `origin` até a **S36** (commits `8b0b53e` Rock in Rio + programação do dia, `151047f` Listas colapsável, `2709dd5` fix reordenar grupos). Branch: `fatia5-sheets-multiprojeto`. Backup do laboratório em `gma.db.bak_20260617_*`. Nada solto na árvore de trabalho.
 
 ---
 
