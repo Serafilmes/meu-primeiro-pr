@@ -1379,60 +1379,17 @@ def _esc(valor):
     return html.escape(str(valor)) if valor is not None else ""
 
 
-def _fmt_tamanho(num_bytes):
-    """Formata um número de bytes em algo legível (KB/MB/GB)."""
-    try:
-        tamanho = float(num_bytes or 0)
-    except (TypeError, ValueError):
-        return "—"
-    if tamanho <= 0:
-        return "—"
-    for unidade in ("B", "KB", "MB", "GB", "TB"):
-        if tamanho < 1024:
-            return f"{tamanho:.1f} {unidade}"
-        tamanho /= 1024
-    return f"{tamanho:.1f} PB"
+# NOTA (s34): a formatação de tamanho e os valores de chip/texto da planilha
+# moram agora no montador compartilhado (banco_dados._fmt_tamanho_planilha e
+# banco_dados.valor_celula_planilha), usado tanto aqui quanto pelo exportador.
 
 
-# Colunas do Kanban (chave · rótulo · cor). O card "anda" da esquerda p/ direita.
 # ── CATÁLOGO DA PLANILHA DE ENTREGA ──────────────────────────────────────────
-# Fonte de verdade das colunas disponíveis. Cada entrada:
-#   (chave, rótulo, bloco, tipo_render, campo, visivel_padrao)
-#
-# tipo_render:
-#   "especial"  — lógica própria (ex: profissional + áudio)
-#   "chip"      — lê de chips_map (campo = tipo do chip: palco/marca/…)
-#   "n_arq"     — total_arquivos_transferidos com fallback "—"
-#   "tamanho"   — bytes → texto legível via _fmt_tamanho
-#   "dado"      — campo SQL direto; campo=None → sempre "—" (placeholder custom)
-#
-# visivel_padrao: 1 = visível por padrão / 0 = oculta (operador liga quando precisar)
-# Colunas de pós-produção chegam ocultas — o operador ativa quando o evento precisar.
-# NOTA (Fatia 4, s33): as colunas de CLASSIFICAÇÃO não estão mais aqui — elas são
-# GERADAS a partir dos grupos (grupos_classificacao), uma coluna "chip_<chave>" por
-# grupo, sincronizadas no molde via bd.sincronizar_colunas_grupos(). Aqui ficam só
-# as colunas fixas do sistema (identificação · técnicas · pós-produção).
-CATALOGO_PLANILHA = [
-    # chave               rótulo            bloco            tipo        campo                          vis
-    ("prof_nome",    "Profissional",  "identificacao", "especial", "prof_nome",                    1),
-    ("marca_camera", "Câmera",        "identificacao", "dado",     "marca_camera",                 1),
-    ("tipo_material","Tipo",          "identificacao", "dado",     "tipo_material",                 1),
-    ("data_gravacao","Data",          "identificacao", "dado",     "data_gravacao",                 1),
-    ("numero_cartao","Nº cartão",     "identificacao", "dado",     "numero_cartao",                 1),
-    ("n_arquivos",   "Nº arquivos",   "tecnicas",      "n_arq",    "total_arquivos_transferidos",   1),
-    ("tamanho",      "Tamanho",       "tecnicas",      "tamanho",  "tamanho_transferido_bytes",     1),
-    ("status",       "Status",        "tecnicas",      "dado",     "status",                        1),
-    ("destino_pasta","Caminho no HD", "tecnicas",      "dado",     "destino_pasta",                 1),
-    ("pos_editor",   "Editor",        "pos_producao",  "dado",     None,                            0),
-    ("pos_edicao",   "Edição",        "pos_producao",  "dado",     None,                            0),
-    ("pos_upload",   "Upload",        "pos_producao",  "dado",     None,                            0),
-]
-
-# Posto na ordem dos blocos (para ordenar colunas por bloco, não só por `ordem`).
-_RANK_BLOCO = {b[0]: i for i, b in enumerate([
-    ("identificacao", ""), ("classificacao", ""), ("tecnicas", ""),
-    ("pos_producao", ""), ("custom", ""),
-])}
+# A fonte de verdade das colunas mora em banco_dados.CATALOGO_PLANILHA (montador
+# compartilhado, s34) — a /planilha local e o exportador do Google Sheets leem do
+# MESMO lugar. Aqui só referenciamos para _garantir_molde e o fallback sem banco.
+# (Sem banco disponível, a planilha é uma vista vazia — ela é uma leitura do DB.)
+CATALOGO_PLANILHA = bd.CATALOGO_PLANILHA if BANCO_DISPONIVEL else []
 
 # Ordem e rótulos dos blocos (para a página /molde)
 BLOCOS_PLANILHA = [
@@ -1442,9 +1399,6 @@ BLOCOS_PLANILHA = [
     ("pos_producao",   "Pós-produção"),
     ("custom",         "Personalizado"),
 ]
-
-# Índice rápido chave → definição do catálogo padrão
-_CATALOGO_IDX = {e[0]: e for e in CATALOGO_PLANILHA}
 
 # Garante que a tabela molde_planilha existe (migração roda uma vez só).
 _MOLDE_TABELA_OK = False
@@ -1800,19 +1754,13 @@ def salvar_observacao(cartao_id):
     return redirect("/kanban")
 
 
-def _valores_chip(chips, tipo):
-    """
-    Junta, para exibição na planilha, os valores de classificação de um tipo
-    (palco/marca/pauta/servico/tag) de uma ficha. Devolve '—' quando não houver.
-    `chips` é a lista vinda de bd.chips_por_formulario para aquela ficha.
-    """
-    vals = [c["valor"] for c in chips if c["tipo"] == tipo]
-    return _esc(" · ".join(vals)) if vals else "—"
-
-
 def _celula_planilha(col, linha, chips, textos=None):
     """
-    Renderiza o valor de uma célula para uma linha da planilha.
+    Renderiza o valor de uma célula da planilha em HTML.
+
+    O VALOR vem do montador compartilhado (bd.valor_celula_planilha) — a mesma
+    fonte do exportador do Google Sheets, para os dois nunca divergirem. Aqui só
+    cuidamos da apresentação: escape de HTML e o destaque do 2º nome (áudio).
 
     Args:
         col:    dict do molde enriquecido com tipo_render e campo.
@@ -1820,10 +1768,7 @@ def _celula_planilha(col, linha, chips, textos=None):
         chips:  lista de chips desta ficha (bd.chips_por_formulario).
         textos: dict {grupo_chave: [valores]} desta ficha (bd.textos_por_formulario).
     """
-    tipo = col.get("tipo_render", "dado")
-    campo = col.get("campo")
-
-    if tipo == "especial":  # coluna Profissional — lógica especial de nome
+    if col.get("tipo_render") == "especial":  # Profissional + 2º nome de áudio (HTML rico)
         profissional = linha["prof_nome"]
         if not profissional and linha["numero_cartao"]:
             profissional = linha["numero_cartao"].rsplit("_", 1)[0]
@@ -1833,33 +1778,15 @@ def _celula_planilha(col, linha, chips, textos=None):
                          f'+ {_esc(linha["prof_nome_audio"])} (áudio)</span>')
         return html_val
 
-    if tipo == "chip":
-        return _valores_chip(chips, campo)
-
-    if tipo == "texto":  # grupo de preenchimento livre
-        vals = (textos or {}).get(campo, [])
-        return _esc(" · ".join(vals)) if vals else "—"
-
-    if tipo == "n_arq":
-        v = linha["total_arquivos_transferidos"]
-        return str(v) if v is not None else "—"
-
-    if tipo == "tamanho":
-        return _fmt_tamanho(linha["tamanho_transferido_bytes"])
-
-    # tipo == "dado" (ou colunas custom)
-    if not campo:
-        return "—"
-    try:
-        return _esc(linha[campo]) or "—"
-    except (IndexError, KeyError):
-        return "—"
+    return _esc(bd.valor_celula_planilha(col, linha, chips, textos))
 
 
 def _colunas_visiveis():
     """
-    Retorna a lista de colunas visíveis enriquecidas com tipo_render e campo
-    do catálogo padrão. Colunas custom (não no catálogo) recebem tipo "dado".
+    Colunas visíveis da planilha (delega ao montador compartilhado em banco_dados).
+
+    O Flask (HTML) e o exportador do Google Sheets leem as colunas DAQUI — fonte
+    única, nunca divergem.
     """
     _garantir_molde()
     if not BANCO_DISPONIVEL:
@@ -1871,37 +1798,12 @@ def _colunas_visiveis():
         ]
     try:
         conn = bd.obter_conexao()
-        cols = bd.listar_molde_visivel(conn)
-        # Grupos ATIVOS (por chave): uma coluna chip_<chave> só aparece se o grupo
-        # estiver ativo. O modo decide se a célula lê chips ou texto livre.
-        grupos_ativos = {g["chave"]: g for g in bd.listar_grupos(conn, apenas_ativos=True)}
+        cols = bd.colunas_planilha(conn)
         conn.close()
+        return cols
     except Exception as e:
         logger.error(f"MOLDE | Erro ao listar | {e}")
         return []
-
-    resultado = []
-    for c in cols:
-        chave = c["chave"]
-        if chave.startswith("chip_"):
-            # Coluna de grupo: só entra se o grupo estiver ativo.
-            grupo_chave = chave[len("chip_"):]
-            g = grupos_ativos.get(grupo_chave)
-            if not g:
-                continue
-            c["tipo_render"] = "texto" if g.get("modo") == "texto" else "chip"
-            c["campo"]       = grupo_chave
-        else:
-            cat = _CATALOGO_IDX.get(chave)
-            c["tipo_render"] = cat[3] if cat else "dado"
-            c["campo"]       = cat[4] if cat else None
-        resultado.append(c)
-
-    # Ordena por bloco (identificação → classificação → técnicas → pós → custom)
-    # e, dentro do bloco, pela ordem. Mantém as colunas de grupo agrupadas mesmo
-    # quando criadas depois (ordem alta no molde).
-    resultado.sort(key=lambda c: (_RANK_BLOCO.get(c["bloco"], 99), c["ordem"]))
-    return resultado
 
 
 @app.route("/planilha", methods=["GET"])
