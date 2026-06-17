@@ -10,9 +10,9 @@
 
 | Camada | Nome | Status |
 |---|---|---|
-| 1 | Check-in e identificação | ⚠️ Quase completa — Nova Ficha v2 ✅; falta mural dos câmeras e domínio fixo do túnel |
+| 1 | Check-in e identificação | ⚠️ Quase completa — Nova Ficha v2 ✅ + multi-seleção/data inteligente/"quem preencheu" (s33); falta mural dos câmeras, login do operador (2.3) e domínio fixo do túnel |
 | 2 | Transferência | ✅ Concluída e testada com cartão real |
-| 3 | Controle e segurança das informações | ✅ Quase completa — Kanban + Planilha locais; chips ficha→planilha (s32); **Google Sheets real NO AR via impersonação (s32)** |
+| 3 | Controle e segurança das informações | ✅ Quase completa — Kanban + Planilha + Molde; **grupos editáveis (lista/texto) → chip+coluna automáticos (s33)**; Google Sheets real NO AR via impersonação (s32); falta Fatia 5 (Sheets dinâmico + multi-projeto) |
 | 4 | Auditoria + liberação do cartão | ✅ Concluída — ciclo integrado testado |
 | 5 | Plataforma profissional + multi-máquina | 🔧 Em planejamento — agente `plataforma-gma` + blueprint criados |
 | 6 | IA assíncrona | 📋 Futura |
@@ -22,11 +22,30 @@
 
 ## O que acabou de ser feito (sessões recentes)
 
-### ✅ Sessão 33 (BUILD) — Molde da Planilha (Camada 3, Fatia 1)
-**Arquivos:** `banco_dados.py`, `flask_gma.py`. **Commitado** (`e385153`).
-- **Banco:** tabela `molde_planilha` (chave · rótulo · bloco · ordem · visível · sistema). Migração não-destrutiva via `inicializar_banco()`. Funções: `sincronizar_catalogo_molde`, `listar_molde`, `listar_molde_visivel`, `definir_visivel_coluna`, `adicionar_coluna_custom`, `excluir_coluna_custom` (só sistema=0).
-- **Flask:** `CATALOGO_PLANILHA` (17 colunas em 4 blocos; pós-produção oculta por padrão). `/planilha` refatorada para ler colunas do molde dinamicamente. Nova página `GET /molde` (gestão completa: toggle individual · toggle de bloco inteiro · adicionar coluna personalizada · excluir coluna personalizada). Todos os POSTs usam redirect 303 (PRG correto).
-- **Testado:** ocultar/mostrar coluna individual ✓, ocultar/mostrar bloco inteiro ✓, pós-produção oculta por padrão e liga de um clique ✓, adicionar coluna custom ✓, excluir coluna custom ✓, guard recusa excluir coluna do sistema ✓.
+### ✅ Sessão 33 (BUILD) — GRUPOS EDITÁVEIS de classificação (Camada 3, peça grande)
+**Arquivos:** `banco_dados.py`, `flask_gma.py`. **Tudo commitado.** Testado em navegador real (preview) + curl.
+> Princípio do idealizador: **1 ponto de criação** — um grupo, ao ser criado, vira automaticamente um bloco de chips na ficha **e** uma coluna na planilha. "Tudo muito editável." Os grupos deixaram de ser fixos no código e viraram **dados**.
+
+- **Fatia 1 — tabela `grupos_classificacao`** (`chave`·`rotulo`·`multipla`·`ordem`·`ativo`·`sistema`·`modo`). Semeia os 5 padrão (palco/marca/pauta/servico/tag) com as chaves atuais (migração não-destrutiva — `listas_contexto.tipo` segue apontando para a chave). Funções: criar/renomear/mover/ativar/excluir grupo. **Toda operação é logada em `eventos`** (fundação do log; instrumentação ampla + tela ficam com a Camada 5 — ver [[log-operacoes-requisito]]).
+- **Fatia 2 — ficha lê os grupos do banco** (`_bloco_classificacao_ficha` itera `listar_grupos(apenas_ativos)`; rótulo e única/múltipla vêm de cada grupo). `CLASSIF_UNICA` esvaziado (regra agora é por grupo). Grupo vazio aparece p/ o operador (com "+ novo"); no remoto, some.
+- **Fatia 3 — painel de grupos na aba "Listas"** (`_cabecalho_grupo_html` + rotas `/grupos`, `/grupos/<chave>/editar|mover|ativo|excluir`). Operador cria/renomeia/reordena/ativa/exclui grupos. Excluir só se não usado (senão desativa). Card "Novo grupo".
+- **Fatia 4 — planilha gera colunas dos grupos** (`sincronizar_colunas_grupos`: cada grupo → coluna `chip_<chave>` no molde, visível por padrão; propaga rótulo/ordem; remove órfãs). `_colunas_visiveis` só mostra coluna de grupo ATIVO; ordena por bloco. `CATALOGO_PLANILHA` perdeu as 5 colunas chip fixas (agora dinâmicas).
+- **+ Modo "escreve na hora" (texto livre)** — grupo ganha `modo` ('lista'|'texto'). No texto, a ficha mostra **caixa de tags** (vários valores por ficha, ex.: nome do entrevistado); tabela nova `formularios_textos`; planilha lê de `textos_por_formulario`. Funções: definir/listar/textos_por_formulario; `grupo_em_uso` cobre texto também.
+- **Molde só reflete grupos + sistema** — **removido** o recurso de "coluna personalizada" solta (`/molde/nova`, `/molde/<chave>/excluir`, `adicionar/excluir_coluna_custom`): colunas só vêm dos grupos cadastrados e do sistema. Coluna órfã `custom_entrevistas` limpa. (Corrige a entrada antiga do Molde abaixo.)
+
+### ✅ Sessão 33 (BUILD) — Nova Ficha: multi-seleção, reordenação, data e "quem preencheu"
+**Arquivo:** `flask_gma.py`. **Commitado.** Revisão estrutural conduzida com o agente `checkin-gma`.
+- **Multi-seleção em TODOS os grupos** (palco/marca/pauta/serviço): um cartão cobre vários. Banco já suportava (`formularios_chips` é N-N) — zero migração. **Contador** "· N marcados" por grupo.
+- **Campos antigos aposentados da ficha** ("Tipo de conteúdo" e "Local/cena" — sobrepunham os chips); colunas mantidas no banco p/ fichas antigas. **Chips reordenados** para logo após a data. **Responsivo** no celular (`@media`).
+- **"+ novo" inline** nos chips (só operador/local) → cria item na hora via `/listas/criar-inline`.
+- **Data inteligente (2.1):** "Quando foi gravado?" assume **Hoje**; só abre o campo de data em "Outro dia".
+- **"Quem está preenchendo?" (2.2):** na ficha REMOTA, "Eu mesmo" (operador = o próprio nome) ou "Outra pessoa". Na base segue texto livre (login do operador = **2.3 adiado**).
+- **🐛 Fix:** os chips não selecionavam — o JS rodava no `<head>` antes do DOM. Envolvido em `DOMContentLoaded` (vale p/ `JS_CHIPS`, `JS_CHIP_NOVO`, `JS_TEXTO_GRUPO`, `JS_FICHA_TOGGLES`).
+
+### ✅ Sessão 33 (BUILD) — Molde da Planilha (Camada 3) — base
+**Arquivos:** `banco_dados.py`, `flask_gma.py`. **Commitado.**
+- **Banco:** tabela `molde_planilha` (chave · rótulo · bloco · ordem · visível · sistema). Funções: `sincronizar_catalogo_molde`, `listar_molde(_visivel)`, `definir_visivel_coluna`. (As funções de coluna custom foram **removidas** depois — ver acima.)
+- **Flask:** `/planilha` lê as colunas do molde dinamicamente; `GET /molde` liga/desliga colunas individuais e blocos inteiros (pós-produção oculta por padrão). Colunas de classificação vêm dos grupos (Fatia 4).
 
 ### ✅ Sessão 32 (BUILD) — Google Sheets real NO AR (Camada 3, via impersonação)
 **Arquivos:** `exportador_sheets.py`, `.env`, `.gitignore`. **Sem commit.** Configuração feita com o idealizador (gcloud + autorizações no navegador).
@@ -112,7 +131,7 @@ Depois de testar a Fatia 1, o idealizador esclareceu e expandiu:
 
 5. 📊 **Google Sheets real** (Camada 3) — ✅ **NO AR (s32)** via impersonação. Pendências menores: o exportador precisa do `gcloud` no PATH e roda na sincronização do `inicializar_gma` a cada 60s; testar dentro do sistema completo (até agora só rodado à mão).
 
-8. 🗂️ **Gestão de listas de contexto** (operador) — Fatia 1 ✅ (aba "Listas", s31); **ponte chips→ficha→planilha ✅ (s32)**; **Molde da Planilha ✅ (s33)** — blocos/colunas ligam-desligam, add/remove colunas custom. **Próxima fatia:** agrupar a planilha por profissional + espelhar o molde no `exportador_sheets.py`.
+8. 🗂️ **Gestão de listas/grupos de contexto** (operador) — Fatia 1 ✅ (aba "Listas", s31); ponte chips→ficha→planilha ✅ (s32); Molde da Planilha ✅ (s33); **GRUPOS EDITÁVEIS Fatias 1-4 ✅ + modo texto ✅ (s33)** — 1 ponto de criação: grupo → chip na ficha + coluna na planilha; lista ou preenchimento livre. **Próxima — FATIA 5 (próxima sessão):** espelhar no Google Sheets as colunas dinâmicas dos grupos **+ multi-projeto** (cada evento = uma planilha Google nova conectada). Cruza Camada 3/5. Ver desenho na memória [[grupos-editaveis-design]]. Pendências menores: agrupar a planilha por profissional; login do operador (2.3 da ficha).
 
 9. 📥 **Central de Entrada — importação de fontes** (preparação) — montar as listas a partir de lista colada / planilha remota-CSV / PDF / print(OCR); pipeline Fontes→Extração→Revisão do operador→`listas_contexto`. Desenho alinhado (s31, sem código); começar pela planilha remota/CSV (já provada).
 
@@ -122,10 +141,29 @@ Depois de testar a Fatia 1, o idealizador esclareceu e expandiu:
 
 ---
 
+## 🎯 Próxima sessão — FATIA 5: Sheets dinâmico + multi-projeto
+
+**Objetivo:** fechar o ciclo dos grupos editáveis na nuvem e introduzir o multi-projeto.
+
+Duas frentes que se cruzam (Camada 3 + Camada 5):
+1. **Sheets dinâmico** — `exportador_sheets.py` hoje tem 26 colunas FIXAS. Precisa ler as colunas do **molde + grupos** (mesma lógica de `_colunas_visiveis`/`_celula_planilha` da `/planilha`), incluindo os grupos de **texto** (`textos_por_formulario`). Ideal: extrair um "montador de linhas da planilha" compartilhado entre a `/planilha` local e o exportador, p/ não duplicar.
+2. **Multi-projeto** — cada evento = uma **planilha Google nova conectada**. Hoje o `.env` tem 1 `GMA_SHEETS_ID` fixo. Decidir: como o operador cria/troca o projeto ativo? (tabela `projetos`? seleção na central? uma planilha por projeto criada pelo idealizador e colada o ID?). O `gma.db` é por-instância/por-trabalho (princípio C5, ver [[multi-projeto-por-trabalho]]) — alinhar se multi-projeto é trocar de instância ou conviver num só banco.
+
+**Antes de codar:** desenhar o multi-projeto com o idealizador (como fizemos com os grupos) — é decisão de arquitetura. O Sheets dinâmico em si é mecânico.
+**Lembrar:** roda com `/usr/bin/python3` (3.9 tem gspread); precisa do `gcloud` no PATH; auth por impersonação ([[sheets-auth-impersonacao]]).
+
+---
+
 ## Decisões importantes recentes (não mudar sem discussão)
 
 | Decisão | Sessão |
 |---|---|
+| **Grupos de classificação são EDITÁVEIS (dados, não código)** — 1 ponto de criação: criar um grupo → vira chip na ficha **e** coluna na planilha (visível por padrão). Cada grupo tem regra própria (lista/texto, único/vários). Grupo do sistema ou em uso: só desativa; não usado: pode excluir | S33 |
+| **Grupo tem 2 modos: "escolhe da lista" (chips) e "escreve na hora" (texto livre)** — texto guarda vários valores por ficha em `formularios_textos` | S33 |
+| **Colunas da planilha vêm SÓ de grupos cadastrados + sistema** — sem coluna "personalizada" solta (removida); Molde só liga/desliga | S33 |
+| **Multi-seleção em todos os grupos de chips**; "Tipo de conteúdo"/"Local-cena" aposentados da ficha (chips cobrem) | S33 |
+| **Ficha: data assume Hoje** (só pede em "Outro dia"); **"quem preencheu"** = o próprio profissional no remoto; login do operador (2.3) adiado | S33 |
+| **Log de operações é da Camada 5** — fundação (tabela `eventos` + grupos já logam) pronta; instrumentação ampla + tela `/historico` ficam com `plataforma-gma` | S33 |
 | **Áudio é SEMPRE transferência à parte** — ficha mista gera 2 fichas com `entrega_id` comum | S30 |
 | **Planilha de Entrega = ficha do profissional + colunas técnicas do sistema**; classificação por chips (profissional preenche, operador revisa opcional) | S31 |
 | **Listas de contexto (palco/marca/serviço/pauta/tags) são dinâmicas**, geridas só pelo operador na central; numeração `NOME_NNN` é independente e contínua | S31 |
@@ -136,15 +174,15 @@ Depois de testar a Fatia 1, o idealizador esclareceu e expandiu:
 | **NOME é dropdown fechado** na ficha (sem digitação livre) | S28 |
 | **Letra sequencial do profissional** (A, B, C…) é pista visual, não autoridade de identidade | S27 |
 | **Passo 2 do Matcher** implementado — empate resolve com tela de resumo (2 cliques) | S25 |
-| **Sem commit ainda** nas sessões 27–30 — a critério do idealizador | S27–S30 |
+| **Trabalho da s33 todo commitado** na branch `melhoria/readme` (o "sem commit" das s27–32 estava desatualizado — o código já estava commitado) | S33 |
 
 ---
 
 ## Arquivos com mudanças não commitadas (atenção)
 
-- `exportador_sheets.py` — auth por impersonação (`GMA_SHEETS_SA`), fix gspread 6.x, 5 colunas de chips, carrega `.env` sozinho (s32). **Sem commit.**
-- `contexto_atual_GMA.md` — este arquivo (atualizado s33). **Sem commit.**
-- Todos os demais (`banco_dados.py`, `flask_gma.py`, `matcher.py`, `leitor_midia.py`, `.gitignore`) **já commitados** até a s33.
+- `exportador_sheets.py` — auth por impersonação (`GMA_SHEETS_SA`), fix gspread 6.x, 5 colunas de chips, carrega `.env` sozinho (s32). **Sem commit.** ⚠️ Ainda tem só 26 colunas FIXAS — **na Fatia 5 precisa virar dinâmico** (ler os grupos, igual à `/planilha`).
+- `contexto_atual_GMA.md` + `arquitetura_GMA.md` — docs de fim da s33 (este commit).
+- Todos os demais (`banco_dados.py`, `flask_gma.py`, `.claude/launch.json`) **já commitados** na s33.
 
 ---
 

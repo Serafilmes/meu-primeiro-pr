@@ -102,7 +102,8 @@ Processos: `porteiro.py` · `leitor_midia.py` · `matcher.py` · `flask_gma.py`
 - TIPO em caixinhas multi-seleção; NOME em dropdown fechado filtrado pelo tipo
 - Multi-tipo grava como booleanos (`tem_foto`, `tem_audio`, `tem_video`) + 2º nome (`nome_audio`)
 - Ficha mista com áudio → duas fichas ligadas por `entrega_id`
-- **Classificação na ficha (s31):** o profissional marca palco/marca/serviço/pauta/tags por *chips* de listas geridas pelo operador (ver Camada 3); identidade/numeração ficam separadas da classificação
+- **Classificação na ficha (s31→s33):** o profissional classifica por **grupos editáveis** (ver Camada 3) — *chips* (escolhe da lista, multi-seleção) ou *caixa de texto* (escreve na hora, vários valores). Identidade/numeração ficam separadas da classificação. Só o operador (local) cria item/grupo na hora ("+ novo"); o profissional só escolhe/escreve.
+- **Refinos da ficha (s33):** data assume **Hoje** (só pede em "Outro dia"); **"quem está preenchendo?"** no remoto ("Eu mesmo" → operador = o próprio nome / "Outra pessoa"); chips logo após a data; responsivo no celular; campos antigos "Tipo de conteúdo"/"Local-cena" aposentados (os grupos cobrem). Login do operador (origem do "quem preencheu" na base) = **adiado**.
 
 **Perfil por profissional (Fase 1 — aprender):** a cada match confirmado, o sistema acumula câmera/modelo/prefixo/faixa de numeração. Fase 2 (usar para desempatar) = próximo passo.
 
@@ -120,17 +121,24 @@ Processos: `transferencia.py` · `copiador.py` · `extrator_frames.py` · `gma_r
 ### Camada 3 — Controle e segurança das informações ⚠️
 Processo: `banco_dados.py` · `exportador_sheets.py` · Flask (telas `/kanban` e `/planilha`)
 
-**5 tabelas do `gma.db`:**
+**Tabelas do `gma.db`:**
 - `cartoes` — um por cartão detectado
-- `formularios` — um por ficha de check-in (14+ colunas incluindo booleanos de tipo, `nome_audio`, `entrega_id`)
+- `formularios` — um por ficha de check-in (booleanos de tipo, `nome_audio`, `entrega_id`)
 - `matches` — vínculo cartão↔formulário confirmado
 - `match_candidatos` — candidatos de empate (pendente/escolhido/descartado)
 - `arquivos` — **tabela-chave**: 1 linha por arquivo (mídia da C1 + integridade da C2)
-- `eventos` — log append-only (auditoria)
+- `eventos` — log append-only (auditoria); **grupos já gravam aqui** (fundação do log de operações — a tela fica com a Camada 5)
 - `perfis` — assinatura acumulada por profissional
 - `profissionais` — cadastro com letra, tipos e câmera
+- `listas_contexto` — itens de classificação (valor) por grupo (`tipo` = chave do grupo)
+- `formularios_chips` — ponte ficha↔item (modo lista, N-N)
+- `grupos_classificacao` — **(s33)** os grupos editáveis: `chave`·`rotulo`·`multipla`·`ordem`·`ativo`·`sistema`·`modo`('lista'|'texto')
+- `formularios_textos` — **(s33)** valores de texto livre por ficha (grupos modo 'texto'; vários por grupo)
+- `molde_planilha` — **(s33)** quais colunas da planilha aparecem (sistema + uma `chip_<chave>` por grupo)
 
-**Google Sheets:** `exportador_sheets.py` assíncrono, offline-first. Ativar: preencher `GOOGLE_CREDENTIALS_JSON` e `GMA_SHEETS_ID` no `.env`.
+**Grupos editáveis = 1 ponto de criação (s33):** os grupos de classificação não são mais fixos no código — são **dados** que o operador gere na aba "Listas". Criar um grupo → vira **bloco de chips na ficha** (via `listar_grupos`) **e coluna na planilha** (via `sincronizar_colunas_grupos`, coluna `chip_<chave>` visível por padrão). Cada grupo tem regra própria: **modo** `lista` (escolhe chips de `listas_contexto`) ou `texto` (escreve livre → `formularios_textos`, vários valores); e **múltipla** (marca vários) ou única. Renomear/reordenar/ativar/excluir refletem na hora em ficha e planilha. Excluir só se não usado (`grupo_em_uso` cobre chips e textos); senão, desativa (soft-delete preserva histórico). A planilha mostra **só** colunas de grupos+sistema (não há mais coluna "personalizada" solta).
+
+**Google Sheets:** `exportador_sheets.py` assíncrono, offline-first. Auth por **impersonação** (`GMA_SHEETS_SA`, ver memória) ou chave clássica; `GMA_SHEETS_ID` no `.env`. ⚠️ **Pendente Fatia 5:** ainda tem colunas FIXAS — precisa ler do molde+grupos (igual à `/planilha`) e suportar **multi-projeto** (uma planilha por evento).
 
 **Planilha de Entrega (colunas) — desenho (s31):** é a *vista de entrega* do banco, em 4 blocos:
 - **Identificação:** data · nome/fonte (profissional **ou** PGM/feed) · material (F/A/V) · nº do cartão (`NOME_NNN`)
