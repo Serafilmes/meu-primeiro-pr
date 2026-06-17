@@ -2267,21 +2267,27 @@ def mover_grupo(conn, chave, direcao):
 
     Returns: "ok" (inclusive se já está no limite) | "inexistente".
     """
-    grupos = listar_grupos(conn)  # ordenados por `ordem`
+    grupos = listar_grupos(conn)  # ordenados por `ordem` (ordem de exibição atual)
     idx = next((i for i, g in enumerate(grupos) if g["chave"] == chave), None)
     if idx is None:
         return "inexistente"
     alvo = idx - 1 if direcao == "cima" else idx + 1
     if alvo < 0 or alvo >= len(grupos):
         return "ok"  # já no topo/fundo — nada a fazer
-    a, b = grupos[idx], grupos[alvo]
-    conn.execute("UPDATE grupos_classificacao SET ordem = ? WHERE chave = ?",
-                 (b["ordem"], a["chave"]))
-    conn.execute("UPDATE grupos_classificacao SET ordem = ? WHERE chave = ?",
-                 (a["ordem"], b["chave"]))
+
+    # Troca as POSIÇÕES na lista e renumera TODOS os grupos em sequência (0,1,2,…).
+    # Renumerar (em vez de só trocar dois valores de `ordem`) elimina empates: dois
+    # grupos com a mesma `ordem` faziam a troca virar um nada-acontece e o movimento
+    # travava. Com a renumeração, cada `ordem` fica única e cada clique anda 1 posição.
+    movido = grupos[idx]
+    grupos[idx], grupos[alvo] = grupos[alvo], grupos[idx]
+    for nova_ordem, g in enumerate(grupos):
+        if g["ordem"] != nova_ordem:
+            conn.execute("UPDATE grupos_classificacao SET ordem = ? WHERE chave = ?",
+                         (nova_ordem, g["chave"]))
     conn.commit()
     registrar_evento(conn, "grupo_alterado",
-                     f"Grupo '{a['rotulo']}' movido para {direcao}", dados={"chave": chave})
+                     f"Grupo '{movido['rotulo']}' movido para {direcao}", dados={"chave": chave})
     return "ok"
 
 
