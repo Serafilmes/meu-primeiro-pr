@@ -33,8 +33,18 @@ from datetime import datetime
 # Raiz do projeto GMA
 RAIZ_GMA = "/Users/serafa/GMA"
 
-# Caminho do banco de dados local (fonte única de verdade)
-CAMINHO_BANCO = os.path.join(RAIZ_GMA, "gma.db")
+# Caminho do banco de dados local (fonte única de verdade).
+# Por padrão é o gma.db da raiz. Pode ser trocado por evento/projeto com a
+# variável de ambiente GMA_DB (mesmo espírito do PASTA_DESTINO_BASE da Camada 2:
+# "troque antes de cada evento"). Isso permite um banco separado por projeto —
+# ex.: GMA_DB="projetos/rock_in_rio/gma.db" — sem misturar com o laboratório.
+# NÃO é o Painel de Controle da Camada 5 (troca ao vivo); é só configuração.
+# Caminho relativo é resolvido a partir da raiz do GMA.
+_GMA_DB_ENV = os.environ.get("GMA_DB", "").strip()
+if _GMA_DB_ENV:
+    CAMINHO_BANCO = _GMA_DB_ENV if os.path.isabs(_GMA_DB_ENV) else os.path.join(RAIZ_GMA, _GMA_DB_ENV)
+else:
+    CAMINHO_BANCO = os.path.join(RAIZ_GMA, "gma.db")
 
 
 # ── CONEXÃO ───────────────────────────────────────────────────────────────────
@@ -613,6 +623,11 @@ def inicializar_banco():
     # Migração incremental: cria a tabela formularios_textos (grupos de modo 'texto':
     # valores de preenchimento livre por ficha, ex.: nome do entrevistado).
     migrar_schema_formularios_textos(conn)
+
+    # Migração incremental: cria as tabelas `programacao` (line-up por dia/palco) e
+    # `configuracao` (chave-valor; guarda o dia_ativo). É a "programação do dia"
+    # da cobertura de festival (Fatia B): a ficha mostra só os shows do dia ativo.
+    migrar_schema_programacao(conn)
 
     return conn
 
@@ -2007,6 +2022,137 @@ def migrar_schema_formularios_textos(conn):
         )
     """)
     conn.commit()
+
+
+# ── PROGRAMAÇÃO DO DIA (cobertura de festival — Fatia B) ──────────────────────
+#
+# Numa cobertura de festival o cartaz MUDA a cada dia. A ficha continua UMA SÓ e
+# fixa (palco/lugares/momentos/marca não mudam); só os SHOWS trocam. Em vez de
+# manter N fichas separadas (que divergiriam), guardamos:
+#   - `programacao`  : quais shows estão no cartaz de cada palco em cada dia.
+#                      O show é um item normal do grupo "Show" (listas_contexto),
+#                      então todo o mecanismo de chips/planilha é reaproveitado.
+#                      A programacao é só a camada que FILTRA o que aparece.
+#   - `configuracao` : chave-valor simples; guarda o `dia_ativo`. A ficha mostra
+#                      só os shows do dia ativo. Sem dia gravado → assume hoje.
+
+def migrar_schema_programacao(conn):
+    """
+    Cria as tabelas `programacao` e `configuracao` se ainda não existirem.
+    Não-destrutivo (CREATE TABLE IF NOT EXISTS); seguro chamar sempre.
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS programacao (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            -- Dia do show no formato ISO 'AAAA-MM-DD'
+            data          TEXT NOT NULL,
+            -- Palco: item do grupo 'palco' em listas_contexto
+            palco_item_id INTEGER NOT NULL REFERENCES listas_contexto(id),
+            -- Show: item do grupo 'Show' (custom_show) em listas_contexto
+            show_item_id  INTEGER NOT NULL REFERENCES listas_contexto(id),
+            -- Um mesmo show não se repete no mesmo palco no mesmo dia
+            UNIQUE (data, palco_item_id, show_item_id)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS configuracao (
+            chave TEXT PRIMARY KEY,
+            valor TEXT
+        )
+    """)
+    conn.commit()
+
+
+def obter_configuracao(conn, chave, padrao=None):
+    """Lê um valor da tabela chave-valor `configuracao` (ou `padrao` se ausente)."""
+    row = conn.execute(
+        "SELECT valor FROM configuracao WHERE chave = ?", (chave,)
+    ).fetchone()
+    return row[0] if row else padrao
+
+
+def definir_configuracao(conn, chave, valor):
+    """Grava (insere ou atualiza) um valor na tabela `configuracao`."""
+    conn.execute(
+        "INSERT INTO configuracao (chave, valor) VALUES (?, ?) "
+        "ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor",
+        (chave, str(valor)),
+    )
+    conn.commit()
+
+
+def dia_ativo(conn):
+    """
+    Dia ativo da programação (ISO 'AAAA-MM-DD'). Se nada foi definido, assume
+    HOJE — a ficha já 'vira' sozinha de um dia para o outro.
+    """
+    from datetime import date
+    return obter_configuracao(conn, "dia_ativo", date.today().isoformat())
+
+
+def definir_dia_ativo(conn, data):
+    """Define o dia ativo da programação e registra no log de operações."""
+    definir_configuracao(conn, "dia_ativo", data)
+    registrar_evento(conn, "dia_ativo_definido",
+                     f"Dia ativo da programação definido: {data}",
+                     dados={"data": data})
+    return data
+
+
+def adicionar_programacao(conn, data, palco_item_id, show_item_id):
+    """
+    Liga um show a um palco num dia (uma linha do line-up). Idempotente:
+    repetir o mesmo trio (data, palco, show) é ignorado.
+    """
+    conn.execute(
+        "INSERT OR IGNORE INTO programacao (data, palco_item_id, show_item_id) "
+        "VALUES (?, ?, ?)",
+        (data, palco_item_id, show_item_id),
+    )
+    conn.commit()
+
+
+def dias_com_programacao(conn):
+    """Lista as datas (ISO) que têm programação cadastrada, em ordem."""
+    return [r[0] for r in conn.execute(
+        "SELECT DISTINCT data FROM programacao ORDER BY data"
+    ).fetchall()]
+
+
+def shows_do_dia(conn, data, palco_item_id=None):
+    """
+    Shows no cartaz de um dia (opcionalmente filtrados por palco). Só itens de
+    Show ATIVOS. Retorna lista de dicts {id, valor, palco_item_id}, na ordem em
+    que foram cadastrados (ordem do line-up).
+    """
+    sql = (
+        "SELECT lc.id, lc.valor, p.palco_item_id "
+        "FROM programacao p "
+        "JOIN listas_contexto lc ON lc.id = p.show_item_id "
+        "WHERE p.data = ? AND lc.ativo = 1"
+    )
+    params = [data]
+    if palco_item_id is not None:
+        sql += " AND p.palco_item_id = ?"
+        params.append(palco_item_id)
+    sql += " ORDER BY p.palco_item_id, p.id"
+    return [
+        {"id": r[0], "valor": r[1], "palco_item_id": r[2]}
+        for r in conn.execute(sql, params).fetchall()
+    ]
+
+
+def programacao_do_dia_por_palco(conn, data):
+    """
+    Mapa {palco_item_id: [{id, valor}, ...]} dos shows de um dia, por palco.
+    É o que a ficha embute como JSON para a cascata palco→shows (via JS).
+    """
+    mapa = {}
+    for s in shows_do_dia(conn, data):
+        mapa.setdefault(s["palco_item_id"], []).append(
+            {"id": s["id"], "valor": s["valor"]}
+        )
+    return mapa
 
 
 def listar_grupos(conn, apenas_ativos=False):

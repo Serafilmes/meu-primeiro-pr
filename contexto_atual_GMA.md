@@ -22,6 +22,32 @@
 
 ## O que acabou de ser feito (sessões recentes)
 
+### ✅ Sessão 36 (BUILD) — Fatia B: PROGRAMAÇÃO DO DIA (a "virada das fichas")
+**Arquivos:** `banco_dados.py`, `flask_gma.py`, `projetos/rock_in_rio/carregar_lineup.py` (novo), `lineup_2026.json` (novo). **Sem commit.** Construído e testado no banco do festival; lab intocado.
+> A ficha é UMA SÓ e fixa; só o grupo **Show** troca conforme o **dia ativo**. Implementado o núcleo (edição ao vivo do line-up = Fatia B2).
+
+- **Banco:** tabelas `programacao` (data·palco·show, FKs para `listas_contexto`) e `configuracao` (chave-valor; guarda o `dia_ativo` — assume **hoje** se nada definido). Funções: `dia_ativo`/`definir_dia_ativo` (loga em `eventos`), `adicionar_programacao`, `shows_do_dia`, `dias_com_programacao`, `programacao_do_dia_por_palco`. Migração não-destrutiva em `inicializar_banco`.
+- **Line-up real carregado:** `carregar_lineup.py` lê o `lineup_2026.json` (155 shows reais, capturados do site com o MCP do Chrome) → cria os shows como itens do grupo **Show** (`custom_show`) + as 155 linhas de `programacao`. Idempotente; **recria o grupo Show se faltar** (o idealizador o excluíra no painel). Reaproveita TODO o mecanismo de chips (`formularios_chips` + coluna na planilha).
+- **Ficha (cascata):** ao escolher o **palco**, os chips de **Show** aparecem só com os shows daquele palco no dia ativo (via JS — `JS_SHOWS_CASCATA`; dados embutidos em `window.gmaProg`). Banner **"📅 Programação ativa: \<dia\>"** com seletor de dia (só operador). Retrocompatível: banco sem `programacao` (lab) → ficha normal.
+- **Trocar o dia:** rota `POST /dia-ativo` (local-only; o portão já barra remoto). O seletor usa `fetch`+reload (NÃO um `<form>` — estaria aninhado no form da ficha e submeteria a ficha; bug pego e corrigido no teste).
+- **Verificado:** cascata Palco Mundo→Foo Fighters/Rise Against/The Hives/Nova Twins (04/09); troca 04↔13/09 muda banner e shows (curl determinístico + navegador real, screenshot).
+- **➕ Refinos (mesma sessão, pós-feedback do idealizador):**
+  - **Palco virou MÚLTIPLA** (uma pessoa cobre vários palcos) e a **cascata SOMA os shows** dos palcos marcados (união sem repetir). Testado: Palco Mundo + Sunset → 8 shows.
+  - **Fatia B2 (adicionar show ao dia) CONSTRUÍDA:** controle "+ adicionar show" no bloco Show (só operador) com dropdown de palco → rota `POST /programacao/add-show` cria o show e liga ao dia ativo. Generaliza p/ RIO2C (sala→palestra num dia). Testado.
+  - **Ficha mais limpa:** Serviços, Tags e Pautas **desativados** no festival (o idealizador não usa). Lição: **desativar** (ativo=0), não excluir — excluir um grupo de sistema faz o re-seed do boot recriá-lo ativo (o `INSERT OR IGNORE` respeita a linha desativada). Ativos: Palcos · Marcas · Lugares · Momentos · Show.
+  - **Marcas reais** lidas do site (com o MCP do Chrome, via screenshot dos logos): Itaú (master) + Heineken, Coca-Cola, Seara, Ipiranga, KitKat, Prudential, TIM, Natura, Doritos, Superbet, iFood, C&A, Volkswagen. (Institucionais = poder público, fora.)
+- **🔶 Observação restante:** o grupo Show aparece no fim da ficha (recriado com `ordem` alta) — ideal seria logo após Palcos; reordenável no painel (ou ajustar no carregador).
+
+### ✅ Sessão 36 (BUILD) — Projeto-festival "Rock in Rio (teste)" + banco por projeto (Fatia A)
+**Arquivos:** `banco_dados.py`, `projetos/rock_in_rio/seed_rock_in_rio.py` (novo), `.claude/launch.json`. **Sem commit.** Laboratório (`gma.db` da raiz) **intocado** (backup em `gma.db.bak_*`).
+> Objetivo: um projeto-exemplo do GMA pensado como **cobertura de festival**, para testes reais com cartões reais (material/datas fictícios). Categoria = **palco**, seleção = **show**. Referência: planilha do THE TOWN 2023 (coluna CONTEÚDO em texto livre → agora vira chips estruturados pelos grupos editáveis).
+
+- **Banco por projeto (mudança pequena e reversível):** `CAMINHO_BANCO` agora honra a variável `GMA_DB` (padrão = o `gma.db` de hoje, então nada muda no laboratório). Mesmo espírito do `PASTA_DESTINO_BASE` ("troque antes de cada evento"). **NÃO** é o Painel de Controle da Camada 5 (troca ao vivo) — é só configuração. Todos os processos usam `banco_dados.obter_conexao()`, então a variável alcança o sistema inteiro. Festival mora em `projetos/rock_in_rio/gma.db`.
+- **Seed idempotente** (`seed_rock_in_rio.py`): cadastra os **28 profissionais** (18 vídeo + 10 foto, da lista enviada, com letra sequencial) e monta os grupos do festival — **Palcos** (escolhe 1; os 6 reais), **Show** (vazio de propósito — line-up entra na Fatia B), **Lugares** (6), **Momentos** (6), **Marcas** (4 ativações). **Pautas** e **Serviços** desativados (não usados no festival; reversível pelo painel). Aponta `GMA_DB` antes de importar o `banco_dados`.
+- **Verificado:** banco do festival com 28 pros + grupos/itens certos; laboratório segue com 7 pros e Recap/Acessoria. Ficha real renderizada (`/ficha` no banco do festival, via `launch.json` "rock-in-rio-ficha", porta 5051) com o vocabulário do festival e sem vazar os grupos do laboratório.
+- **Line-up:** ✅ **capturado** (s36) — o site tem a grade por dia e palco em `https://rockinrio.com/rio/line-up/dia/DD-set/`, mas é montado por **JavaScript** (o WebFetch não isola o dia). Lido com o **MCP do Chrome** (renderiza JS) e salvo em `projetos/rock_in_rio/lineup_2026.json`: **155 shows**, 7 dias (04/05/06/07/11/12/13 set **2026**) × 6 palcos. É a fonte da tabela `programacao` da Fatia B.
+- **Decisão central — "virada das fichas" = PROGRAMAÇÃO DO DIA:** a ficha é **uma só** e fixa (palco/lugares/momentos/marca não mudam); só o grupo **Show** troca conforme o **dia ativo**. O sistema assume hoje, mostra aviso "Programação ativa: <dia> — trocar?", o operador edita o line-up ao vivo. Melhor que N fichas separadas (que duplicariam tudo e divergiriam). **Não construído ainda** — é a Fatia B (tabela `programacao` dia·palco·show + `dia_ativo` + cascata palco→shows-do-dia + confirmação).
+
 ### ✅ Sessão 35 (BUILD) — Exportador integrado ao sistema completo + fix Python
 **Arquivos:** `inicializar_gma.py`, `exportador_sheets.py`. **Commitado.**
 
@@ -203,7 +229,7 @@ Candidatos naturais para a próxima sessão:
 
 ## Arquivos com mudanças não commitadas (atenção)
 
-Tudo commitado até a s35. Branch: `fatia5-sheets-multiprojeto`.
+Tudo commitado até a s35. **S36 sem commit** (sugerido commitar): `banco_dados.py` (GMA_DB + programação do dia), `flask_gma.py` (cascata Show + banner + /dia-ativo), `projetos/rock_in_rio/` (seed + carregar_lineup + lineup_2026.json + gma.db do festival), `.claude/launch.json`. Branch: `fatia5-sheets-multiprojeto`. Backup do laboratório em `gma.db.bak_20260617_*`.
 
 ---
 

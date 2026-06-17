@@ -2031,6 +2031,68 @@ def molde_toggle(chave):
     return redirect("/molde", 303)
 
 
+@app.route("/dia-ativo", methods=["POST"])
+def dia_ativo_definir():
+    """
+    Troca o dia ATIVO da programação (cobertura de festival). A ficha passa a
+    mostrar os shows desse dia. Só local — o portão de acesso já bloqueia o
+    remoto (a câmera não troca o dia, só preenche).
+    """
+    if not BANCO_DISPONIVEL:
+        return redirect("/ficha", 303)
+    data = (request.form.get("data") or "").strip()
+    if data:
+        try:
+            conn = bd.obter_conexao()
+            bd.definir_dia_ativo(conn, data)
+            conn.close()
+        except Exception as e:
+            logger.error(f"PROGRAMACAO | dia-ativo {data} | {e}")
+    return redirect(request.referrer or "/ficha", 303)
+
+
+@app.route("/programacao/add-show", methods=["POST"])
+def programacao_add_show():
+    """
+    Adiciona um show ao DIA ATIVO num palco (Fatia B2 — edição ao vivo do line-up).
+    Cria o show como item do grupo Show e liga em `programacao`. Só local (o portão
+    barra remoto). Generaliza para qualquer evento com agenda (ex.: RIO2C — uma
+    palestra numa sala num dia).
+    """
+    if not BANCO_DISPONIVEL:
+        return ("", 204)
+    nome = (request.form.get("nome") or "").strip()
+    palco_id = (request.form.get("palco_item_id") or "").strip()
+    if not (nome and palco_id):
+        return ("faltou nome ou palco", 400)
+    try:
+        conn = bd.obter_conexao()
+        dia = bd.dia_ativo(conn)
+        # Descobre a chave do grupo Show (o tipo dos shows da programação; se ainda
+        # não há programação, cai no grupo cujo rótulo é "Show").
+        r = conn.execute("SELECT lc.tipo FROM programacao p "
+                         "JOIN listas_contexto lc ON lc.id = p.show_item_id LIMIT 1").fetchone()
+        show_chave = r[0] if r else None
+        if not show_chave:
+            r2 = conn.execute("SELECT chave FROM grupos_classificacao "
+                              "WHERE LOWER(rotulo) = 'show'").fetchone()
+            show_chave = r2[0] if r2 else None
+        if show_chave:
+            try:
+                bd.adicionar_item_lista(conn, show_chave, nome)
+            except Exception:
+                pass  # já existia
+            row = conn.execute("SELECT id FROM listas_contexto WHERE tipo = ? AND valor = ?",
+                               (show_chave, nome)).fetchone()
+            if row:
+                bd.adicionar_programacao(conn, dia, int(palco_id), row[0])
+        conn.close()
+    except Exception as e:
+        logger.error(f"PROGRAMACAO | add-show '{nome}' | {e}")
+        return ("erro", 500)
+    return ("ok", 200)
+
+
 @app.route("/molde/bloco/<bloco_chave>/ocultar", methods=["POST"])
 def molde_bloco_ocultar(bloco_chave):
     """Oculta todas as colunas de um bloco de uma vez."""
@@ -2240,6 +2302,81 @@ JS_CHIPS = """
   }
 
   // O script vive no <head>, então espera a página montar antes de buscar os chips.
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+</script>"""
+
+JS_SHOWS_CASCATA = """
+<script>
+  // Troca o dia ativo sem submeter a ficha: POST /dia-ativo e recarrega.
+  window.gmaTrocaDia = function(v){
+    fetch('/dia-ativo', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+      body: 'data=' + encodeURIComponent(v)
+    }).then(function(){ location.reload(); });
+  };
+  // Adiciona um show ao DIA ATIVO num palco (Fatia B2 — operador). Cria o show e
+  // liga na programação; recarrega para a cascata refletir.
+  window.gmaAddShow = function(){
+    var nome = (document.getElementById('show-add-nome')||{}).value || '';
+    var palco = (document.getElementById('show-add-palco')||{}).value || '';
+    nome = nome.trim();
+    if (!nome || !palco){ return; }
+    fetch('/programacao/add-show', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+      body: 'nome=' + encodeURIComponent(nome) + '&palco_item_id=' + encodeURIComponent(palco)
+    }).then(function(){ location.reload(); });
+  };
+(function(){
+  // Cascata da PROGRAMAÇÃO DO DIA (cobertura de festival): ao escolher o palco,
+  // mostra só os shows daquele palco no dia ativo. Os dados vêm de window.gmaProg
+  // (mapa palco_item_id -> [{id, valor}]), embutido pelo servidor. Inofensivo
+  // quando não há programação (gmaProg ausente/vazio).
+  function render(){
+    var tipo = window.gmaShowTipo, palcoTipo = window.gmaPalcoTipo;
+    if (!tipo || !palcoTipo || !window.gmaProg) return;
+    var linha = document.getElementById('chip-linha-' + tipo);
+    var dica  = document.getElementById('show-dica');
+    if (!linha) return;
+    var palcoLinha = document.getElementById('chip-linha-' + palcoTipo);
+    var marcados = palcoLinha ? [].slice.call(palcoLinha.querySelectorAll('input[type=checkbox]:checked')) : [];
+    linha.innerHTML = '';
+    if (!marcados.length){ if (dica) dica.style.display = ''; window.gmaAtualizaContador(tipo); return; }
+    if (dica) dica.style.display = 'none';
+    // União dos shows dos palcos marcados (uma pessoa pode cobrir vários palcos),
+    // sem repetir o mesmo show.
+    var vistos = {}, shows = [];
+    marcados.forEach(function(p){
+      (window.gmaProg[p.value] || []).forEach(function(s){
+        if (!vistos[s.id]){ vistos[s.id] = 1; shows.push(s); }
+      });
+    });
+    var jaSel = window.gmaShowSel || [];
+    shows.forEach(function(s){
+      var marcado = jaSel.indexOf(String(s.id)) >= 0;
+      var lbl = document.createElement('label');
+      lbl.className = 'chip' + (marcado ? ' sel' : '');
+      var inp = document.createElement('input');
+      inp.type = 'checkbox'; inp.name = 'chip'; inp.value = s.id;
+      if (marcado) inp.checked = true;
+      inp.addEventListener('change', function(){
+        lbl.classList.toggle('sel', inp.checked);
+        window.gmaAtualizaContador(tipo);
+      });
+      lbl.appendChild(inp);
+      lbl.appendChild(document.createTextNode(' ' + s.valor));
+      linha.appendChild(lbl);
+    });
+    window.gmaAtualizaContador(tipo);
+  }
+  function init(){
+    var palcoLinha = document.getElementById('chip-linha-' + window.gmaPalcoTipo);
+    if (palcoLinha) palcoLinha.addEventListener('change', render);
+    render();  // estado inicial (edição já com palco escolhido)
+  }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 })();
@@ -2905,6 +3042,17 @@ def _coletar_textos_form(form):
     return out
 
 
+def _fmt_dia_br(iso):
+    """'2026-09-04' -> 'sexta 04/09' (rótulo curto em português para o banner)."""
+    from datetime import datetime
+    dias = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"]
+    try:
+        dt = datetime.strptime(iso, "%Y-%m-%d")
+        return f"{dias[dt.weekday()]} {dt.strftime('%d/%m')}"
+    except Exception:
+        return iso or ""
+
+
 def _bloco_classificacao_ficha(chips_selecionados, eh_operador=False, textos_selecionados=None):
     """
     Monta o bloco de CLASSIFICAÇÃO da ficha: chips clicáveis montados a partir das
@@ -2923,10 +3071,30 @@ def _bloco_classificacao_ficha(chips_selecionados, eh_operador=False, textos_sel
     """
     if not BANCO_DISPONIVEL:
         return ""
+    # Contexto da PROGRAMAÇÃO DO DIA (cobertura de festival). Carregado num try
+    # próprio: bancos sem as tabelas (lab antigo) simplesmente não têm programação
+    # e a ficha segue normal (retrocompatível).
+    prog_por_palco = {}
+    show_chave = palco_chave = None
+    dia_prog = None
+    dias_prog = []
     try:
         conn = bd.obter_conexao()
         itens = bd.listar_itens_lista(conn, apenas_ativos=True)
         grupos = bd.listar_grupos(conn, apenas_ativos=True)
+        try:
+            dia_prog = bd.dia_ativo(conn)
+            prog_por_palco = bd.programacao_do_dia_por_palco(conn, dia_prog)
+            if prog_por_palco:
+                r1 = conn.execute("SELECT lc.tipo FROM programacao p "
+                                  "JOIN listas_contexto lc ON lc.id = p.show_item_id LIMIT 1").fetchone()
+                r2 = conn.execute("SELECT lc.tipo FROM programacao p "
+                                  "JOIN listas_contexto lc ON lc.id = p.palco_item_id LIMIT 1").fetchone()
+                show_chave = r1[0] if r1 else None
+                palco_chave = r2[0] if r2 else None
+                dias_prog = bd.dias_com_programacao(conn)
+        except Exception:
+            prog_por_palco = {}  # banco sem as tabelas de programação
         conn.close()
     except Exception as erro:
         logger.error(f"FICHA | Erro ao carregar listas de contexto | {erro}")
@@ -2954,6 +3122,41 @@ def _bloco_classificacao_ficha(chips_selecionados, eh_operador=False, textos_sel
         # Grupo de TEXTO (escreve na hora) — caixa de múltiplos valores (s33).
         if g.get("modo") == "texto":
             blocos.append(_bloco_texto_grupo_html(g, textos_sel.get(tipo, [])))
+            continue
+
+        # Grupo SHOW da programação do dia (cobertura de festival): em vez de
+        # listar os ~155 shows, mostra uma cascata — os chips aparecem quando o
+        # palco é escolhido (preenchidos pelo JS a partir do dia ativo).
+        if prog_por_palco and tipo == show_chave:
+            # Operador pode ADICIONAR um show ao dia ativo num palco (Fatia B2).
+            # Ex.: entrou um show surpresa, ou — no RIO2C — uma palestra numa sala.
+            add_html = ""
+            if eh_operador:
+                palco_itens = por_tipo.get(palco_chave, [])
+                palco_opts = "".join(
+                    f'<option value="{it["id"]}">{_esc(it["valor"])}</option>'
+                    for it in palco_itens
+                )
+                add_html = (
+                    '<div class="show-add" style="margin-top:8px;display:flex;gap:6px;'
+                    'flex-wrap:wrap;align-items:center">'
+                    '<input type="text" id="show-add-nome" placeholder="adicionar show ao dia…" '
+                    'maxlength="80" autocomplete="off" style="flex:1;min-width:160px;padding:4px 8px">'
+                    f'<select id="show-add-palco">{palco_opts}</select>'
+                    '<button type="button" class="chip-btn-novo" onclick="window.gmaAddShow()">'
+                    '+ adicionar</button>'
+                    '</div>'
+                )
+            blocos.append(
+                f'<div class="chip-bloco">'
+                f'<div class="chip-rotulo">{_esc(g["rotulo"])} '
+                f'<span class="chip-contador" data-tipo="{tipo}"></span></div>'
+                f'<div class="chip-linha" id="chip-linha-{tipo}"></div>'
+                f'<div class="ajuda" id="show-dica" style="margin-top:4px">'
+                f'Escolha o palco acima para ver os shows do dia.</div>'
+                f'{add_html}'
+                f'</div>'
+            )
             continue
 
         lista = por_tipo.get(tipo, [])
@@ -3002,12 +3205,46 @@ def _bloco_classificacao_ficha(chips_selecionados, eh_operador=False, textos_sel
     if not blocos:
         return ""
 
+    # Banner "Programação ativa: <dia>" + (só operador) seletor para trocar o dia.
+    # Embute também os dados da programação do dia para a cascata (JS).
+    import json
+    banner = ""
+    script = ""
+    if prog_por_palco:
+        rotulo_dia = _fmt_dia_br(dia_prog)
+        troca = ""
+        if eh_operador and dias_prog:
+            opts = "".join(
+                f'<option value="{_esc(d)}"{" selected" if d == dia_prog else ""}>'
+                f'{_esc(_fmt_dia_br(d))}</option>'
+                for d in dias_prog
+            )
+            # Sem <form> (estaria aninhado no form da ficha — HTML inválido, faria o
+            # select submeter a ficha). Um select que chama fetch e recarrega.
+            troca = (
+                f' <select onchange="window.gmaTrocaDia(this.value)" '
+                f'style="margin-left:6px">{opts}</select>'
+            )
+        banner = (
+            '<div class="prog-banner" style="background:#9FE1CB;color:#04342C;'
+            'border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:0.95em">'
+            f'📅 Programação ativa: <b>{_esc(rotulo_dia)}</b>{troca}</div>'
+        )
+        script = (
+            f'<script>window.gmaProg={json.dumps(prog_por_palco)};'
+            f'window.gmaShowTipo={json.dumps(show_chave)};'
+            f'window.gmaPalcoTipo={json.dumps(palco_chave)};'
+            f'window.gmaShowSel={json.dumps([str(s) for s in sel])};</script>'
+        )
+
     blocos_html = "".join(blocos)
     return (
+        banner +
         '<div class="grupo-titulo">Classificação '
         '<span class="ajuda" style="text-transform:none;letter-spacing:0">'
         '(ajuda os editores a achar o material)</span></div>'
         f'<div class="campo largo chip-area">{blocos_html}</div>'
+        + script
     )
 
 
@@ -3178,7 +3415,7 @@ def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
     </form>
     {_fichas_recentes_html() if (mostrar_recentes and not editando) else ''}"""
 
-    head_extra = f"<style>{CSS_FICHA}</style>{JS_CHIPS}{JS_CHIP_NOVO}{JS_TEXTO_GRUPO}{JS_FICHA_TOGGLES}"
+    head_extra = f"<style>{CSS_FICHA}</style>{JS_CHIPS}{JS_CHIP_NOVO}{JS_TEXTO_GRUPO}{JS_FICHA_TOGGLES}{JS_SHOWS_CASCATA}"
     titulo = "Editar ficha" if editando else "Nova Ficha"
     return _pagina(titulo, "ficha", corpo, head_extra)
 

@@ -6,6 +6,15 @@
       "runtimeExecutable": "/usr/bin/python3",
       "runtimeArgs": ["/Users/serafa/GMA/flask_gma.py"],
       "port": 5050
+    },
+    {
+      "name": "rock-in-rio-ficha",
+      "runtimeExecutable": "/bin/sh",
+      "runtimeArgs": [
+        "-c",
+        "GMA_DB=projetos/rock_in_rio/gma.db GMA_PORT=5051 GMA_HOST=127.0.0.1 /usr/bin/python3 flask_gma.py"
+      ],
+      "port": 5051
     }
   ]
 }

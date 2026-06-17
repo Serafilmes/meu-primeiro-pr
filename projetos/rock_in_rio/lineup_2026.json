@@ -1,0 +1,64 @@
+{
+  "evento": "Rock in Rio 2026",
+  "ano": 2026,
+  "fonte": "https://rockinrio.com/rio/line-up/dia/<DD>-set/ (renderizado via JS; capturado com o MCP do Chrome em 17/06/2026)",
+  "observacao": "Os nomes dos palcos aqui já estão no rótulo usado nos itens do grupo Palcos do GMA (Sunset, não 'Palco Sunset'). Sem horários — o site não publica horário por show. Esta é a fonte da tabela 'programacao' (Fatia B).",
+  "dias": {
+    "2026-09-04": {
+      "Palco Mundo": ["Foo Fighters", "Rise Against", "The Hives", "Nova Twins"],
+      "Sunset": ["Capital Inicial convida Dado Villa-Lobos", "Hot Milk", "Detonautas convida Biquini", "Di Ferrero"],
+      "New Dance Order": ["Steve Angello", "Giu x Carola", "Atkö", "Cat Dealers"],
+      "Espaço Favela": ["Rodrigo do CN", "Hitmaker", "GBZ7N"],
+      "Global Village": ["Paulinho Moska", "Leela", "Giovanna Moraes"],
+      "Supernova": ["Diogo Defante", "Venere Vai Venus", "Rock in Gil com Larissa Luz", "Chady"]
+    },
+    "2026-09-05": {
+      "Palco Mundo": ["Avenged Sevenfold", "Bring Me The Horizon", "MGK", "Sepultura"],
+      "Sunset": ["Bad Omens", "Poppy", "Black Pantera convida Nervosa", "Malvada convida Day Limns"],
+      "New Dance Order": ["James Hype", "Volkoder", "Camila Jun x Eli Iwasa", "Victor Lou"],
+      "Espaço Favela": ["Major RD", "Canto Cego", "Quantum"],
+      "Global Village": ["Korzus", "Noturnall + Russell Allen", "Rhegia"],
+      "Supernova": ["Supercombo", "Lvcas", "MC Taya", "Zerobadass"]
+    },
+    "2026-09-06": {
+      "Palco Mundo": ["Calvin Harris", "Black Eyed Peas", "Nelly", "Barão Vermelho – Encontro Formação Original convida Fernando Magalhães"],
+      "Sunset": ["Ne-Yo", "Jota Quest toca Tim Maia", "BaianaSystem", "Calema"],
+      "New Dance Order": ["Meduza", "Casa Bonita | Brisotti & Viot", "Liu", "Sofi Tukker"],
+      "Espaço Favela": ["Xamã", "Rael", "Budah"],
+      "Global Village": ["Mohamed Ramadan", "Mãeana", "Bento Gil convida Flor Gil"],
+      "Supernova": ["João Gordo & Asteroides Trio em \"Blitzkrieg Psycho Bop Ramones 50\"", "Matanza Ritual", "Bayside Kings", "O Escritório"]
+    },
+    "2026-09-07": {
+      "Palco Mundo": ["Elton John", "Gilberto Gil", "Jon Batiste", "Luísa Sonza convida Roberto Menescal"],
+      "Sunset": ["Laufey", "Péricles canta Motown", "Roupa Nova convida Guilherme Arantes", "Vanessa da Mata convida Rubel"],
+      "New Dance Order": ["Fatboy Slim", "Aline Rocha", "Leo Janeiro & Simo Not Simon", "Max Styler"],
+      "Espaço Favela": ["Belo", "Mart'nália", "Tiee"],
+      "Global Village": ["João Bosco", "Joyce Moreno, Leila Pinheiro e Fernanda Takai", "Wanda Sá"],
+      "Supernova": ["Alee", "Zeca Veloso", "Melly", "Maui"]
+    },
+    "2026-09-11": {
+      "Palco Mundo": ["Stray Kids", "Alok – Keep Art Human", "Hwasa", "NEXZ"],
+      "Sunset": ["Jamiroquai", "PJ Morton", "Os Garotin convidam Duquesa", "Jota.pê convida Luedji Luna e Zaynara"],
+      "New Dance Order": ["Neelix & Vegas", "Omiki", "Departamento", "Anna"],
+      "Espaço Favela": ["MC Cabelinho convida TZ da Coronel", "Puterrier & MC Carol", "Caio Luccas"],
+      "Global Village": ["Soulidified", "Rio Bronx", "Lambateria com Félix Robatto"],
+      "Supernova": ["Nandatsunami", "Ananda", "Isa Buzzi", "Muse Maya"]
+    },
+    "2026-09-12": {
+      "Palco Mundo": ["Maroon 5", "Demi Lovato", "J Balvin", "Pedro Sampaio"],
+      "Sunset": ["Mumford & Sons", "João Gomes & Orquestra Brasileira", "Gilsons convida Daniela Mercury e Olodum", "Criolo, Amaro & Dino"],
+      "New Dance Order": ["Alok pres. Rave The World", "Alok & Family – Ekanta, Swarup", "Gabe", "Adam Sellouk", "Bhaskar"],
+      "Espaço Favela": ["Timbalada", "Priscila Senna", "Soul de Brasileiro"],
+      "Global Village": ["Mestrinho", "Hamilton de Holanda", "Badi Assad"],
+      "Supernova": ["Delacruz", "Milo J", "Yago Oproprio", "Celo Dut"]
+    },
+    "2026-09-13": {
+      "Palco Mundo": ["Twenty One Pilots", "Halsey", "Lola Young", "Ivete Sangalo"],
+      "Sunset": ["Zara Larsson", "Marina Sena convida Céu", "Joelma convida Viviane Batidão", "Carol Biazin convida Joyce Alane"],
+      "New Dance Order": ["John Summit", "Roddy Lima", "Illusionize", "Dawn Patrol | Maz, Antdot, Riascode, Bakka"],
+      "Espaço Favela": ["Dennis", "Suel", "Marvvila"],
+      "Global Village": ["Haley Smalls", "Lucy Alves", "Kynnie"],
+      "Supernova": ["Lourena", "Sant", "Bruna Black", "AR Baby"]
+    }
+  }
+}
