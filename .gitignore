@@ -36,3 +36,7 @@ TESTE LOGAGEM/
 # Miniaturas geradas pelo extrator de frames (saída operacional, recriável)
 _GMA_frames/
 *_manifesto.json
+
+# Lixo de build do Python
+__pycache__/
+*.pyc
