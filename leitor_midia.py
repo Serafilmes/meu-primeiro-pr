@@ -42,8 +42,14 @@ import matcher
 # Raiz do projeto GMA
 RAIZ_GMA = "/Users/serafa/GMA"
 
-# Pasta onde o Porteiro deposita os JSONs de material detectado
-PASTA_FILA_MATERIAL = os.path.join(RAIZ_GMA, "fila_material")
+# Isolamento multi-projeto (Camada 5): a fila mora ao lado do banco do projeto
+# ativo (GMA_DB); para o laboratório, é a pasta da raiz de sempre.
+import sys
+sys.path.insert(0, RAIZ_GMA)
+import painel_config
+
+# Pasta onde o Porteiro deposita os JSONs de material detectado (isolada por projeto)
+PASTA_FILA_MATERIAL = painel_config.pasta_ao_lado_do_banco("fila_material")
 
 # Arquivo sentinela: se existir, o sistema está ativo e processando
 SENTINELA = os.path.join(RAIZ_GMA, ".gma_ativo")

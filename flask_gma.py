@@ -55,8 +55,8 @@ _sys_cfg.path.insert(0, RAIZ_GMA)
 try:
     import painel_config
     PAINEL_DISPONIVEL = True
-    PASTA_FILA_FORMS = os.path.join(RAIZ_GMA, "fila_forms")
-    PASTA_FILA_MATERIAL = os.path.join(RAIZ_GMA, "fila_material")
+    PASTA_FILA_FORMS = painel_config.pasta_ao_lado_do_banco("fila_forms")
+    PASTA_FILA_MATERIAL = painel_config.pasta_ao_lado_do_banco("fila_material")
 except Exception:
     # Sem o painel_config (situação degradada) → pastas da raiz, como antes.
     PAINEL_DISPONIVEL = False
@@ -3806,7 +3806,10 @@ def _ler_contador(nome):
     Retorna um inteiro. Se o arquivo não existir ou tiver erro, retorna 1
     (significando que seria o primeiro cartão deste profissional).
     """
-    caminho = os.path.join(RAIZ_GMA, "contadores", f"{nome}.json")
+    caminho = os.path.join(
+        painel_config.pasta_ao_lado_do_banco("contadores") if PAINEL_DISPONIVEL
+        else os.path.join(RAIZ_GMA, "contadores"),
+        f"{nome}.json")
     try:
         with open(caminho, "r", encoding="utf-8") as f:
             dados = json.load(f)

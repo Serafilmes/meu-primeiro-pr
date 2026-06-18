@@ -38,11 +38,16 @@ from datetime import datetime
 # Raiz do projeto GMA
 RAIZ_GMA = "/Users/serafa/GMA"
 
-# Pasta com os JSONs de material detectado (onde buscamos os "casados")
-PASTA_FILA_MATERIAL = os.path.join(RAIZ_GMA, "fila_material")
+# Isolamento multi-projeto (Camada 5): filas e contadores moram ao lado do banco
+# do projeto ativo (GMA_DB); para o laboratório, são as pastas da raiz de sempre.
+sys.path.insert(0, RAIZ_GMA)
+import painel_config
 
-# Pasta com os JSONs de formulários recebidos pelo Flask
-PASTA_FILA_FORMS = os.path.join(RAIZ_GMA, "fila_forms")
+# Pasta com os JSONs de material detectado (onde buscamos os "casados") — por projeto
+PASTA_FILA_MATERIAL = painel_config.pasta_ao_lado_do_banco("fila_material")
+
+# Pasta com os JSONs de formulários recebidos pelo Flask — por projeto
+PASTA_FILA_FORMS = painel_config.pasta_ao_lado_do_banco("fila_forms")
 
 # Arquivo sentinela: se não existir, o script aguarda sem processar
 SENTINELA = os.path.join(RAIZ_GMA, ".gma_ativo")
@@ -259,9 +264,9 @@ def proximo_numero_sequencial(nome):
     """
     logger = logging.getLogger("transferencia")
 
-    # Pasta de contadores dentro do projeto GMA
-    pasta_contadores = os.path.join(RAIZ_GMA, "contadores")
-    os.makedirs(pasta_contadores, exist_ok=True)
+    # Pasta de contadores — isolada por projeto (a numeração NOME_NNN não cruza
+    # eventos): mora ao lado do banco ativo; raiz para o laboratório.
+    pasta_contadores = painel_config.pasta_ao_lado_do_banco("contadores")
 
     # Um arquivo por profissional: contadores/SERAFA.json
     caminho_contador = os.path.join(pasta_contadores, f"{nome}.json")
