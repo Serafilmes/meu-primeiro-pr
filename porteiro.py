@@ -486,6 +486,72 @@ def sentinela_ativo():
     return os.path.isfile(SENTINELA)
 
 
+# ── LOG DE GOVERNANÇA ─────────────────────────────────────────────────────────
+
+def _arquivar_json_material_cartao(cartao_id, logger):
+    """
+    Move o JSON do material (db_cartao_id == cartao_id) para _arquivo_ausentes/ —
+    assim o cartão invalidado sai da Operação e some da fila do Matcher. REVERSÍVEL
+    (o arquivo continua lá, só fora da fila). Defensivo: falha só é logada.
+    """
+    try:
+        if not os.path.isdir(PASTA_FILA_MATERIAL):
+            return
+        destino_dir = os.path.join(PASTA_FILA_MATERIAL, "_arquivo_ausentes")
+        for nome in os.listdir(PASTA_FILA_MATERIAL):
+            if not nome.endswith(".json"):
+                continue
+            caminho = os.path.join(PASTA_FILA_MATERIAL, nome)
+            try:
+                with open(caminho, "r", encoding="utf-8") as f:
+                    dados = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue
+            if dados.get("db_cartao_id") == cartao_id:
+                os.makedirs(destino_dir, exist_ok=True)
+                os.rename(caminho, os.path.join(destino_dir, nome))
+                logger.info(f"GATE | JSON do material arquivado (ausente) | {nome}")
+                break
+    except Exception as _err:
+        logger.error(f"GATE | Falha ao arquivar JSON do cartão {cartao_id} (segue) | {_err}")
+
+
+def _ao_remover_volume(nome_volume, logger):
+    """
+    Volume removido fisicamente — o GATE atua em três passos:
+      1. Registra 'volume_removido' no Log do sistema (a ejeção PERMANECE nos reports).
+      2. Invalida os cartões-fantasma daquele volume (status 'ausente') — impede que o
+         Matcher case e a Transferência copie de um volume que já não existe.
+      3. Arquiva os JSONs desses cartões (saem da Operação e da fila do Matcher).
+
+    Princípio do idealizador: cartão ejetado SAI das telas, mas FICA no Log.
+    Defensivo: qualquer falha é só logada — nunca derruba o Porteiro (offline-first).
+    """
+    try:
+        import banco_dados as bd
+        conn = bd.obter_conexao()
+        try:
+            bd.registrar_evento(
+                conn,
+                tipo="volume_removido",
+                descricao=f"Volume removido (ejeção/desmontagem física): {nome_volume}",
+                dados={"volume": nome_volume},
+            )
+            ids_invalidados = bd.invalidar_cartoes_do_volume(conn, nome_volume)
+        finally:
+            conn.close()
+        for cartao_id in ids_invalidados:
+            _arquivar_json_material_cartao(cartao_id, logger)
+        if ids_invalidados:
+            logger.info(
+                f"GATE | Cartões invalidados (volume removido) | {nome_volume} | ids={ids_invalidados}"
+            )
+    except Exception as _err:
+        logger.error(
+            f"VOLUME REMOVIDO | Falha no gate (segue) | {nome_volume} | {_err}"
+        )
+
+
 # ── LOOP PRINCIPAL ────────────────────────────────────────────────────────────
 
 def main():
@@ -557,10 +623,13 @@ def main():
                         f"Sentinela ausente — crie {SENTINELA} para ativar"
                     )
 
-            # Volumes removidos = estavam antes mas não estão mais
+            # Volumes removidos = estavam antes mas não estão mais.
+            # Além do log de arquivo, registramos no LOG DO SISTEMA (tabela eventos):
+            # a ejeção física "permanece nos reports" mesmo o cartão saindo das telas.
             volumes_removidos = volumes_conhecidos - volumes_agora
             for nome_volume in sorted(volumes_removidos):
                 logger.info(f"VOLUME REMOVIDO  | Volume: {nome_volume}")
+                _ao_remover_volume(nome_volume, logger)
 
             # Atualiza a lista de volumes conhecidos para o próximo ciclo
             volumes_conhecidos = volumes_agora

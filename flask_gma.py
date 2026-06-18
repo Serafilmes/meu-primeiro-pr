@@ -802,6 +802,31 @@ def painel():
 
     HTML puro com CSS inline — sem frameworks externos.
     """
+    # ── Banner de feedback (sucesso/aviso vindos por redirect ?ok=/?aviso=) ────
+    # Usado pelo match manual e pela resolução de empate. Mensagens curtas e
+    # legíveis; o aviso técnico vira um texto amigável quando reconhecido.
+    _msg_ok    = (request.args.get("ok") or "").strip()
+    _msg_aviso = (request.args.get("aviso") or "").strip()
+    _avisos_legiveis = {
+        "match_selecao_incompleta": "Escolha 1 cartão (esquerda) e 1 ficha (direita) antes de fazer o match.",
+        "match_ficha_invalida":     "A ficha escolhida não foi encontrada. Atualize o painel.",
+        "nome_vazio":               "Nome do profissional não recebido.",
+    }
+    bloco_feedback = ""
+    if _msg_ok:
+        bloco_feedback = (
+            "<div style='background:#e8f5e9;border:1px solid #4caf50;color:#2e7d32;"
+            "border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:0.92em'>"
+            f"✓ {_esc(_msg_ok)}</div>"
+        )
+    elif _msg_aviso:
+        _texto = _avisos_legiveis.get(_msg_aviso, _msg_aviso)
+        bloco_feedback = (
+            "<div style='background:#fff3cd;border:1px solid #ffc107;color:#856404;"
+            "border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:0.92em'>"
+            f"{_esc(_texto)}</div>"
+        )
+
     # ── Coleta dados das filas ─────────────────────────────────────────────────
     material_aguardando = ler_jsons_da_pasta(PASTA_FILA_MATERIAL, "aguardando_match")
     forms_aguardando = ler_jsons_da_pasta(PASTA_FILA_FORMS, "aguardando_material")
@@ -818,9 +843,36 @@ def painel():
 
     # Matches recentes (todos com status matched, ordena por timestamp decrescente)
     todos_matched = ler_jsons_da_pasta(PASTA_FILA_MATERIAL, "matched")
+    # Esconde os cartões já CONCLUÍDOS (ejetados): eles saem da Operação e ficam
+    # no Log do sistema + na Planilha. (O Acompanhamento mantém o Post em "Concluído".)
+    _ids_concluidos = set()
+    if BANCO_DISPONIVEL:
+        try:
+            _conn_c = bd.obter_conexao()
+            _ids_concluidos = {
+                linha["id"] for linha in
+                _conn_c.execute("SELECT id FROM cartoes WHERE status = 'concluido'").fetchall()
+            }
+            _conn_c.close()
+        except Exception as _err_c:
+            logger.error(f"OPERACAO | Falha ao ler cartões concluídos do banco | {_err_c}")
+    todos_matched = [
+        (nome_arq, dados) for (nome_arq, dados) in todos_matched
+        if dados.get("db_cartao_id") not in _ids_concluidos
+    ]
     # Ordena por timestamp do arquivo (nome do arquivo já é cronológico)
     todos_matched.sort(key=lambda x: x[0], reverse=True)
     matches_recentes = todos_matched[:10]
+
+    # Posts cancelados (aba separada — não se misturam com os que valem)
+    posts_cancelados = []
+    if BANCO_DISPONIVEL:
+        try:
+            _conn_canc = bd.obter_conexao()
+            posts_cancelados = bd.listar_formularios_cancelados(_conn_canc)
+            _conn_canc.close()
+        except Exception as _err_canc:
+            logger.error(f"OPERACAO | Falha ao listar Posts cancelados | {_err_canc}")
 
     # Identifica órfãos
     orfaos = identificar_orfaos()
@@ -841,8 +893,16 @@ def painel():
         marca = dados.get("marca_camera") or "—"
         nome = dados.get("nome", "—")
         origem = dados.get("origem", "—")
+        # Seletor para o match manual: rádio com o id do cartão no banco.
+        # Só aparece quando o JSON tem db_cartao_id (cartões legados sem id ficam "—").
+        cid = dados.get("db_cartao_id")
+        sel = (
+            f"<input type='radio' name='cartao_sel' value='{cid}' onclick='gmaMatchRefresh()'>"
+            if cid is not None else "<span style='color:#ced4da'>—</span>"
+        )
         return (
             f"<tr>"
+            f"<td style='text-align:center'>{sel}</td>"
             f"<td>{nome}</td>"
             f"<td>{marca}</td>"
             f"<td>{origem}</td>"
@@ -872,14 +932,30 @@ def painel():
         # Prioridade: destaca URGENTE em vermelho
         prioridade = dados.get("prioridade") or "NORMAL"
         cor_prioridade = "#c0392b" if prioridade == "URGENTE" else "#6c757d"
+        # Seletor para o match manual: rádio com o id da ficha no banco.
+        fid = dados.get("db_formulario_id")
+        sel = (
+            f"<input type='radio' name='ficha_sel' value='{fid}' onclick='gmaMatchRefresh()'>"
+            if fid is not None else "<span style='color:#ced4da'>—</span>"
+        )
+        # Botão "cancelar" do Post (soft-delete → seção "Posts cancelados", reversível)
+        cancelar = (
+            f"<form action='/post/{fid}/cancelar' method='post' style='margin:0' "
+            f"onsubmit=\"return confirm('Cancelar este Post? Ele sai das telas e vai para "
+            f"Posts cancelados (reversível).');\">"
+            f"<button type='submit' style='background:none;border:none;color:#c0392b;"
+            f"font-size:0.78em;cursor:pointer;text-decoration:underline'>cancelar</button></form>"
+        ) if fid is not None else ""
         return (
             f"<tr>"
+            f"<td style='text-align:center'>{sel}</td>"
             f"<td>{nome}</td>"
             f"<td>{camera}</td>"
             f"<td>{conteudo}</td>"
             f"<td style='color:{cor_prioridade};font-weight:600'>{prioridade}</td>"
             f"<td>{operador}</td>"
             f"<td>{tempo}</td>"
+            f"<td style='text-align:right'>{cancelar}</td>"
             f"</tr>"
         )
 
@@ -973,7 +1049,7 @@ def painel():
             return f"""
             <div style="border:1px solid #f48fb1;border-radius:6px;padding:12px 16px;margin:8px 0;background:#fff5f7">
                 <strong>{nome}</strong> &middot; {camera}
-                <span style="color:#888;font-size:0.85em"> — formulario aguardando confirmacao</span>
+                <span style="color:#888;font-size:0.85em"> — Post aguardando confirmacao</span>
             </div>"""
 
         # ── Cabeçalho do cartão ───────────────────────────────────────────────
@@ -1082,7 +1158,7 @@ def painel():
 
     linhas_forms = "".join(
         linha_form(n, d) for n, d in forms_aguardando
-    ) or "<tr><td colspan='6' style='color:#888;text-align:center'>Nenhum formulário aguardando</td></tr>"
+    ) or "<tr><td colspan='6' style='color:#888;text-align:center'>Nenhum Post aguardando</td></tr>"
 
     linhas_matches = "".join(
         linha_match(n, d) for n, d in matches_recentes
@@ -1100,9 +1176,9 @@ def painel():
         nomes_orfaos_form = ", ".join(d["dados"].get("nome", "?") for d in orfaos["forms"])
         partes_alerta = []
         if orfaos["materiais"]:
-            partes_alerta.append(f"Material sem form ({len(orfaos['materiais'])}): {nomes_orfaos_mat}")
+            partes_alerta.append(f"Material sem Post ({len(orfaos['materiais'])}): {nomes_orfaos_mat}")
         if orfaos["forms"]:
-            partes_alerta.append(f"Form sem material ({len(orfaos['forms'])}): {nomes_orfaos_form}")
+            partes_alerta.append(f"Post sem material ({len(orfaos['forms'])}): {nomes_orfaos_form}")
         bloco_orfaos = f"""
         <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;
                     padding:12px 18px;margin-bottom:20px;color:#856404;">
@@ -1112,6 +1188,35 @@ def painel():
     else:
         bloco_orfaos = ""
 
+    # ── Seção "Posts cancelados" (recolhível, separada dos que valem) ──────────
+    if posts_cancelados:
+        linhas_canc = "".join(
+            f"<tr><td>{_esc(c['nome'])}</td>"
+            f"<td>{_esc(c['tipo_material'] or '—')}</td>"
+            f"<td>{_esc(c['data_gravacao'] or '—')}</td>"
+            f"<td>{_esc(c['recebido_em'] or '—')}</td>"
+            f"<td style='text-align:right'>"
+            f"<form action='/post/{c['id']}/restaurar' method='post' style='margin:0'>"
+            f"<button type='submit' style='background:none;border:none;color:#2e7d32;"
+            f"font-size:0.78em;cursor:pointer;text-decoration:underline'>restaurar</button>"
+            f"</form></td></tr>"
+            for c in posts_cancelados
+        )
+        bloco_cancelados = f"""
+        <details class="card card-full" style="margin-top:20px">
+            <summary style="padding:12px 16px;font-weight:600;font-size:0.9em;cursor:pointer;
+                            background:#f1f3f5;list-style:none">
+                🗂️ Posts cancelados <span class="badge">{len(posts_cancelados)}</span>
+                <span style="font-weight:400;color:#adb5bd;font-size:0.85em">— fora da Operação e da Planilha; clique para ver / restaurar</span>
+            </summary>
+            <table>
+                <tr><th>Nome</th><th>Tipo</th><th>Gravado</th><th>Recebido</th><th></th></tr>
+                {linhas_canc}
+            </table>
+        </details>"""
+    else:
+        bloco_cancelados = ""
+
     # ── Monta o HTML completo ──────────────────────────────────────────────────
     pagina_html = f"""<!DOCTYPE html>
 <html lang="pt-BR">
@@ -1119,7 +1224,10 @@ def painel():
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GMA — Painel de Check-in</title>
-    <meta http-equiv="refresh" content="5">
+    <!-- O auto-refresh de 5s agora é feito em JS no fim da página: ele PAUSA -->
+    <!-- enquanto o operador está fazendo o match na mão (uma bolinha marcada), pra não -->
+    <!-- recarregar por cima da escolha. (Antes era um meta-refresh fixo.) -->
+
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         body {{
@@ -1229,6 +1337,9 @@ def painel():
         }}
         .btn-ativar   {{ background: #27ae60; color: white; }}
         .btn-desativar {{ background: #c0392b; color: white; }}
+        .match-acao {{ margin-bottom: 16px; }}
+        .btn-match {{ background: #8e44ad; color: white; font-weight: 700; letter-spacing: 0.5px; padding: 8px 28px; }}
+        .btn-match:disabled {{ opacity: 0.45; cursor: not-allowed; }}
         .status-porteiro {{
             font-size: 0.85em;
             color: #6c757d;
@@ -1247,6 +1358,7 @@ def painel():
     {barra_abas('operacao')}
 
     <main>
+        {bloco_feedback}
         {bloco_orfaos}
 
         <div class="controles">
@@ -1261,21 +1373,35 @@ def painel():
                 &nbsp;|&nbsp;
                 Material aguardando: <strong>{len(material_aguardando)}</strong>
                 &nbsp;|&nbsp;
-                Forms aguardando: <strong>{len(forms_aguardando)}</strong>
+                Posts aguardando: <strong>{len(forms_aguardando)}</strong>
                 &nbsp;|&nbsp;
                 Matches hoje: <strong>{contar_matches_hoje()}</strong>
             </span>
         </div>
 
+        <!-- Botão do match manual (último recurso do princípio nº 3): aparece sempre, -->
+        <!-- mas só LIGA quando há 1 cartão (esq.) + 1 Post (dir.) marcados. -->
+        <div class="match-acao">
+            <button type="button" id="btn-match" class="btn btn-match" disabled
+                    onclick="gmaMatchSubmit()">
+                MATCH
+            </button>
+        </div>
+        <form id="form-match" action="/match-manual/confirmar" method="post" style="display:none">
+            <input type="hidden" name="cartao_id" id="match-cartao-id">
+            <input type="hidden" name="formulario_id" id="match-ficha-id">
+        </form>
+
         <div class="grid">
             <!-- Bloco: Material aguardando formulário -->
             <div class="card">
                 <div class="card-header header-material">
-                    Material aguardando formulario
+                    Material aguardando Post
                     <span class="badge">{len(material_aguardando)}</span>
                 </div>
                 <table>
                     <tr>
+                        <th style="width:34px"></th>
                         <th>Volume / Item</th>
                         <th>Camera</th>
                         <th>Origem</th>
@@ -1288,17 +1414,19 @@ def painel():
             <!-- Bloco: Formulários aguardando material -->
             <div class="card">
                 <div class="card-header header-forms">
-                    Formularios aguardando material
+                    Posts aguardando material
                     <span class="badge">{len(forms_aguardando)}</span>
                 </div>
                 <table>
                     <tr>
+                        <th style="width:34px"></th>
                         <th>Nome</th>
                         <th>Camera</th>
                         <th>Conteudo</th>
                         <th>Prioridade</th>
                         <th>Operador</th>
                         <th>Ha quanto tempo</th>
+                        <th></th>
                     </tr>
                     {linhas_forms}
                 </table>
@@ -1314,7 +1442,7 @@ def painel():
                     <tr>
                         <th>Volume / Item</th>
                         <th>Camera</th>
-                        <th>ID do Formulario</th>
+                        <th>ID do Post</th>
                         <th>Recebido ha</th>
                     </tr>
                     {linhas_matches}
@@ -1322,7 +1450,7 @@ def painel():
             </div>
 
             <!-- Bloco: Aguardando confirmacao humana (match ambiguo — ocupa largura total) -->
-            <!-- O Matcher nao conseguiu casar automaticamente porque havia dois ou mais    -->
+            <!-- O Matcher nao conseguiu dar match automaticamente porque havia dois ou mais -->
             <!-- candidatos com pontuacoes muito proximas. O operador escolhe aqui.        -->
             <div class="card card-full">
                 <div class="card-header header-confirmacao">
@@ -1335,11 +1463,38 @@ def painel():
             </div>
         </div>
 
+        {bloco_cancelados}
+
         <p class="rodape">
             GMA Camada 1 &mdash; Atualiza automaticamente a cada 5 segundos &mdash;
             <a href="/status" style="color:#adb5bd">JSON de status</a>
         </p>
     </main>
+    <script>
+    // ── Match manual: liga o botão só quando há 1 cartão + 1 ficha escolhidos ──
+    function gmaMatchRefresh() {{
+        var c = document.querySelector('input[name=cartao_sel]:checked');
+        var f = document.querySelector('input[name=ficha_sel]:checked');
+        document.getElementById('btn-match').disabled = !(c && f);
+    }}
+    // Leva a escolha para o formulário oculto e vai para a tela de resumo.
+    function gmaMatchSubmit() {{
+        var c = document.querySelector('input[name=cartao_sel]:checked');
+        var f = document.querySelector('input[name=ficha_sel]:checked');
+        if (!c || !f) return;
+        document.getElementById('match-cartao-id').value = c.value;
+        document.getElementById('match-ficha-id').value = f.value;
+        document.getElementById('form-match').submit();
+    }}
+    // Auto-refresh de 5s — mas PAUSA enquanto o operador está fazendo o match na mão
+    // (alguma bolinha marcada), pra não recarregar por cima da escolha.
+    setTimeout(function() {{
+        var c = document.querySelector('input[name=cartao_sel]:checked');
+        var f = document.querySelector('input[name=ficha_sel]:checked');
+        if (c || f) return;   // seleção em curso — não recarrega
+        location.reload();
+    }}, 5000);
+    </script>
 </body>
 </html>"""
 
@@ -1469,6 +1624,7 @@ STATUS_PARA_COLUNA = {
     "aguardando_confirmacao": "match",
     "copiando":               "copiando",
     "falhou":                 "copiando",
+    "transferencia_falhou":   "copiando",   # falha de cópia: fica em "Copiando" com badge vermelho
     "transferencia_ok":       "verificado",
     "verificado_parashoot":   "verificado",
     "verificacao_falhou":     "verificado",
@@ -1506,6 +1662,22 @@ def _pagina(titulo, aba, corpo, head_extra=""):
         .contador {{ background:#e9ecef; color:#495057; border-radius:12px;
                      padding:1px 9px; font-size:0.9em; }}
         .coluna-corpo {{ padding:10px; display:flex; flex-direction:column; gap:10px; min-height:40px; }}
+        /* Coluna "Concluído" — barras agrupadas por dia (estilo ShotPut Pro) */
+        .dia-grupo {{ margin-bottom:8px; }}
+        .dia-head {{ cursor:pointer; font-size:0.82em; font-weight:600; color:#495057;
+                     padding:4px 2px; list-style:none; user-select:none; }}
+        .dia-head::-webkit-details-marker {{ display:none; }}
+        .dia-head::before {{ content:'\\25B8'; display:inline-block; margin-right:6px; color:#adb5bd; }}
+        .dia-grupo[open] > .dia-head::before {{ content:'\\25BE'; }}
+        .dia-cont {{ color:#adb5bd; font-weight:400; margin-left:6px; }}
+        .dia-corpo {{ display:flex; flex-direction:column; gap:8px; padding:6px 0 2px; }}
+        .bar-concluido {{ background:#d6f0d8; border:1px solid #b6e0ba; border-radius:8px; padding:10px 12px; }}
+        .bar-topo {{ display:flex; justify-content:space-between; align-items:center; gap:8px; }}
+        .bar-titulo {{ font-weight:700; color:#1a1a2e; font-size:0.95em; }}
+        .bar-tipo {{ font-size:0.7em; font-weight:700; color:#2e6b32; background:#bfe6c3;
+                     border-radius:10px; padding:1px 8px; flex:none; white-space:nowrap; }}
+        .bar-tam {{ color:#5f6b62; font-size:0.82em; margin-top:2px; }}
+        .bar-rodape {{ color:#5f6b62; font-size:0.82em; margin-top:6px; }}
         .card-kanban {{ background:#fff; border-radius:6px; box-shadow:0 1px 3px rgba(0,0,0,0.1); padding:10px; }}
         .card-titulo {{ font-weight:700; font-size:0.95em; }}
         .card-meta {{ color:#6c757d; font-size:0.82em; margin:3px 0 7px; }}
@@ -1517,6 +1689,9 @@ def _pagina(titulo, aba, corpo, head_extra=""):
                    border-radius:5px; padding:6px; font-family:inherit; font-size:0.82em; resize:vertical; }}
         .btn-postit {{ align-self:flex-end; background:#27ae60; color:#fff; border:none;
                        border-radius:5px; padding:4px 14px; font-weight:600; font-size:0.8em; cursor:pointer; }}
+        .descartar-form {{ margin-top:6px; text-align:right; }}
+        .btn-descartar {{ background:none; border:none; color:#c0392b; font-size:0.74em;
+                          cursor:pointer; padding:0; text-decoration:underline; }}
         /* ── Planilha ── */
         .filtro {{ width:100%; max-width:360px; padding:8px 12px; border:1px solid #ced4da;
                    border-radius:6px; margin-bottom:14px; font-size:0.9em; }}
@@ -1540,6 +1715,106 @@ def _pagina(titulo, aba, corpo, head_extra=""):
     <main>{corpo}</main>
 </body>
 </html>"""
+
+
+def _fmt_data_extenso(iso):
+    """'2026-05-31' -> '31 de maio de 2026' (cabeçalho de dia, estilo ShotPut Pro)."""
+    from datetime import datetime
+    meses = ["janeiro", "fevereiro", "março", "abril", "maio", "junho",
+             "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
+    try:
+        dt = datetime.strptime((iso or "")[:10], "%Y-%m-%d")
+        return f"{dt.day} de {meses[dt.month - 1]} de {dt.year}"
+    except Exception:
+        return "Sem data"
+
+
+def _fmt_data_curta(iso):
+    """'2026-05-31' -> '31/05/2026'."""
+    from datetime import datetime
+    try:
+        return datetime.strptime((iso or "")[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
+    except Exception:
+        return "—"
+
+
+def _tipos_post(row):
+    """
+    Tipos de material ANUNCIADOS no Post (foto/vídeo/áudio). Vêm dos booleanos do
+    formulário (tem_foto/tem_audio/tem_video) que o JOIN do Kanban trouxe; se a
+    ficha não veio (cartão sem match), cai para o tipo_material detectado no cartão.
+    Retorna uma lista, ex.: ["Vídeo"] ou ["Foto", "Vídeo"].
+    """
+    tipos = []
+    def _campo(nome):
+        try:
+            return row[nome]
+        except (KeyError, IndexError):
+            return None
+    if _campo("tem_video"):
+        tipos.append("Vídeo")
+    if _campo("tem_foto"):
+        tipos.append("Foto")
+    if _campo("tem_audio"):
+        tipos.append("Áudio")
+    if not tipos:
+        mapa = {"VIDEO": "Vídeo", "FOTO": "Foto", "AUDIO": "Áudio"}
+        tm = (row["tipo_material"] or "").strip().upper()
+        if tm in mapa:
+            tipos.append(mapa[tm])
+    return tipos
+
+
+def _bar_concluido(cartao):
+    """
+    Barra compacta de um Post CONCLUÍDO (cartão ejetado), no estilo da barra
+    lateral do ShotPut Pro: NOME_NNN + tipo (foto/vídeo/áudio) + tamanho · nº de
+    arquivos + "Concluído | DD/MM/AAAA". O cartão já saiu do fluxo operacional;
+    aqui é só o registro do que foi entregue.
+    """
+    titulo = cartao["numero_cartao"] or cartao["volume"] or f"Cartão {cartao['id']}"
+    tam_bytes = cartao["tamanho_transferido_bytes"] or cartao["tamanho_total_bytes_detectado"]
+    tamanho = bd._fmt_tamanho_planilha(tam_bytes) if tam_bytes else "—"
+    n_arq = cartao["total_arquivos_transferidos"] or cartao["total_arquivos_detectados"]
+    info_tam = tamanho + (f" · {n_arq} arq." if n_arq else "")
+    data = cartao["data_inicio"] or cartao["data_fim"]
+    tipos = _tipos_post(cartao)
+    tipo_html = (f"<span class='bar-tipo'>{_esc(' · '.join(tipos))}</span>"
+                 if tipos else "")
+    return f"""
+        <div class="bar-concluido">
+            <div class="bar-topo">
+                <span class="bar-titulo">{_esc(titulo)}</span>
+                {tipo_html}
+            </div>
+            <div class="bar-tam">{_esc(info_tam)}</div>
+            <div class="bar-rodape">Concluído | {_esc(_fmt_data_curta(data))}</div>
+        </div>"""
+
+
+def _coluna_concluido_corpo(cards):
+    """
+    Corpo da coluna "Concluído": agrupa os Posts por dia (data_inicio, queda para
+    data_fim) em blocos recolhíveis (<details> nativo, sem JS), mais recentes no
+    topo — exatamente como a barra lateral do ShotPut Pro.
+    """
+    if not cards:
+        return "<p class='coluna-vazia'>—</p>"
+    grupos = {}
+    for c in cards:
+        dia = (c["data_inicio"] or c["data_fim"] or "")[:10]
+        grupos.setdefault(dia, []).append(c)
+    # Dias em ordem decrescente; "sem data" (string vazia) vai para o fim
+    dias_ord = sorted(grupos.keys(), key=lambda d: d or "0000-00-00", reverse=True)
+    html = ""
+    for dia in dias_ord:
+        barras = "".join(_bar_concluido(c) for c in grupos[dia])
+        html += f"""
+        <details class="dia-grupo" data-dia="{_esc(dia or 'sem-data')}" open>
+            <summary class="dia-head">{_esc(_fmt_data_extenso(dia))}<span class="dia-cont">{len(grupos[dia])}</span></summary>
+            <div class="dia-corpo">{barras}</div>
+        </details>"""
+    return html
 
 
 def _card_kanban(cartao):
@@ -1576,6 +1851,19 @@ def _card_kanban(cartao):
     selo_multidia = "<span class='selo-alerta'>multi-dia</span>" if cartao["alerta_multidia"] else ""
     obs = cartao["observacoes"] or ""
 
+    # Botão "descartar": só para cartão DETECTADO que ainda não virou entrega
+    # (sem número, fora do fluxo de cópia). É a saída para sujeira/cartão errado.
+    descartavel = (status in ("detectado", "aguardando_match", "sem_midia", "revisar")
+                   and not cartao["numero_cartao"])
+    botao_descartar = ""
+    if descartavel:
+        botao_descartar = (
+            f"<form class='descartar-form' action='/cartao/{cartao['id']}/descartar' method='post' "
+            f"onsubmit=\"return confirm('Descartar este cartão detectado? Ele sai das telas e "
+            f"fica registrado no Log do sistema.');\">"
+            f"<button type='submit' class='btn-descartar'>descartar</button></form>"
+        )
+
     return f"""
         <div class="card-kanban">
             <div class="card-titulo">{_esc(titulo)}</div>
@@ -1588,6 +1876,7 @@ def _card_kanban(cartao):
                 <textarea name="observacao" class="postit" placeholder="post-it: observação livre…">{_esc(obs)}</textarea>
                 <button type="submit" class="btn-postit">Salvar</button>
             </form>
+            {botao_descartar}
         </div>"""
 
 
@@ -1690,6 +1979,54 @@ def _painel_qr_ficha():
     </div>"""
 
 
+def _ler_cartoes_kanban(conn):
+    """
+    Lê os cartões para o Kanban já com os tipos ANUNCIADOS no Post (foto/áudio/
+    vídeo), via LEFT JOIN matches→formularios (1 match por cartão). Cartão sem
+    ficha vem com os campos de tipo nulos (a barra cai para o tipo_material).
+    """
+    return conn.execute("""
+        SELECT c.*, f.tem_foto, f.tem_audio, f.tem_video
+        FROM cartoes c
+        LEFT JOIN matches m ON m.cartao_id = c.id
+        LEFT JOIN formularios f ON f.id = m.formulario_id
+        ORDER BY c.id DESC
+    """).fetchall()
+
+
+def _montar_colunas_kanban(cartoes):
+    """
+    Distribui os cartões nas colunas conforme o status e devolve o HTML das
+    colunas (sem o wrapper). Fonte única usada pela página /kanban E pela rota
+    ao vivo /kanban/board — os dois nunca divergem.
+    """
+    baldes = {chave: [] for chave, _, _ in COLUNAS_KANBAN}
+    for cartao in cartoes:
+        if cartao["status"] in ("descartado", "ausente"):   # dispensado/invalidado → some das telas
+            continue
+        coluna = STATUS_PARA_COLUNA.get(cartao["status"], "detectado")
+        if coluna not in baldes:   # status sem coluna (defensivo) — ignora
+            continue
+        baldes[coluna].append(cartao)
+
+    colunas_html = ""
+    for chave, rotulo, cor in COLUNAS_KANBAN:
+        cards = baldes[chave]
+        if chave == "concluido":
+            # Coluna "Concluído" = Posts entregues, em barras por dia (estilo ShotPut Pro)
+            cards_html = _coluna_concluido_corpo(cards)
+        else:
+            cards_html = "".join(_card_kanban(c) for c in cards) or "<p class='coluna-vazia'>—</p>"
+        colunas_html += f"""
+        <div class="coluna">
+            <div class="coluna-head" style="border-top:3px solid {cor}">
+                <span>{rotulo}</span><span class="contador">{len(cards)}</span>
+            </div>
+            <div class="coluna-corpo">{cards_html}</div>
+        </div>"""
+    return colunas_html
+
+
 @app.route("/kanban", methods=["GET"])
 def kanban():
     """
@@ -1698,6 +2035,9 @@ def kanban():
     Lê os cartões direto do banco (fonte única) e os distribui em colunas
     conforme o status. Cada card tem um post-it que grava de volta no banco.
     Mostra também o QR Code do link da ficha (para os câmeras escanearem).
+
+    AO VIVO: o quadro se atualiza sozinho a cada 1s buscando só o fragmento
+    (/kanban/board) e trocando quando muda — sem recarregar a página inteira.
     """
     if not BANCO_DISPONIVEL:
         corpo = "<p class='vazio'>Banco de dados indisponível.</p>"
@@ -1705,50 +2045,78 @@ def kanban():
 
     try:
         conn = bd.obter_conexao()
-        cartoes = conn.execute("SELECT * FROM cartoes ORDER BY id DESC").fetchall()
+        cartoes = _ler_cartoes_kanban(conn)
         conn.close()
     except Exception as erro:
         logger.error(f"KANBAN | Erro ao ler cartões | {erro}")
         cartoes = []
 
-    # Distribui cada cartão na coluna certa conforme o status
-    baldes = {chave: [] for chave, _, _ in COLUNAS_KANBAN}
-    for cartao in cartoes:
-        coluna = STATUS_PARA_COLUNA.get(cartao["status"], "detectado")
-        baldes[coluna].append(cartao)
-
-    # Monta as 5 colunas
-    colunas_html = ""
-    for chave, rotulo, cor in COLUNAS_KANBAN:
-        cards = baldes[chave]
-        cards_html = "".join(_card_kanban(c) for c in cards)
-        if not cards_html:
-            cards_html = "<p class='coluna-vazia'>—</p>"
-        colunas_html += f"""
-        <div class="coluna">
-            <div class="coluna-head" style="border-top:3px solid {cor}">
-                <span>{rotulo}</span><span class="contador">{len(cards)}</span>
-            </div>
-            <div class="coluna-corpo">{cards_html}</div>
-        </div>"""
+    colunas_html = _montar_colunas_kanban(cartoes)
 
     corpo = f"""
     <p class="legenda">Cada cartão é um card; ele anda da esquerda para a direita conforme o status muda no banco.
        Escreva um post-it em qualquer card e clique em <strong>Salvar</strong> — fica gravado na fonte única.</p>
     {_painel_qr_ficha()}
-    <div class="kanban">{colunas_html}</div>"""
+    <div class="kanban" id="kanban-board">{colunas_html}</div>"""
 
-    # Auto-refresh de 8s para ver os cards andando — mas pausa enquanto você
-    # estiver escrevendo um post-it (não recarrega e perde o texto).
+    # Acompanhamento AO VIVO (mínimo de delay): em vez de recarregar a página
+    # inteira, busca só o quadro a cada 1s e troca quando muda. Pausa enquanto
+    # você digita um post-it; preserva os grupos de dia recolhidos na coluna
+    # "Concluído" (lembra pelo data-dia).
     head_extra = f"<style>{CSS_QR}</style>" + """<script>
       document.addEventListener('DOMContentLoaded', function() {
-        var timer = setTimeout(function(){ location.reload(); }, 8000);
-        document.querySelectorAll('textarea').forEach(function(el){
-          el.addEventListener('focus', function(){ clearTimeout(timer); });
-        });
+        var board = document.getElementById('kanban-board');
+        if (!board) return;
+        var ultimo = null;
+        var fechados = new Set();
+        document.addEventListener('toggle', function(e) {
+          var d = e.target;
+          if (d.tagName === 'DETAILS' && d.dataset && d.dataset.dia) {
+            if (d.open) fechados.delete(d.dataset.dia); else fechados.add(d.dataset.dia);
+          }
+        }, true);
+        function reaplicar() {
+          board.querySelectorAll('details.dia-grupo').forEach(function(d) {
+            if (fechados.has(d.dataset.dia)) d.open = false;
+          });
+        }
+        function vivo() {
+          var a = document.activeElement;
+          if (a && a.tagName === 'TEXTAREA') return;  // pausa: você está digitando um post-it
+          fetch('/kanban/board', {cache: 'no-store'})
+            .then(function(r) { return r.text(); })
+            .then(function(html) {
+              if (html && html !== ultimo) {
+                ultimo = html;
+                board.innerHTML = html;
+                reaplicar();
+              }
+            }).catch(function() {});
+        }
+        setInterval(vivo, 1000);
       });
     </script>"""
     return _pagina("Acompanhamento", "kanban", corpo, head_extra), 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
+@app.route("/kanban/board", methods=["GET"])
+def kanban_board():
+    """
+    Fragmento HTML das colunas do Kanban (só o quadro), para o Acompanhamento ao
+    vivo: a página busca isto a cada 1s e troca quando muda — sem recarregar a
+    página inteira (sem flicker, sem perder o post-it em edição). Acesso só na
+    base (o portão barra remoto, como toda rota fora de /ficha e /forms).
+    """
+    if not BANCO_DISPONIVEL:
+        return "", 200, {"Content-Type": "text/html; charset=utf-8"}
+    try:
+        conn = bd.obter_conexao()
+        cartoes = _ler_cartoes_kanban(conn)
+        conn.close()
+    except Exception as erro:
+        logger.error(f"KANBAN BOARD | Erro ao ler cartões | {erro}")
+        cartoes = []
+    return _montar_colunas_kanban(cartoes), 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
 @app.route("/cartao/<int:cartao_id>/observacao", methods=["POST"])
@@ -1768,6 +2136,141 @@ def salvar_observacao(cartao_id):
         except Exception as erro:
             logger.error(f"POST-IT | Erro ao salvar no cartão {cartao_id} | {erro}")
     return redirect("/kanban")
+
+
+def _arquivar_json_material(cartao_id):
+    """
+    Move o JSON do material (db_cartao_id == cartao_id) para a subpasta
+    _arquivo_descartados/ — assim o cartão também sai da Operação. É REVERSÍVEL
+    (o arquivo continua lá, só fora da fila); o banco guarda o status 'descartado'.
+    """
+    try:
+        if not os.path.isdir(PASTA_FILA_MATERIAL):
+            return
+        destino_dir = os.path.join(PASTA_FILA_MATERIAL, "_arquivo_descartados")
+        for nome in os.listdir(PASTA_FILA_MATERIAL):
+            if not nome.endswith(".json"):
+                continue
+            caminho = os.path.join(PASTA_FILA_MATERIAL, nome)
+            try:
+                with open(caminho, "r", encoding="utf-8") as f:
+                    dados = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue
+            if dados.get("db_cartao_id") == cartao_id:
+                os.makedirs(destino_dir, exist_ok=True)
+                os.rename(caminho, os.path.join(destino_dir, nome))
+                logger.info(f"DESCARTAR CARTAO | JSON do material arquivado | {nome}")
+                break
+    except Exception as erro:
+        logger.error(f"DESCARTAR CARTAO | Falha ao arquivar JSON do cartão {cartao_id} | {erro}")
+
+
+@app.route("/cartao/<int:cartao_id>/descartar", methods=["POST"])
+def descartar_cartao_rota(cartao_id):
+    """
+    Descarta um cartão DETECTADO que não vai ser usado (sujeira, cartão errado).
+    Soft-delete no banco (status 'descartado' + evento no Log) e arquiva o JSON
+    da fila — o cartão sai da Operação e do Acompanhamento, mas nada é apagado.
+    Acesso só na base (o portão barra remoto).
+    """
+    resultado = {"ok": False, "motivo": "banco_indisponivel"}
+    if BANCO_DISPONIVEL:
+        try:
+            conn = bd.obter_conexao()
+            resultado = bd.descartar_cartao(conn, cartao_id, motivo="painel")
+            conn.close()
+        except Exception as erro:
+            logger.error(f"DESCARTAR CARTAO | Erro | cartão {cartao_id} | {erro}")
+            resultado = {"ok": False, "motivo": f"erro_interno: {erro}"}
+
+    if resultado.get("ok"):
+        _arquivar_json_material(cartao_id)
+        logger.info(
+            f"DESCARTAR CARTAO | Cartão {cartao_id} descartado | "
+            f"volume={resultado.get('volume')}"
+        )
+    else:
+        logger.warning(
+            f"DESCARTAR CARTAO | Não descartado | cartão {cartao_id} | "
+            f"motivo={resultado.get('motivo')}"
+        )
+    return redirect("/kanban")
+
+
+def _mover_json_form(formulario_id, para_arquivo):
+    """
+    Move o JSON da ficha (db_formulario_id) entre a fila e a subpasta de cancelados.
+    para_arquivo=True  → fila_forms/  →  fila_forms/_arquivo_cancelados/  (cancelar)
+    para_arquivo=False → _arquivo_cancelados/  →  fila_forms/             (restaurar)
+    Reversível; nada é apagado. Defensivo: falha só é logada.
+    """
+    try:
+        if not os.path.isdir(PASTA_FILA_FORMS):
+            return
+        arquivados = os.path.join(PASTA_FILA_FORMS, "_arquivo_cancelados")
+        origem_dir = PASTA_FILA_FORMS if para_arquivo else arquivados
+        destino_dir = arquivados if para_arquivo else PASTA_FILA_FORMS
+        if not os.path.isdir(origem_dir):
+            return
+        for nome in os.listdir(origem_dir):
+            if not nome.endswith(".json"):
+                continue
+            caminho = os.path.join(origem_dir, nome)
+            try:
+                with open(caminho, "r", encoding="utf-8") as f:
+                    dados = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue
+            if dados.get("db_formulario_id") == formulario_id:
+                os.makedirs(destino_dir, exist_ok=True)
+                os.rename(caminho, os.path.join(destino_dir, nome))
+                logger.info(f"POST | JSON da ficha {'arquivado' if para_arquivo else 'restaurado'} | {nome}")
+                break
+    except Exception as erro:
+        logger.error(f"POST | Falha ao mover JSON da ficha {formulario_id} | {erro}")
+
+
+@app.route("/post/<int:formulario_id>/cancelar", methods=["POST"])
+def post_cancelar(formulario_id):
+    """
+    Cancela um Post (ficha sem cartão): soft-delete no banco (status 'cancelado'
+    + Log) e arquiva o JSON da fila — o Post sai da Operação/Planilha e vai para a
+    seção "Posts cancelados". Reversível. Acesso só na base (portão barra remoto).
+    """
+    resultado = {"ok": False, "motivo": "banco_indisponivel"}
+    if BANCO_DISPONIVEL:
+        try:
+            conn = bd.obter_conexao()
+            resultado = bd.cancelar_formulario(conn, formulario_id, motivo="painel")
+            conn.close()
+        except Exception as erro:
+            logger.error(f"POST CANCELAR | Erro | ficha {formulario_id} | {erro}")
+            resultado = {"ok": False, "motivo": f"erro_interno: {erro}"}
+    if resultado.get("ok"):
+        _mover_json_form(formulario_id, para_arquivo=True)
+        logger.info(f"POST CANCELAR | Ficha {formulario_id} cancelada | nome={resultado.get('nome')}")
+    else:
+        logger.warning(f"POST CANCELAR | Não cancelada | ficha {formulario_id} | motivo={resultado.get('motivo')}")
+    return redirect("/")
+
+
+@app.route("/post/<int:formulario_id>/restaurar", methods=["POST"])
+def post_restaurar(formulario_id):
+    """Restaura um Post cancelado: volta para 'aguardando_match' e devolve o JSON à fila."""
+    resultado = {"ok": False, "motivo": "banco_indisponivel"}
+    if BANCO_DISPONIVEL:
+        try:
+            conn = bd.obter_conexao()
+            resultado = bd.restaurar_formulario(conn, formulario_id)
+            conn.close()
+        except Exception as erro:
+            logger.error(f"POST RESTAURAR | Erro | ficha {formulario_id} | {erro}")
+            resultado = {"ok": False, "motivo": f"erro_interno: {erro}"}
+    if resultado.get("ok"):
+        _mover_json_form(formulario_id, para_arquivo=False)
+        logger.info(f"POST RESTAURAR | Ficha {formulario_id} restaurada | nome={resultado.get('nome')}")
+    return redirect("/")
 
 
 def _celula_planilha(col, linha, chips, textos=None):
@@ -2624,7 +3127,7 @@ def _opcoes_select(lista, selecionado=""):
 
 
 # Status da ficha em que ainda é SEGURO editar os campos críticos (nome/câmera/
-# tipo/data): só enquanto ela não casou com material. Depois de 'matched' esses
+# tipo/data): só enquanto ela não tem match com material. Depois de 'matched' esses
 # campos guiam a numeração e a pasta de destino — travamos por segurança.
 STATUS_FICHA_LIVRE = {"aguardando_material", "aguardando_match", "", None}
 
@@ -2736,7 +3239,7 @@ def _bloco_tipo_nome_ficha(d, trava, profissionais):
     audio_chk = "checked" if "AUDIO" in tipo_atual else ""
     video_chk = "checked" if "VIDEO" in tipo_atual else ""
 
-    # Atributo que trava os controles quando a ficha já casou com material.
+    # Atributo que trava os controles quando a ficha já tem match com material.
     trava_chk     = " disabled" if trava.strip() else ""  # checkboxes usam "disabled" simples
     trava_sel     = trava                                  # selects já usam o atributo gerado
 
@@ -3079,7 +3582,7 @@ def _bloco_classificacao_ficha(chips_selecionados, eh_operador=False, textos_sel
     - O profissional só ESCOLHE da lista — vocabulário fechado, sem digitar.
     - palco/marca/pauta/serviço = escolha única; tags = múltipla (enforçado por JS).
     - Sem NENHUM item ativo → o bloco inteiro some (a ficha continua limpa).
-    - A classificação é editorial: continua liberada mesmo quando a ficha já casou
+    - A classificação é editorial: continua liberada mesmo quando a ficha já tem match
       (ao contrário de nome/tipo/data), por isso não recebe a trava.
 
     chips_selecionados: conjunto de ids (str) já escolhidos — edição ou
@@ -3270,7 +3773,7 @@ def _bloco_data_ficha(d, trava, hoje_iso):
     o profissional diz que foi outro dia (2.1, decisão s33). Mais prático no set:
     a maioria entrega no mesmo dia. O Matcher recebe a data normalmente (critério +2).
 
-    Travada (ficha já casou): mostra só a data desabilitada, sem o toggle.
+    Travada (ficha já tem match): mostra só a data desabilitada, sem o toggle.
     """
     data_atual = (d.get("data_gravacao") or "").strip()
     if trava:
@@ -3343,7 +3846,7 @@ def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
 
     modo="nova"   → cria uma ficha (action /ficha).
     modo="editar" → edita a ficha ficha_id (action /ficha/<id>/editar).
-    bloquear_criticos → trava nome/câmera/tipo/data (ficha já casou: mexer aqui
+    bloquear_criticos → trava nome/câmera/tipo/data (ficha já tem match: mexer aqui
                         afeta numeração/pasta de destino — segurança dos arquivos).
     chips_selecionados → conjunto de ids de itens de lista já escolhidos (edição /
                         reapresentação após erro), para remarcar os chips.
@@ -3354,10 +3857,10 @@ def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
     action = f"/ficha/{ficha_id}/editar" if editando else "/ficha"
     bloco_erro = f'<div class="erro-box">⚠️ {_esc(erro)}</div>' if erro else ""
 
-    # Atributo HTML que desabilita os campos críticos quando a ficha já casou.
+    # Atributo HTML que desabilita os campos críticos quando a ficha já tem match.
     trava = " disabled" if bloquear_criticos else ""
     aviso_trava = (
-        '<div class="aviso-trava">🔒 Esta ficha já casou com material. Nome, '
+        '<div class="aviso-trava">🔒 Post Matched — esta ficha já tem match com material. Nome, '
         'tipo e data ficam travados (mexer aqui afetaria a numeração e a pasta no HD). '
         'Você ainda pode ajustar os campos editoriais abaixo.</div>'
         if bloquear_criticos else ""
@@ -3543,7 +4046,7 @@ def ficha_enviar():
         <div><b>Data</b> {_esc(dados.get('data_gravacao',''))}</div>
       </div>
       <p style="margin-top:8px;color:#6c757d;font-size:0.9em">
-        O áudio é sempre transferência separada — cada um casa com seu próprio cartão.
+        O áudio é sempre transferência separada — cada um dá match com seu próprio cartão.
       </p>"""
     else:
         titulo_ok = "✅ Ficha recebida com sucesso"
@@ -3618,7 +4121,7 @@ def ficha_editar_form(ficha_id):
 @app.route("/ficha/<int:ficha_id>/editar", methods=["POST"])
 def ficha_editar_salvar(ficha_id):
     """
-    Salva a edição de uma ficha. Se a ficha já casou, ignora os campos críticos
+    Salva a edição de uma ficha. Se a ficha já tem match, ignora os campos críticos
     (nome/câmera/tipo/data) por segurança — só os editoriais passam.
     """
     ficha = _carregar_ficha(ficha_id)
@@ -3630,7 +4133,7 @@ def ficha_editar_salvar(ficha_id):
 
     bloquear = ficha.get("status") not in STATUS_FICHA_LIVRE
     enviados = request.form.to_dict()
-    # Chips de classificação (editoriais): editáveis mesmo com a ficha já casada.
+    # Chips de classificação (editoriais): editáveis mesmo com a ficha já com match.
     chips = request.form.getlist("chip")
     # Valores de texto (grupos de modo 'texto') — também editoriais.
     textos = _coletar_textos_form(request.form)
@@ -4014,6 +4517,184 @@ def match_iniciar(cartao_id):
         </div>"""
         return _pagina("Erro — match", "operacao", corpo), 409, \
             {"Content-Type": "text/html; charset=utf-8"}
+
+
+# ── ROTAS: MATCH MANUAL ABERTO (cartão órfão ↔ ficha escolhida a dedo) ────
+#
+# Diferente do match/<id>/confirmar (que resolve EMPATES já registrados), aqui o
+# operador une um cartão detectado a uma ficha qualquer que esteja esperando,
+# mesmo quando o Matcher não pontuou o suficiente para gerar candidato. É o
+# "último recurso" do princípio nº 3: o sistema tenta sozinho; quando não dá match,
+# o operador faz o match na mão. Acesso só na base (o portão já barra remoto).
+#
+#   1. /match-manual/confirmar (POST) — tela de resumo (revisar antes de gravar)
+#   2. /match-manual/iniciar   (POST) — executa: chama matcher.fazer_match_manual
+
+
+@app.route("/match-manual/confirmar", methods=["POST"])
+def match_manual_confirmar():
+    """
+    Tela de resumo do match manual. Recebe cartao_id + formulario_id (as duas
+    bolinhas escolhidas no painel) e mostra lado a lado o cartão e a ficha + a
+    pasta de destino prevista, antes de gravar. Não dá match em nada ainda.
+    """
+    try:
+        cartao_id     = int(request.form.get("cartao_id") or 0)
+        formulario_id = int(request.form.get("formulario_id") or 0)
+    except (TypeError, ValueError):
+        cartao_id = formulario_id = 0
+
+    if not cartao_id or not formulario_id:
+        return redirect("/?aviso=match_selecao_incompleta")
+
+    # Dados para o resumo
+    volume = f"Cartao {cartao_id}"
+    camera_detectada = "—"
+    n_arquivos = "?"
+    nome_ficha = ""
+    camera_ficha = "—"
+
+    if BANCO_DISPONIVEL:
+        try:
+            _conn = bd.obter_conexao()
+            lc = _conn.execute(
+                "SELECT volume, marca_camera, total_arquivos_detectados "
+                "FROM cartoes WHERE id = ?", (cartao_id,)
+            ).fetchone()
+            lf = _conn.execute(
+                "SELECT nome, camera, status FROM formularios WHERE id = ?",
+                (formulario_id,)
+            ).fetchone()
+            _conn.close()
+            if lc:
+                volume           = lc["volume"] or volume
+                camera_detectada = lc["marca_camera"] or "—"
+                n_arquivos       = lc["total_arquivos_detectados"] or "?"
+            if lf:
+                nome_ficha   = (lf["nome"] or "").strip().upper()
+                camera_ficha = lf["camera"] or "—"
+        except Exception as _err:
+            logger.error(f"MATCH MANUAL CONFIRMAR | Erro ao ler banco | {_err}")
+
+    if not nome_ficha:
+        return redirect("/?aviso=match_ficha_invalida")
+
+    pasta = _pasta_prevista(nome_ficha)
+
+    corpo = f"""
+    <div style="background:#fff;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,0.08);
+                padding:24px 28px;max-width:640px;margin:0 auto">
+        <h2 style="font-size:1.15em;margin-bottom:16px;color:#1a1a2e">
+            Match na mão — revise antes de gravar
+        </h2>
+        <div style="display:flex;gap:16px;margin-bottom:20px;flex-wrap:wrap">
+            <div style="flex:1;min-width:240px;background:#fff8e1;border:1px solid #f59e0b;
+                        border-radius:6px;padding:14px 18px;line-height:1.9">
+                <div style="font-weight:700;color:#92600a;margin-bottom:6px">CARTÃO</div>
+                <div><b style="color:#6c757d">Volume</b> &nbsp;{_esc(volume)}</div>
+                <div><b style="color:#6c757d">Câmera</b> &nbsp;{_esc(camera_detectada)}</div>
+                <div><b style="color:#6c757d">Arquivos</b> &nbsp;{_esc(str(n_arquivos))}</div>
+            </div>
+            <div style="flex:1;min-width:240px;background:#e8f5e9;border:1px solid #4caf50;
+                        border-radius:6px;padding:14px 18px;line-height:1.9">
+                <div style="font-weight:700;color:#2e7d32;margin-bottom:6px">FICHA</div>
+                <div><b style="color:#6c757d">Profissional</b> &nbsp;{_esc(nome_ficha)}</div>
+                <div><b style="color:#6c757d">Câmera</b> &nbsp;{_esc(camera_ficha)}</div>
+            </div>
+        </div>
+        <div style="background:#f8f9fa;border-radius:6px;padding:12px 18px;margin-bottom:20px">
+            <b style="color:#6c757d">Pasta de destino prevista</b><br>
+            <span style="font-family:monospace;font-size:1.1em;color:#1a1a2e">{_esc(pasta)}</span>
+        </div>
+        <p style="color:#856404;background:#fff3cd;border:1px solid #ffc107;border-radius:5px;
+                  padding:10px 14px;margin-bottom:20px;font-size:0.9em">
+            Confira se o cartão é mesmo deste profissional. Ao confirmar, a cópia
+            começa e a pasta nasce com este nome — desfazer durante o evento é trabalhoso.
+        </p>
+        <div style="display:flex;gap:12px;align-items:center">
+            <form action="/match-manual/iniciar" method="post">
+                <input type="hidden" name="cartao_id" value="{cartao_id}">
+                <input type="hidden" name="formulario_id" value="{formulario_id}">
+                <button type="submit"
+                        style="background:#8e44ad;color:#fff;border:none;border-radius:6px;
+                               padding:10px 24px;font-weight:700;font-size:0.95em;cursor:pointer;">
+                    Confirmar match e iniciar transferência
+                </button>
+            </form>
+            <a href="/" style="background:#6c757d;color:#fff;text-decoration:none;border-radius:6px;
+                      padding:10px 20px;font-weight:600;font-size:0.9em">Cancelar</a>
+        </div>
+    </div>"""
+
+    return _pagina(f"Match na mão — {nome_ficha}", "operacao", corpo), 200, \
+        {"Content-Type": "text/html; charset=utf-8"}
+
+
+@app.route("/match-manual/iniciar", methods=["POST"])
+def match_manual_iniciar():
+    """
+    Executa o match manual: chama matcher.fazer_match_manual(), que grava
+    o par no banco e marca os JSONs como 'matched' (a Camada 2 inicia a cópia).
+    Erros são tratados defensivamente — nunca derrubam o servidor.
+    """
+    try:
+        cartao_id     = int(request.form.get("cartao_id") or 0)
+        formulario_id = int(request.form.get("formulario_id") or 0)
+    except (TypeError, ValueError):
+        cartao_id = formulario_id = 0
+
+    if not cartao_id or not formulario_id:
+        return redirect("/?aviso=match_selecao_incompleta")
+
+    resultado = {"ok": False, "motivo": "matcher_indisponivel"}
+    if MATCHER_DISPONIVEL:
+        try:
+            resultado = modulo_matcher.fazer_match_manual(cartao_id, formulario_id)
+        except Exception as _err_exec:
+            logger.error(
+                f"MATCH MANUAL INICIAR | Erro inesperado | Cartao: {cartao_id} "
+                f"| Ficha: {formulario_id} | Erro: {_err_exec}"
+            )
+            resultado = {"ok": False, "motivo": f"erro_interno: {_err_exec}"}
+    else:
+        logger.error(
+            f"MATCH MANUAL INICIAR | Matcher indisponivel | Cartao: {cartao_id} "
+            f"| Ficha: {formulario_id}"
+        )
+
+    if resultado.get("ok"):
+        nome = resultado.get("nome", "?")
+        logger.info(
+            f"MATCH MANUAL INICIAR | Match feito com sucesso | Cartao: {cartao_id} "
+            f"| Ficha: {formulario_id} | Nome: {nome}"
+        )
+        return redirect(f"/?ok=Match feito — {nome} · transferencia iniciada")
+
+    # Falha conhecida → mensagem legível
+    motivo = resultado.get("motivo", "motivo_desconhecido")
+    logger.warning(
+        f"MATCH MANUAL INICIAR | Sem match | Cartao: {cartao_id} "
+        f"| Ficha: {formulario_id} | Motivo: {motivo}"
+    )
+    mapa_msg = {
+        "cartao_ja_com_match":  "Este cartão já tem match com uma ficha. Atualize o painel.",
+        "ficha_ja_com_match":   "Esta ficha já tem match com um cartão. Atualize o painel.",
+        "cartao_inexistente": "Cartão não encontrado no banco. Atualize o painel.",
+        "ficha_inexistente":  "Ficha não encontrada no banco. Atualize o painel.",
+        "matcher_indisponivel": ("O módulo Matcher não está disponível. "
+                                 "Verifique matcher.py e reinicie o servidor."),
+    }
+    descricao = mapa_msg.get(motivo, f"Detalhe técnico: {_esc(motivo)}")
+
+    corpo = f"""
+    <div style="background:#fdecea;border:1px solid #f5c6cb;color:#c0392b;
+                border-radius:6px;padding:16px 20px;max-width:540px;margin:0 auto">
+        <strong>Não foi possível fazer o match.</strong>
+        <br><br>{descricao}<br><br>
+        <a href="/" style="color:#c0392b;font-weight:600">Voltar ao painel</a>
+    </div>"""
+    return _pagina("Erro — match na mão", "operacao", corpo), 409, \
+        {"Content-Type": "text/html; charset=utf-8"}
 
 
 # ── ROTA: CADASTRO E LISTAGEM DE PROFISSIONAIS ────────────────────────────────

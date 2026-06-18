@@ -43,7 +43,7 @@ RAIZ_GMA = "/Users/serafa/GMA"
 sys.path.insert(0, RAIZ_GMA)
 import painel_config
 
-# Pasta com os JSONs de material detectado (onde buscamos os "casados") — por projeto
+# Pasta com os JSONs de material detectado (onde buscamos os "com match") — por projeto
 PASTA_FILA_MATERIAL = painel_config.pasta_ao_lado_do_banco("fila_material")
 
 # Pasta com os JSONs de formulários recebidos pelo Flask — por projeto
@@ -686,6 +686,21 @@ def processar_material(caminho_json_material, dados_material):
         _marcar_falha(caminho_json_material, "Caminho de origem ausente no JSON do material")
         return
 
+    # ── GATE (Camada 3): origem precisa existir AGORA ─────────────────────────
+    # Se o volume sumiu entre o match e a cópia (cartão ejetado/removido), falha
+    # limpo aqui — em vez de tentar copiar de um caminho que não existe. Foi o que
+    # aconteceu com o EOS_DIGITAL. _marcar_falha sincroniza o banco (não fica preso
+    # em 'copiando').
+    if not os.path.exists(caminho_origem):
+        logger.error(
+            f"ORIGEM INEXISTENTE | {caminho_origem} (volume removido?) | Material: {nome_json}"
+        )
+        _marcar_falha(
+            caminho_json_material,
+            f"Volume de origem não existe mais: {caminho_origem} (cartão removido antes da cópia)",
+        )
+        return
+
     nome_job = os.path.basename(caminho_destino)  # ex: "PRODUTORA_X_001"
     logger.info(f"INICIANDO CÓPIA | Origem: {caminho_origem} → Destino: {caminho_destino}")
 
@@ -796,6 +811,21 @@ def _marcar_falha(caminho_json_material, motivo):
     })
 
     logger.error(f"FALHA REGISTRADA | {os.path.basename(caminho_json_material)} | {motivo}")
+
+    # ── Sincroniza o banco: a falha precisa TIRAR o cartão de 'copiando' ─────
+    # (senão ele fica preso eternamente na coluna "Copiando" — a divergência do
+    # EOS_DIGITAL). Aditivo e defensivo: se o banco falhar, o fluxo segue.
+    try:
+        import json as _json, banco_dados as _bd
+        with open(caminho_json_material, "r", encoding="utf-8") as _f:
+            _dm = _json.load(_f)
+        _cid = _dm.get("db_cartao_id")
+        if _cid:
+            _conn = _bd.inicializar_banco()
+            _bd.atualizar_cartao(_conn, _cid, {"status": "transferencia_falhou"})
+            _conn.close()
+    except Exception as _err_bd:
+        logger.error(f"BANCO | Falha ao sincronizar status de falha (segue) | {_err_bd}")
 
 
 # ── VERIFICAÇÃO DO SENTINELA ──────────────────────────────────────────────────
