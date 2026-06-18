@@ -47,11 +47,21 @@ except ImportError:
 # Raiz do projeto GMA
 RAIZ_GMA = "/Users/serafa/GMA"
 
-# Pasta onde os JSONs de formulários são salvos para o Matcher
-PASTA_FILA_FORMS = os.path.join(RAIZ_GMA, "fila_forms")
-
-# Pasta onde o Porteiro salva os JSONs de material detectado
-PASTA_FILA_MATERIAL = os.path.join(RAIZ_GMA, "fila_material")
+# Isolamento multi-projeto (Camada 5): as filas moram ao lado do banco do projeto
+# ativo (GMA_DB). Para o laboratório, resolvem para as pastas da raiz de sempre.
+# Importa o painel_config cedo (stdlib pura) para resolver os caminhos por projeto.
+import sys as _sys_cfg
+_sys_cfg.path.insert(0, RAIZ_GMA)
+try:
+    import painel_config
+    PAINEL_DISPONIVEL = True
+    PASTA_FILA_FORMS = os.path.join(RAIZ_GMA, "fila_forms")
+    PASTA_FILA_MATERIAL = os.path.join(RAIZ_GMA, "fila_material")
+except Exception:
+    # Sem o painel_config (situação degradada) → pastas da raiz, como antes.
+    PAINEL_DISPONIVEL = False
+    PASTA_FILA_FORMS = os.path.join(RAIZ_GMA, "fila_forms")
+    PASTA_FILA_MATERIAL = os.path.join(RAIZ_GMA, "fila_material")
 
 # Arquivo sentinela que ativa/desativa o Porteiro
 SENTINELA_PORTEIRO = os.path.join(RAIZ_GMA, ".gma_ativo")
@@ -92,6 +102,11 @@ try:
     BANCO_DISPONIVEL = True
 except ImportError:
     BANCO_DISPONIVEL = False
+
+# ── PAINEL DE CONTROLE (Camada 5) ─────────────────────────────────────────────
+# O painel_config já foi importado no topo (resolve as filas por projeto). Aqui
+# só garantimos o subprocess (usado pelos testes de conexão e criação de projeto).
+import subprocess
 
 
 # ── CONFIGURAÇÃO DO LOGGER ────────────────────────────────────────────────────
@@ -1360,7 +1375,7 @@ CSS_ABAS = """
 
 def barra_abas(ativa):
     """Barra de navegação entre as telas.
-    'ativa' = ficha|operacao|kanban|planilha|molde|profissionais|listas"""
+    'ativa' = ficha|operacao|kanban|planilha|molde|profissionais|listas|painel"""
     def classe(nome):
         return "aba ativa" if nome == ativa else "aba"
     return f"""
@@ -1371,6 +1386,7 @@ def barra_abas(ativa):
         <a class="{classe('planilha')}" href="/planilha">Planilha de Entrega</a>
         <a class="{classe('profissionais')}" href="/profissionais">Profissionais</a>
         <a class="{classe('listas')}" href="/listas">Listas</a>
+        <a class="{classe('painel')}" href="/painel">⚙ Painel</a>
     </nav>"""
 
 
@@ -5234,6 +5250,408 @@ def erro_interno(erro):
         "ok": False,
         "erro": "Erro interno do servidor GMA. Verifique os logs."
     }), 500
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  PAINEL DE CONTROLE (Camada 5 — Fatia 1)
+#  Cockpit do operador: projeto ativo, troca de projeto (com reinício guiado),
+#  criação de projeto, conexões com teste ("ligar os motores") e controle do
+#  sistema (reiniciar/encerrar). Tudo SÓ na base (localhost) — o portão por papel
+#  já barra qualquer acesso remoto a estas rotas (403).
+# ══════════════════════════════════════════════════════════════════════════════
+
+PAINEL_CSS = """
+.painel-secao { background:#fff; border-radius:10px; box-shadow:0 1px 4px rgba(0,0,0,0.08);
+                padding:18px 20px; margin-bottom:18px; }
+.painel-secao h2 { font-size:1.05em; margin-bottom:4px; color:#1a1a2e; }
+.painel-secao .sub { color:#6c757d; font-size:0.85em; margin-bottom:14px; line-height:1.5; }
+.projeto-ativo { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
+.projeto-ativo .nome { font-size:1.4em; font-weight:700; color:#1D9E75; }
+.projeto-ativo .db { font-family:ui-monospace,Menlo,monospace; font-size:0.85em; color:#6c757d; }
+.proj-lista { display:flex; flex-direction:column; gap:8px; }
+.proj-item { display:flex; align-items:center; justify-content:space-between; gap:12px;
+             padding:10px 12px; border:1px solid #e9ecef; border-radius:8px; }
+.proj-item.ativo { border-color:#1D9E75; background:#f0fbf6; }
+.proj-item .info b { font-size:0.98em; }
+.proj-item .info .cam { font-family:ui-monospace,Menlo,monospace; font-size:0.8em; color:#868e96; }
+.tag-ativo { background:#1D9E75; color:#fff; border-radius:10px; padding:2px 10px; font-size:0.74em; font-weight:700; }
+.conexoes { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:12px; }
+.conexao { border:1px solid #e9ecef; border-radius:8px; padding:12px 14px; }
+.conexao .top { display:flex; align-items:center; gap:8px; margin-bottom:4px; }
+.dot { width:10px; height:10px; border-radius:50%; flex:none; }
+.dot.ok { background:#1D9E75; } .dot.aviso { background:#f59e0b; }
+.dot.off { background:#ced4da; } .dot.erro { background:#c0392b; }
+.conexao .rot { font-weight:700; font-size:0.95em; }
+.conexao .val { font-family:ui-monospace,Menlo,monospace; font-size:0.82em; color:#495057;
+                word-break:break-all; margin:2px 0 8px; }
+.conexao .desc { color:#868e96; font-size:0.8em; margin-bottom:8px; line-height:1.4; }
+.btn { border:none; border-radius:6px; padding:6px 14px; font-weight:600; font-size:0.82em;
+       cursor:pointer; font-family:inherit; }
+.btn-testar { background:#e7f5ff; color:#1971c2; }
+.btn-trocar { background:#1D9E75; color:#fff; }
+.btn-secund { background:#f1f3f5; color:#495057; }
+.btn-perigo { background:#c0392b; color:#fff; }
+.btn:disabled { opacity:0.5; cursor:default; }
+.linha-form { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:6px; }
+.linha-form input[type=text] { flex:1; min-width:180px; padding:7px 10px; border:1px solid #ced4da;
+                               border-radius:6px; font-size:0.85em; font-family:inherit; }
+.aviso-painel { padding:10px 14px; border-radius:8px; margin-bottom:16px; font-size:0.9em; }
+.aviso-painel.ok { background:#f0fbf6; border:1px solid #1D9E75; color:#0b6b4a; }
+.aviso-painel.erro { background:#fff5f5; border:1px solid #ffc9c9; color:#c0392b; }
+.resultado-teste { background:#f8f9fa; border:1px solid #dee2e6; border-radius:6px;
+                   padding:7px 10px; font-size:0.82em; margin-top:6px; }
+.controle-sistema { display:flex; gap:10px; flex-wrap:wrap; }
+.nota-command { color:#868e96; font-size:0.82em; margin-top:12px; line-height:1.5; }
+"""
+
+
+def _painel_raiz():
+    return RAIZ_GMA
+
+
+def _painel_criar_sinal(nome):
+    """Cria um arquivo-sinal vazio que o maestro (inicializar_gma.py) observa."""
+    caminho = os.path.join(_painel_raiz(), nome)
+    with open(caminho, "w", encoding="utf-8") as f:
+        f.write(datetime.now().isoformat())
+
+
+def _maestro_rodando():
+    """True se o inicializar_gma.py (o maestro) está no ar — só ele honra os sinais."""
+    try:
+        r = subprocess.run(["pgrep", "-f", "inicializar_gma.py"],
+                           capture_output=True, text=True, timeout=5)
+        return r.returncode == 0 and r.stdout.strip() != ""
+    except Exception:
+        return False
+
+
+def _inicializar_banco_projeto(slug):
+    """Cria o schema do banco vazio de um projeto recém-criado (subprocess isolado)."""
+    estado = painel_config.carregar_estado()
+    cfg = estado["projetos"][slug]
+    db = painel_config.caminho_db(cfg)
+    env = dict(os.environ)
+    env["GMA_DB"] = db
+    subprocess.run([sys.executable if os.path.basename(sys.executable).startswith("python") else "/usr/bin/python3",
+                    "banco_dados.py"],
+                   cwd=_painel_raiz(), env=env, capture_output=True, text=True, timeout=120)
+
+
+def _testar_conexao(chave):
+    """Roda o teste de uma conexão. Retorna (ok: bool, mensagem: str)."""
+    if chave == "destino":
+        _slug, cfg = painel_config.projeto_ativo()
+        caminho = cfg.get("destino") or painel_config.DESTINO_PADRAO
+        if not os.path.isdir(caminho):
+            return False, f"A pasta não existe: {caminho}"
+        try:
+            teste = os.path.join(caminho, ".gma_teste_escrita")
+            with open(teste, "w") as f:
+                f.write("ok")
+            os.remove(teste)
+            return True, f"Pasta acessível e gravável."
+        except OSError as e:
+            return False, f"A pasta existe mas não dá para gravar: {e}"
+
+    if chave == "banco":
+        _slug, cfg = painel_config.projeto_ativo()
+        db = painel_config.caminho_db(cfg)
+        if not os.path.isfile(db):
+            return False, f"O banco ainda não existe: {db}"
+        try:
+            import sqlite3
+            c = sqlite3.connect(db)
+            c.execute("SELECT 1")
+            c.close()
+            return True, "O banco abre normalmente."
+        except Exception as e:
+            return False, f"O banco não abre: {e}"
+
+    if chave == "sheets":
+        sid = os.environ.get("GMA_SHEETS_ID", "").strip()
+        sa = os.environ.get("GMA_SHEETS_SA", "").strip()
+        if not sid:
+            return False, "GMA_SHEETS_ID não está configurado (.env)."
+        if not sa:
+            return False, "GMA_SHEETS_SA (conta de serviço) não está configurado (.env)."
+        try:
+            r = subprocess.run(
+                ["gcloud", "auth", "print-access-token", f"--impersonate-service-account={sa}"],
+                capture_output=True, text=True, timeout=30)
+            if r.returncode == 0 and r.stdout.strip():
+                return True, "Autenticação OK — token gerado para a planilha."
+            return False, "Falha ao gerar token. Talvez precise refazer o 'gcloud auth login'."
+        except FileNotFoundError:
+            return False, "gcloud não encontrado no PATH."
+        except subprocess.TimeoutExpired:
+            return False, "Tempo esgotado ao falar com o gcloud."
+
+    if chave == "tunel":
+        try:
+            import urllib.request
+            with urllib.request.urlopen("http://127.0.0.1:4040/api/tunnels", timeout=3) as resp:
+                dados = json.loads(resp.read().decode())
+            for t in dados.get("tunnels", []):
+                url = t.get("public_url", "")
+                if url.startswith("https"):
+                    return True, f"Túnel ativo: {url}"
+            return False, "O ngrok responde, mas não há túnel HTTPS ativo."
+        except Exception:
+            return False, "O ngrok não está rodando (rode ./ngrok_gma.sh em outro terminal)."
+
+    return False, "Conexão desconhecida."
+
+
+def _conexoes_cockpit():
+    """Monta a lista de conexões do projeto ativo para o cockpit."""
+    _slug, cfg = painel_config.projeto_ativo()
+    db = painel_config.caminho_db(cfg)
+    destino = cfg.get("destino") or painel_config.DESTINO_PADRAO
+
+    def sit(valor):
+        return ("definida", "ok") if (valor or "").strip() else ("— (vazia)", "off")
+
+    senha_txt, senha_st = sit(os.environ.get("GMA_SENHA"))
+    tally_txt, tally_st = sit(os.environ.get("TALLY_WEBHOOK_SECRET"))
+    sid = os.environ.get("GMA_SHEETS_ID", "").strip()
+    sheets_txt = ("…" + sid[-8:]) if sid else "— (não configurado)"
+    link = os.environ.get("GMA_LINK_FICHA", "").strip()
+    tunel_txt = link if link else "auto (descobre o ngrok)"
+    host = os.environ.get("GMA_HOST", "127.0.0.1").strip() or "127.0.0.1"
+    porta = os.environ.get("GMA_PORT", "5050").strip() or "5050"
+
+    return [
+        {"chave": "banco", "rot": "Banco do projeto", "val": db,
+         "desc": "Onde ficam os dados deste projeto (fichas, cartões, planilha).",
+         "status": "ok" if os.path.isfile(db) else "aviso", "testavel": True},
+        {"chave": "destino", "rot": "Pasta dos materiais", "val": destino,
+         "desc": "Para onde o material é copiado e organizado (EVENTO/DATA/TIPO/NOME).",
+         "status": "ok" if os.path.isdir(destino) else "aviso", "testavel": True,
+         "direcionar": True},
+        {"chave": "sheets", "rot": "Google Sheets", "val": sheets_txt,
+         "desc": "Espelho de entrega na nuvem (editores). Teste gera um token real.",
+         "status": "ok" if sid else "off", "testavel": True},
+        {"chave": "tunel", "rot": "Túnel / ficha remota", "val": tunel_txt,
+         "desc": "Link público da ficha (ngrok) para os celulares do set.",
+         "status": "ok" if link else "off", "testavel": True},
+        {"chave": "senha", "rot": "Senha das telas", "val": senha_txt,
+         "desc": "Portão para a internet. Vazia = uso local livre.",
+         "status": senha_st, "testavel": False},
+        {"chave": "tally", "rot": "Tally (reserva)", "val": tally_txt,
+         "desc": "Formulário externo de reserva. Opcional.",
+         "status": tally_st, "testavel": False},
+        {"chave": "porta", "rot": "Porta / host", "val": f"{host}:{porta}",
+         "desc": "Onde o painel escuta. 0.0.0.0 libera para a rede local.",
+         "status": "ok", "testavel": False},
+    ]
+
+
+def _pagina_painel(aviso=None, erro=None, resultado_teste=None):
+    """Renderiza o cockpit do Painel de Controle."""
+    if not PAINEL_DISPONIVEL:
+        return _pagina("Painel de Controle", "painel",
+                       "<div class='painel-secao'>Painel indisponível (painel_config.py não carregou).</div>",
+                       head_extra=f"<style>{PAINEL_CSS}</style>")
+
+    estado = painel_config.carregar_estado()
+    ativo_slug = estado["projeto_ativo"]
+    ativo_cfg = estado["projetos"][ativo_slug]
+
+    partes = []
+
+    # ── Avisos / resultado de teste ──────────────────────────────────────────
+    if aviso:
+        partes.append(f"<div class='aviso-painel ok'>{_esc(aviso)}</div>")
+    if erro:
+        partes.append(f"<div class='aviso-painel erro'>{_esc(erro)}</div>")
+
+    # ── Projeto ativo ────────────────────────────────────────────────────────
+    partes.append(
+        "<div class='painel-secao'><h2>Projeto ativo</h2>"
+        "<div class='projeto-ativo'>"
+        f"<span class='nome'>{_esc(ativo_cfg.get('nome', ativo_slug))}</span>"
+        f"<span class='db'>{_esc(painel_config.caminho_db(ativo_cfg))}</span>"
+        "</div></div>"
+    )
+
+    # ── Lista de projetos + criar novo ───────────────────────────────────────
+    itens = []
+    for slug, cfg in estado["projetos"].items():
+        eh_ativo = (slug == ativo_slug)
+        tag = "<span class='tag-ativo'>ATIVO</span>" if eh_ativo else (
+            f"<form method='POST' action='/painel/trocar' style='margin:0'>"
+            f"<input type='hidden' name='slug' value='{_esc(slug)}'>"
+            f"<button class='btn btn-trocar' type='submit'>Trocar para este</button></form>"
+        )
+        itens.append(
+            f"<div class='proj-item {'ativo' if eh_ativo else ''}'>"
+            f"<div class='info'><b>{_esc(cfg.get('nome', slug))}</b><br>"
+            f"<span class='cam'>{_esc(painel_config.caminho_db(cfg))}</span></div>"
+            f"{tag}</div>"
+        )
+    partes.append(
+        "<div class='painel-secao'><h2>Projetos</h2>"
+        "<div class='sub'>Trocar de projeto reinicia o sistema já apontado para o projeto escolhido "
+        "(o isolamento é total: cada projeto tem seu banco, sua pasta e sua planilha).</div>"
+        f"<div class='proj-lista'>{''.join(itens)}</div>"
+        "<form method='POST' action='/painel/novo' class='linha-form'>"
+        "<input type='text' name='nome' placeholder='Nome do projeto novo (ex.: The Town 2026)'>"
+        "<button class='btn btn-secund' type='submit'>+ Criar projeto</button></form>"
+        "<div class='sub' style='margin-top:8px'>Criar um projeto faz a pasta isolada dele e prepara o banco vazio. "
+        "Depois você troca para ele e configura as conexões aqui no cockpit.</div>"
+        "</div>"
+    )
+
+    # ── Conexões (cockpit) ───────────────────────────────────────────────────
+    cards = []
+    for c in _conexoes_cockpit():
+        res_html = ""
+        if resultado_teste and resultado_teste[0] == c["chave"]:
+            _ch, ok, msg = resultado_teste
+            res_html = (f"<div class='resultado-teste'>{'✅' if ok else '⚠️'} {_esc(msg)}</div>")
+        botao_testar = ""
+        if c["testavel"]:
+            botao_testar = (
+                f"<form method='POST' action='/painel/testar/{c['chave']}' style='margin:0'>"
+                f"<button class='btn btn-testar' type='submit'>Testar</button></form>"
+            )
+        direcionar = ""
+        if c.get("direcionar"):
+            direcionar = (
+                "<form method='POST' action='/painel/destino' class='linha-form'>"
+                f"<input type='hidden' name='slug' value='{_esc(ativo_slug)}'>"
+                f"<input type='text' name='destino' value='{_esc(c['val'])}'>"
+                "<button class='btn btn-secund' type='submit'>Direcionar</button></form>"
+            )
+        cards.append(
+            "<div class='conexao'>"
+            f"<div class='top'><span class='dot {c['status']}'></span><span class='rot'>{_esc(c['rot'])}</span></div>"
+            f"<div class='val'>{_esc(c['val'])}</div>"
+            f"<div class='desc'>{_esc(c['desc'])}</div>"
+            f"{botao_testar}{direcionar}{res_html}"
+            "</div>"
+        )
+    partes.append(
+        "<div class='painel-secao'><h2>Conexões (cockpit)</h2>"
+        "<div class='sub'>Os \"motores\" deste projeto. Use <b>Testar</b> para ligar e conferir cada um "
+        "antes de começar a logar. Mudanças de pasta só valem após reiniciar.</div>"
+        f"<div class='conexoes'>{''.join(cards)}</div></div>"
+    )
+
+    # ── Controle do sistema ──────────────────────────────────────────────────
+    maestro = _maestro_rodando()
+    estado_maestro = (
+        "<span class='dot ok'></span> O sistema está sob o maestro (reiniciar/encerrar funcionam por aqui)."
+        if maestro else
+        "<span class='dot aviso'></span> O maestro não está rodando — para ligar o sistema completo, "
+        "use o atalho <b>Iniciar GMA</b> na pasta do projeto."
+    )
+    partes.append(
+        "<div class='painel-secao'><h2>Controle do sistema</h2>"
+        f"<div class='sub'>{estado_maestro}</div>"
+        "<div class='controle-sistema'>"
+        "<form method='POST' action='/painel/reiniciar' style='margin:0'>"
+        "<button class='btn btn-secund' type='submit'>↻ Reiniciar sistema</button></form>"
+        "<form method='POST' action='/painel/encerrar' style='margin:0' "
+        "onsubmit=\"return confirm('Encerrar todo o sistema GMA agora?');\">"
+        "<button class='btn btn-perigo' type='submit'>⏻ Encerrar sistema</button></form>"
+        "</div>"
+        "<div class='nota-command'>Para <b>ligar</b> o sistema sem depender do terminal, dê dois cliques em "
+        "<b>“Iniciar GMA.command”</b> dentro da pasta GMA. Para <b>desligar</b>, use o botão acima ou "
+        "<b>“Encerrar GMA.command”</b>.</div>"
+        "</div>"
+    )
+
+    return _pagina("Painel de Controle", "painel", "".join(partes),
+                   head_extra=f"<style>{PAINEL_CSS}</style>")
+
+
+@app.route("/painel", methods=["GET"])
+def painel_cockpit():
+    """Cockpit do operador (só base). Remoto recebe 403 pelo portão existente."""
+    return _pagina_painel()
+
+
+@app.route("/painel/trocar", methods=["POST"])
+def painel_trocar():
+    """Troca o projeto ativo e dispara o reinício guiado."""
+    slug = (request.form.get("slug") or "").strip()
+    try:
+        painel_config.definir_ativo(slug)
+        _painel_criar_sinal(".gma_reiniciar")
+        logger.info(f"PAINEL | Projeto ativo trocado para '{slug}' + reinício solicitado")
+        if _maestro_rodando():
+            aviso = ("Trocando de projeto… o sistema vai reiniciar no projeto escolhido. "
+                     "Recarregue esta página em alguns segundos.")
+        else:
+            aviso = ("Projeto escolhido salvo. O maestro não está rodando — ligue o sistema "
+                     "com “Iniciar GMA” para subir já no projeto novo.")
+        return _pagina_painel(aviso=aviso)
+    except Exception as e:
+        logger.warning(f"PAINEL | Falha ao trocar de projeto: {e}")
+        return _pagina_painel(erro=f"Não deu para trocar de projeto: {e}")
+
+
+@app.route("/painel/novo", methods=["POST"])
+def painel_novo():
+    """Cria um projeto novo (pasta isolada + banco vazio inicializado)."""
+    nome = (request.form.get("nome") or "").strip()
+    try:
+        slug = painel_config.criar_projeto(nome)
+        _inicializar_banco_projeto(slug)
+        logger.info(f"PAINEL | Projeto criado: '{nome}' (slug={slug})")
+        return _pagina_painel(aviso=f"Projeto “{nome}” criado e banco preparado. "
+                                    f"Troque para ele quando quiser começar.")
+    except Exception as e:
+        logger.warning(f"PAINEL | Falha ao criar projeto: {e}")
+        return _pagina_painel(erro=f"Não deu para criar o projeto: {e}")
+
+
+@app.route("/painel/destino", methods=["POST"])
+def painel_destino():
+    """Direciona a pasta dos materiais do projeto ativo."""
+    slug = (request.form.get("slug") or "").strip()
+    caminho = (request.form.get("destino") or "").strip()
+    try:
+        painel_config.definir_destino(slug, caminho)
+        logger.info(f"PAINEL | Destino de '{slug}' → {caminho}")
+        return _pagina_painel(aviso="Pasta de destino atualizada. Reinicie o sistema para aplicar.")
+    except Exception as e:
+        logger.warning(f"PAINEL | Falha ao direcionar destino: {e}")
+        return _pagina_painel(erro=f"Não deu para direcionar a pasta: {e}")
+
+
+@app.route("/painel/testar/<chave>", methods=["POST"])
+def painel_testar(chave):
+    """Testa uma conexão ('liga o motor') e mostra o resultado no cockpit."""
+    ok, msg = _testar_conexao(chave)
+    logger.info(f"PAINEL | Teste '{chave}': {'OK' if ok else 'FALHA'} — {msg}")
+    return _pagina_painel(resultado_teste=(chave, ok, msg))
+
+
+@app.route("/painel/reiniciar", methods=["POST"])
+def painel_reiniciar():
+    """Reinicia o sistema (sem trocar de projeto)."""
+    _painel_criar_sinal(".gma_reiniciar")
+    logger.info("PAINEL | Reinício solicitado")
+    if _maestro_rodando():
+        aviso = "Reiniciando o sistema… recarregue esta página em alguns segundos."
+    else:
+        aviso = "O maestro não está rodando — não há o que reiniciar. Use “Iniciar GMA” para ligar."
+    return _pagina_painel(aviso=aviso)
+
+
+@app.route("/painel/encerrar", methods=["POST"])
+def painel_encerrar():
+    """Encerra o sistema inteiro (o maestro derruba todos os processos)."""
+    _painel_criar_sinal(".gma_encerrar")
+    logger.info("PAINEL | Encerramento solicitado")
+    if _maestro_rodando():
+        aviso = "Encerrando o sistema… em instantes esta página deixa de responder. Pode fechar a janela."
+    else:
+        aviso = "O maestro não está rodando. Para encerrar processos soltos, use “Encerrar GMA.command”."
+    return _pagina_painel(aviso=aviso)
 
 
 # ── PONTO DE ENTRADA ──────────────────────────────────────────────────────────

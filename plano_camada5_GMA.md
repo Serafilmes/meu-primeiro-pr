@@ -144,6 +144,39 @@ empacotamento). Entra junto da Fase 1/2 do roteiro (§4), **depois** dos pré-re
 certo. A parte da Fatia 5 que **não depende** disto (Sheets dinâmico — colunas do molde+grupos
 espelhadas na nuvem) **já foi construída na sessão 34** (Camada 3), independente do painel.
 
+### 1.4. PAINEL DE CONTROLE — FATIA 1 CONSTRUÍDA (sessão 37, 2026-06-17)
+
+Primeira peça real da C5 no ar — **dentro do laboratório** (aba web no Flask atual,
+porta 5050), sem empacotar o `.app` ainda. Decisão: o `.app` (Fases 0–3) é obra grande
+e depende dos pré-requisitos do §7; já o **Painel de Controle** (§1.3) é "config externa
+virando UI" e pôde nascer incremental e seguro. Metáfora do idealizador para o cockpit:
+*"ligar os motores e testá-los antes de decolar"*.
+
+**O que entrou (Fatia 1):**
+- **`painel_config.py`** — fonte única do projeto ativo + conexões (`painel_estado.json`;
+  ausente = laboratório padrão, lab intocado; auto-descobre `projetos/*/gma.db`).
+- **Maestro vira supervisor** (`inicializar_gma.py`): aplica o projeto ativo no boot e
+  **vigia sinais** — `.gma_reiniciar` (troca de projeto = reinício guiado, re-sobe no
+  projeto escolhido) e `.gma_encerrar` (botão Encerrar). É a **semente do supervisor** da
+  §1.2/§2. Testado ponta a ponta (boot→reinício→encerrar).
+- **Pasta de destino configurável** (`GMA_DESTINO` na `transferencia.py`) — botão
+  "Direcionar" por projeto. Junto do `GMA_DB`, são as 2 primeiras variáveis por projeto.
+- **Aba "⚙ Painel"** (só base): projeto ativo · lista/trocar/criar projeto · **cockpit de
+  conexões com botão Testar** (destino testa escrita; Sheets gera token gcloud real; túnel
+  checa o 4040) · Reiniciar/Encerrar · atalhos `Iniciar GMA.command`/`Encerrar GMA.command`.
+
+**O que falta (Fatia 2 e além) — alinhado com o idealizador na s37:**
+- **Conexões por projeto:** hoje ainda vêm do `.env` GLOBAL. Movê-las para **config por
+  projeto** (cada evento com seu Sheets/senha/túnel) é o **coração do §1.3** — o cockpit já
+  está pronto para recebê-las.
+- **"Motores antes do voo" completo:** configurar+testar cada conexão no **setup de um
+  projeto novo** (wizard guiado, estilo o guia que montamos para o Rock in Rio — #1).
+- **Projeto já configurado ao reiniciar (#2):** não refaz setup; só **sinaliza** "operador,
+  passe no painel resolver a conexão".
+- **Login / troca de usuário ao vivo** (Fatia 3) — unifica com a "2.3" da ficha.
+- **#4 (anotado, futuro):** em que **ordem** a planilha Google é criada/conectada no setup
+  do projeto — antes do sistema "voar"? Decidir junto do wizard.
+
 ---
 
 ## 2. Decisão de stack (justificada)

@@ -54,7 +54,11 @@ SENTINELA = os.path.join(RAIZ_GMA, ".gma_ativo")
 # *** TROQUE ESTE VALOR ANTES DE CADA EVENTO ***
 # Para testes locais: "/Users/serafa/GMA/TESTE LOGAGEM"
 # Para evento real:   "/Volumes/NOME_DO_HD_EXTERNO"
-PASTA_DESTINO_BASE = "/Users/serafa/GMA/TESTE LOGAGEM"
+#
+# Por padrão usa a pasta de teste de sempre, mas o Painel de Controle (Camada 5)
+# pode direcionar a pasta por projeto via a variável GMA_DESTINO — lida no boot,
+# exatamente como o GMA_DB do banco. Se a variável não existir, nada muda.
+PASTA_DESTINO_BASE = os.environ.get("GMA_DESTINO", "").strip() or "/Users/serafa/GMA/TESTE LOGAGEM"
 
 # Intervalo entre cada varredura da fila_material/ (em segundos)
 INTERVALO_POLLING = 5
