@@ -13,7 +13,7 @@ Responsabilidade:
   - Quando o match é confirmado, os dois arquivos são atualizados e uma
     linha é gravada no log. O resultado combinado (material + form) é retornado
     para o próximo passo do fluxo GMA (o Leitor de Mídia / ler_cartao.py).
-  - Quando há EMPATE ou QUASE-EMPATE, o sistema NÃO casa: marca os envolvidos como
+  - Quando há EMPATE ou QUASE-EMPATE, o sistema NÃO dá match: marca os envolvidos como
     "aguardando_confirmacao" para o operador resolver manualmente no painel.
 
 Pontuação de compatibilidade (basta ≥ 3 pontos para confirmar o match):
@@ -67,9 +67,9 @@ ARQUIVO_LOG = os.path.join(RAIZ_GMA, "logs", "matcher.log")
 # Pontuação mínima para confirmar um match
 PONTUACAO_MINIMA_MATCH = 3
 
-# Margem mínima de vantagem para casar automaticamente.
+# Margem mínima de vantagem para dar match automaticamente.
 # Se o segundo melhor candidato estiver a menos de MARGEM_SEGURANCA pontos
-# do melhor, consideramos AMBÍGUO e NÃO casamos (esperamos confirmação humana).
+# do melhor, consideramos AMBÍGUO e NÃO damos match (esperamos confirmação humana).
 # Exemplo: score=6 e MARGEM=1 → qualquer concorrente com score > 5 (ou seja, ≥ 6)
 # torna o match ambíguo. Um concorrente com score exatamente 5 ainda é seguro (5 não é > 5).
 MARGEM_SEGURANCA = 1
@@ -373,7 +373,7 @@ def tentar_match():
         logger.info("MATCHER | Nenhum par atingiu pontuação mínima de match")
         return []
 
-    # ── Classifica os pares em SEGUROS (casar automático) e AMBÍGUOS (segurar) ──
+    # ── Classifica os pares em SEGUROS (match automático) e AMBÍGUOS (segurar) ──
     #
     # Um par (form F, material M) com score S é SEGURO se:
     #   1. S >= PONTUACAO_MINIMA_MATCH (já garantido por estar em `scores`)
@@ -431,6 +431,19 @@ def tentar_match():
 
         dados_form = mapa_forms[nome_form]
         dados_material = mapa_materiais[nome_material]
+
+        # ── GATE (Camada 2): não dá match em cartão-fantasma ─────────────────────────
+        # Se o volume de origem sumiu (cartão ejetado/removido antes do match),
+        # NÃO dá match — senão a Transferência dispararia uma cópia condenada de um
+        # volume que não existe mais (a falha grave do EOS_DIGITAL). Rede de
+        # segurança caso o Porteiro ainda não tenha invalidado o cartão.
+        _caminho_origem = dados_material.get("caminho")
+        if _caminho_origem and not os.path.exists(_caminho_origem):
+            logger.warning(
+                f"MATCH BLOQUEADO (gate) | Volume de origem sumiu: {_caminho_origem} "
+                f"| Material: {nome_material} — não dá match em cartão-fantasma"
+            )
+            continue
 
         # ── Confirma o match ──────────────────────────────────────────────────
         logger.info(
@@ -555,7 +568,7 @@ def tentar_match():
 
     # ── FASE 2: Marca os pares ambíguos que não foram resolvidos na Fase 1 ────
     # Um par ambíguo só vira "aguardando_confirmacao" se AMBOS ainda não foram
-    # confirmados na Fase 1 (não queremos marcar como ambíguo quem já foi casado).
+    # confirmados na Fase 1 (não queremos marcar como ambíguo quem já teve match).
     forms_ambiguos_marcados = set()     # controla quem já recebeu o status
     materiais_ambiguos_marcados = set()
     # Sentinela SEPARADA para a persistência dos candidatos (Tarefa A do Passo 2).
@@ -564,7 +577,7 @@ def tentar_match():
     materiais_candidatos_persistidos = set()
 
     for nome_form, nome_material, score, detalhes in pares_ambiguos:
-        # Se algum dos dois já foi casado na Fase 1, ignora
+        # Se algum dos dois já teve match na Fase 1, ignora
         if nome_form in forms_ja_matched or nome_material in materiais_ja_matched:
             continue
 
@@ -915,7 +928,7 @@ def confirmar_par_manual(cartao_id, nome_escolhido):
 
     # ── Passo 7: devolve as fichas descartadas à fila ─────────────────────────
     # Remove o material_match e volta status para "aguardando_match" para que
-    # a ficha possa casar com o próximo cartão do mesmo profissional.
+    # a ficha possa ter match com o próximo cartão do mesmo profissional.
     for _fid, _nome_form in mapa_forms_descartados.items():
         atualizar_json(PASTA_FILA_FORMS, _nome_form, {
             "status":         "aguardando_match",
@@ -967,6 +980,160 @@ def confirmar_par_manual(cartao_id, nome_escolhido):
         "formulario_id": formulario_id_escolhido,
         "material":      nome_arquivo_material,
         "descartados":   ids_descartados,
+    }
+
+
+def fazer_match_manual(cartao_id, formulario_id):
+    """
+    Match manual ABERTO: o operador une um cartão detectado a uma ficha
+    escolhida a dedo, mesmo quando o Matcher NÃO gerou candidato algum (cartão
+    "órfão" / pontuação baixa). É a rede de segurança do princípio nº 3 — o
+    operador como último recurso quando a autonomia não deu match sozinha.
+
+    Diferença para confirmar_par_manual(): aquela só resolve EMPATES já
+    registrados em match_candidatos; esta faz o match de um par direto.
+
+    Fluxo (espelha os passos de disparo da cópia do confirmar_par_manual):
+      1. bd.registrar_match_manual() valida e grava o par no banco (cartão+ficha 'matched').
+      2. Marca o JSON do material como 'matched' → GATILHO da Camada 2 (cópia).
+      3. Marca o JSON da ficha como 'matched'.
+      4. O perfil do profissional aprende a assinatura deste cartão.
+
+    Parâmetros:
+      cartao_id     — ID do cartão no banco (db_cartao_id do JSON do material)
+      formulario_id — ID da ficha no banco (db_formulario_id do JSON da ficha)
+
+    Retorna:
+      {"ok": True,  "nome": <NOME>, "formulario_id": <id>, "material": <arq.json>}
+      {"ok": False, "motivo": "<descrição>"}
+
+    Segurança: a cópia SÓ é disparada (material → "matched") depois de
+    bd.registrar_match_manual() gravar com sucesso. Se o banco recusar (cartão/ficha já
+    com match, inexistente), nenhum JSON é tocado e nada é copiado.
+    """
+    logger = configurar_logger()
+    logger.info(
+        f"MATCH MANUAL | Iniciando | Cartão: {cartao_id} | Ficha: {formulario_id}"
+    )
+
+    # ── Passo 1: valida e grava o par no banco ────────────────────────────────
+    try:
+        import banco_dados as bd
+        conn = bd.inicializar_banco()
+    except Exception as _err_conn:
+        _msg = f"falha_ao_abrir_banco: {_err_conn}"
+        logger.error(f"MATCH MANUAL | {_msg}")
+        return {"ok": False, "motivo": _msg}
+
+    try:
+        resultado = bd.registrar_match_manual(conn, cartao_id, formulario_id)
+    except Exception as _err_match:
+        _msg = f"falha_ao_match: {_err_match}"
+        logger.error(f"MATCH MANUAL | {_msg}")
+        conn.close()
+        return {"ok": False, "motivo": _msg}
+
+    if not resultado.get("ok"):
+        # Validação recusou (cartão/ficha já com match ou inexistente) — nada gravado
+        logger.info(
+            f"MATCH MANUAL | Recusado pelo banco | Cartão: {cartao_id} "
+            f"| Ficha: {formulario_id} | Motivo: {resultado.get('motivo')}"
+        )
+        conn.close()
+        return resultado
+
+    nome_escolhido = resultado["nome"]
+
+    # ── Passo 2: localiza o JSON do material (db_cartao_id == cartao_id) ───────
+    nome_arquivo_material = None
+    dados_material        = None
+    if os.path.isdir(PASTA_FILA_MATERIAL):
+        for _nome in sorted(os.listdir(PASTA_FILA_MATERIAL)):
+            if not _nome.endswith(".json"):
+                continue
+            _caminho = os.path.join(PASTA_FILA_MATERIAL, _nome)
+            try:
+                with open(_caminho, "r", encoding="utf-8") as _f:
+                    _dados = json.load(_f)
+            except (OSError, json.JSONDecodeError):
+                continue
+            if _dados.get("db_cartao_id") == cartao_id:
+                nome_arquivo_material = _nome
+                dados_material        = _dados
+                break
+
+    # ── Passo 3: localiza o JSON da ficha (db_formulario_id == formulario_id) ──
+    nome_arquivo_form = None
+    if os.path.isdir(PASTA_FILA_FORMS):
+        for _nome in sorted(os.listdir(PASTA_FILA_FORMS)):
+            if not _nome.endswith(".json"):
+                continue
+            _caminho = os.path.join(PASTA_FILA_FORMS, _nome)
+            try:
+                with open(_caminho, "r", encoding="utf-8") as _f:
+                    _dados = json.load(_f)
+            except (OSError, json.JSONDecodeError):
+                continue
+            if _dados.get("db_formulario_id") == formulario_id:
+                nome_arquivo_form = _nome
+                break
+
+    # ── Passo 4: marca o material como matched → dispara a Camada 2 ───────────
+    # O banco já está correto; o JSON é o gatilho da cópia.
+    if nome_arquivo_material:
+        sucesso_material = atualizar_json(PASTA_FILA_MATERIAL, nome_arquivo_material, {
+            "status":     "matched",
+            "form_match": nome_arquivo_form or nome_escolhido,
+        })
+        if not sucesso_material:
+            logger.error(
+                f"MATCH MANUAL | Falha ao atualizar JSON do material "
+                f"| Arquivo: {nome_arquivo_material} (banco correto, JSON pendente)"
+            )
+    else:
+        logger.warning(
+            f"MATCH MANUAL | JSON do material não encontrado em fila_material/ "
+            f"(db_cartao_id={cartao_id}) — banco correto, cópia não disparada pelo JSON"
+        )
+
+    # ── Passo 5: marca a ficha como matched ──────────────────────────────────
+    if nome_arquivo_form:
+        atualizar_json(PASTA_FILA_FORMS, nome_arquivo_form, {
+            "status":         "matched",
+            "material_match": nome_arquivo_material,
+        })
+    else:
+        logger.warning(
+            f"MATCH MANUAL | JSON da ficha não encontrado em fila_forms/ "
+            f"(db_formulario_id={formulario_id}) — banco correto, JSON não atualizado"
+        )
+
+    # ── Passo 6: o perfil do profissional aprende com esta confirmação ────────
+    try:
+        _assinatura = dados_material.get("assinatura") if dados_material else None
+        if _assinatura and nome_escolhido:
+            bd.atualizar_perfil(conn, nome_escolhido, _assinatura)
+            logger.info(
+                f"PERFIL | Assinatura aprendida (match manual) | {nome_escolhido}"
+            )
+    except Exception as _err_perfil:
+        logger.error(
+            f"PERFIL | Falha ao atualizar perfil no match manual "
+            f"(fluxo continua) | {_err_perfil}"
+        )
+
+    conn.close()
+
+    logger.info(
+        f"MATCH MANUAL | Concluído | Cartão {cartao_id} ↔ Ficha {formulario_id} "
+        f"({nome_escolhido}) | Material JSON: {nome_arquivo_material}"
+    )
+
+    return {
+        "ok":            True,
+        "nome":          nome_escolhido,
+        "formulario_id": formulario_id,
+        "material":      nome_arquivo_material,
     }
 
 

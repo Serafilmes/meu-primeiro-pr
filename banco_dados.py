@@ -918,7 +918,7 @@ def confirmar_match(conn, cartao_id, nome_escolhido):
       4. Marca todos os demais candidatos 'pendentes' do cartão como 'descartado'.
       5. Atualiza o formulário escolhido → status 'matched'.
       6. Libera os formulários descartados → status 'aguardando_match'
-         (ficam livres para casar com o próximo cartão do profissional).
+         (ficam livres para ter match com o próximo cartão do profissional).
       7. Registra evento 'match_confirmado_manual' no log de auditoria.
 
     Parâmetros:
@@ -1027,7 +1027,7 @@ def confirmar_match(conn, cartao_id, nome_escolhido):
 
         # ── Passo 5: libera os formulários descartados para o próximo match ───
         # Cada ficha descartada volta a 'aguardando_match', ficando disponível
-        # para casar com o próximo cartão do mesmo profissional.
+        # para ter match com o próximo cartão do mesmo profissional.
         # (O formulário escolhido já foi marcado 'matched' por gravar_match acima.)
         for fid in ids_formularios_descartados:
             conn.execute(
@@ -1060,6 +1060,247 @@ def confirmar_match(conn, cartao_id, nome_escolhido):
         "nome":          nome_escolhido,
         "descartados":   ids_formularios_descartados,
     }
+
+
+def registrar_match_manual(conn, cartao_id, formulario_id):
+    """
+    Match manual ABERTO: une um cartão a uma ficha escolhida a dedo pelo
+    operador, mesmo quando o Matcher não gerou candidato nenhum (cartão "órfão"
+    com pontuação baixa). É o "último recurso" do princípio nº 3 — o operador
+    corrige na mão o que a autonomia não conseguiu dar match sozinha.
+
+    Diferença para confirmar_match(): aquela só resolve EMPATES já registrados em
+    match_candidatos; esta faz o match de um par direto, sem exigir candidato prévio.
+
+    Valida antes de gravar:
+      - o cartão existe e ainda NÃO tem match;
+      - a ficha existe e ainda NÃO tem match.
+    Em qualquer falha de validação, NADA é gravado e devolve {"ok": False, ...}.
+
+    Em caso de sucesso, reaproveita gravar_match() — que já registra o match
+    (confirmado=1), marca cartão e ficha como 'matched' e grava o evento técnico.
+    Acrescenta um evento 'match_manual' dedicado para o Log de operações
+    (governança: o operador deu match neste par na mão).
+
+    Retorna:
+      {"ok": True,  "nome": <NOME>, "formulario_id": <id>, "cartao_id": <id>}
+      {"ok": False, "motivo": "<cartao_inexistente|cartao_ja_com_match|"
+                              "ficha_inexistente|ficha_ja_com_match>"}
+    """
+    # ── Validação do cartão ───────────────────────────────────────────────────
+    cartao = conn.execute(
+        "SELECT id, status, volume FROM cartoes WHERE id = ?", (cartao_id,)
+    ).fetchone()
+    if cartao is None:
+        return {"ok": False, "motivo": "cartao_inexistente"}
+    if cartao["status"] == "matched":
+        return {"ok": False, "motivo": "cartao_ja_com_match"}
+
+    # ── Validação da ficha ────────────────────────────────────────────────────
+    ficha = conn.execute(
+        "SELECT id, nome, status FROM formularios WHERE id = ?", (formulario_id,)
+    ).fetchone()
+    if ficha is None:
+        return {"ok": False, "motivo": "ficha_inexistente"}
+    if ficha["status"] == "matched":
+        return {"ok": False, "motivo": "ficha_ja_com_match"}
+
+    nome = (ficha["nome"] or "").strip().upper()
+
+    # ── Grava o par (gravar_match marca cartão+ficha 'matched' e loga o técnico) ─
+    gravar_match(
+        conn,
+        cartao_id,
+        formulario_id,
+        score=0,
+        criterios_lista=["match manual pelo operador"],
+        confirmado=1,   # escolha explícita do operador
+    )
+
+    # ── Evento dedicado para o Log de operações (governança) ──────────────────
+    registrar_evento(
+        conn,
+        tipo="match_manual",
+        descricao=(
+            f"Match manual pelo operador | Cartão: {cartao_id} "
+            f"({cartao['volume']}) ↔ Ficha: {formulario_id} ({nome})"
+        ),
+        cartao_id=cartao_id,
+        formulario_id=formulario_id,
+        dados={"nome": nome, "volume": cartao["volume"]},
+    )
+
+    return {
+        "ok":            True,
+        "nome":          nome,
+        "formulario_id": formulario_id,
+        "cartao_id":     cartao_id,
+    }
+
+
+def descartar_cartao(conn, cartao_id, motivo=""):
+    """
+    Descarta (soft-delete) um cartão DETECTADO que não vai ser usado — cartão
+    errado, cartão de teste, ou "sujeira" que o Porteiro pegou. Não apaga nada:
+    marca status='descartado' (some das telas) e registra no Log de governança.
+
+    Segurança: só descarta cartão que AINDA NÃO virou entrega. Se já tem número
+    (numero_cartao) ou já tem match/em cópia/concluído, recusa — esses têm
+    mídia/numeração e não são "detectado solto".
+
+    Retorna {"ok": True, "volume": ...} ou {"ok": False, "motivo": ...}
+      motivos: cartao_inexistente · cartao_em_uso · ja_descartado
+    """
+    cartao = conn.execute(
+        "SELECT id, status, volume, numero_cartao FROM cartoes WHERE id = ?",
+        (cartao_id,)
+    ).fetchone()
+    if cartao is None:
+        return {"ok": False, "motivo": "cartao_inexistente"}
+    if cartao["status"] == "descartado":
+        return {"ok": False, "motivo": "ja_descartado"}
+    # Só pode descartar cartão ainda fora do fluxo de entrega.
+    descartavel = {"detectado", "aguardando_match", "sem_midia", "revisar"}
+    if cartao["numero_cartao"] or cartao["status"] not in descartavel:
+        return {"ok": False, "motivo": "cartao_em_uso"}
+
+    atualizar_cartao(conn, cartao_id, {"status": "descartado"})
+    registrar_evento(
+        conn,
+        tipo="cartao_descartado",
+        descricao=(
+            f"Cartão detectado descartado pelo operador: "
+            f"{cartao['volume'] or ('cartão ' + str(cartao_id))}"
+            + (f" — {motivo}" if motivo else "")
+        ),
+        cartao_id=cartao_id,
+        dados={"volume": cartao["volume"], "motivo": motivo},
+    )
+    return {"ok": True, "volume": cartao["volume"]}
+
+
+def cancelar_formulario(conn, formulario_id, motivo=""):
+    """
+    Cancela (soft-delete) um Post (ficha) que não vai virar entrega — ficha
+    intrusa (de outro projeto), duplicada, ou criada por engano. NÃO apaga:
+    marca status='cancelado' (sai das telas, vai para a aba "Cancelados") e
+    registra no Log. Reversível por restaurar_formulario().
+
+    Segurança: só cancela ficha que AINDA NÃO virou entrega (sem match). Recusa
+    ficha já matched (essa tem cartão/cópia — não é um "Post solto").
+
+    Retorna {"ok": True, "nome": ...} ou {"ok": False, "motivo": ...}
+      motivos: ficha_inexistente · ja_cancelado · ficha_em_uso
+    """
+    f = conn.execute(
+        "SELECT id, nome, status FROM formularios WHERE id = ?", (formulario_id,)
+    ).fetchone()
+    if f is None:
+        return {"ok": False, "motivo": "ficha_inexistente"}
+    if f["status"] == "cancelado":
+        return {"ok": False, "motivo": "ja_cancelado"}
+    if f["status"] == "matched":
+        # Só recusa se houver match REAL (cartão de verdade vinculado). Uma ficha
+        # marcada 'matched' SEM linha em matches é estado corrompido (sujeira de
+        # testes antigos / "match que não houve") — esse pode ser cancelado, senão
+        # ficaria preso e invisível ao operador. Sem essa checagem o operador não
+        # conseguiria limpar a sujeira pela tela.
+        tem_match_real = conn.execute(
+            "SELECT 1 FROM matches WHERE formulario_id = ? LIMIT 1", (formulario_id,)
+        ).fetchone()
+        if tem_match_real:
+            return {"ok": False, "motivo": "ficha_em_uso"}
+
+    conn.execute("UPDATE formularios SET status = 'cancelado' WHERE id = ?", (formulario_id,))
+    conn.commit()
+    registrar_evento(
+        conn,
+        tipo="post_cancelado",
+        descricao=(
+            f"Post cancelado pelo operador: {f['nome']} (id {formulario_id})"
+            + (f" — {motivo}" if motivo else "")
+        ),
+        formulario_id=formulario_id,
+        dados={"nome": f["nome"], "motivo": motivo},
+    )
+    return {"ok": True, "nome": f["nome"]}
+
+
+def restaurar_formulario(conn, formulario_id):
+    """
+    Reverte um cancelamento: a ficha volta de 'cancelado' para 'aguardando_match'
+    (reaparece nas telas). Registra no Log. Espelho de cancelar_formulario().
+    """
+    f = conn.execute(
+        "SELECT id, nome, status FROM formularios WHERE id = ?", (formulario_id,)
+    ).fetchone()
+    if f is None:
+        return {"ok": False, "motivo": "ficha_inexistente"}
+    if f["status"] != "cancelado":
+        return {"ok": False, "motivo": "nao_cancelado"}
+    conn.execute(
+        "UPDATE formularios SET status = 'aguardando_match' WHERE id = ?", (formulario_id,)
+    )
+    conn.commit()
+    registrar_evento(
+        conn,
+        tipo="post_restaurado",
+        descricao=f"Post restaurado pelo operador: {f['nome']} (id {formulario_id})",
+        formulario_id=formulario_id,
+        dados={"nome": f["nome"]},
+    )
+    return {"ok": True, "nome": f["nome"]}
+
+
+def listar_formularios_cancelados(conn):
+    """Lista os Posts cancelados (para a aba 'Cancelados'). Mais recentes primeiro."""
+    return conn.execute(
+        "SELECT id, nome, tipo_material, data_gravacao, recebido_em "
+        "FROM formularios WHERE status = 'cancelado' ORDER BY recebido_em DESC"
+    ).fetchall()
+
+
+def invalidar_cartoes_do_volume(conn, volume):
+    """
+    GATE (Camada 1): quando um volume é removido fisicamente, marca como 'ausente'
+    os cartões DETECTADOS daquele volume que ainda estavam só esperando match
+    (detectado/aguardando_match/sem_midia/revisar, sem número e sem match).
+
+    Por quê: evita o "cartão-fantasma" — um cartão que ficou parado esperando, teve
+    o volume removido, e horas depois o Matcher dá match com ele e a Transferência tenta
+    copiar de um volume que não existe mais (a falha grave do EOS_DIGITAL).
+
+    NUNCA toca em cartão que já entrou no fluxo (tem número, está matched/copiando/
+    concluído) — esses têm caminho próprio (Camada 2/4). Tudo logado em 'eventos'.
+
+    Retorna a lista de ids de cartões invalidados (para arquivar os JSONs e logar).
+    """
+    esperando = {"detectado", "aguardando_match", "sem_midia", "revisar"}
+    ids = []
+    rows = conn.execute(
+        "SELECT id, status, numero_cartao FROM cartoes WHERE volume = ?", (volume,)
+    ).fetchall()
+    for r in rows:
+        if r["numero_cartao"] or r["status"] not in esperando:
+            continue
+        ja_tem_match = conn.execute(
+            "SELECT 1 FROM matches WHERE cartao_id = ? LIMIT 1", (r["id"],)
+        ).fetchone()
+        if ja_tem_match:
+            continue
+        atualizar_cartao(conn, r["id"], {"status": "ausente"})
+        registrar_evento(
+            conn,
+            tipo="cartao_ausente",
+            descricao=(
+                f"Cartão invalidado pelo gate: volume removido antes do match — "
+                f"{volume} (id {r['id']})"
+            ),
+            cartao_id=r["id"],
+            dados={"volume": volume},
+        )
+        ids.append(r["id"])
+    return ids
 
 
 def gravar_cartao(conn, volume, caminho_origem, marca_camera=None, tipo_material=None,
@@ -3047,10 +3288,10 @@ _RANK_BLOCO_PLANILHA = {b: i for i, b in enumerate(
 )}
 
 # Consulta base da planilha. Duas fontes somadas, ordenadas da mais recente:
-#   (1) CARTÕES — material já recebido (com a ficha casada, se houver).
+#   (1) CARTÕES — material já recebido (com a ficha com match, se houver).
 #   (2) "POST IN" — fichas recebidas que AINDA NÃO têm cartão. Aparecem na hora,
 #       para os editores já verem o material a caminho. Quando o cartão chega e
-#       casa, a ficha passa a ser representada pela linha do cartão (sem duplicar:
+#       dá match, a ficha passa a ser representada pela linha do cartão (sem duplicar:
 #       o NOT EXISTS exclui da fonte 2 toda ficha que já tem match).
 # Os campos aqui precisam cobrir todos os `campo` referenciados pelo catálogo.
 _SQL_PLANILHA = """
@@ -3065,6 +3306,11 @@ _SQL_PLANILHA = """
         SELECT id FROM matches WHERE cartao_id = c.id ORDER BY id DESC LIMIT 1
     )
     LEFT JOIN formularios f ON f.id = m.formulario_id
+    -- Só entra na Planilha (vista de entrega) o cartão que VIROU entrega: tem match.
+    -- Cartão cru (detectado/aguardando, sem ficha) é assunto da Operação, não dos
+    -- editores; e cartão 'descartado' some de vez. Isso tira o ruído do EOS_DIGITAL.
+    WHERE EXISTS (SELECT 1 FROM matches m2 WHERE m2.cartao_id = c.id)
+      AND c.status <> 'descartado'
 
     UNION ALL
 
@@ -3077,6 +3323,7 @@ _SQL_PLANILHA = """
            f.recebido_em AS _ordenacao
     FROM formularios f
     WHERE NOT EXISTS (SELECT 1 FROM matches m WHERE m.formulario_id = f.id)
+      AND f.status <> 'cancelado'   -- Post cancelado não aparece na entrega
 
     ORDER BY _ordenacao DESC
 """
