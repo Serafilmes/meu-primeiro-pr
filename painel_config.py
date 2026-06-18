@@ -174,9 +174,17 @@ def aplicar_ao_ambiente(os_environ, forcar=False):
     if forcar:
         os_environ["GMA_DB"] = db
         os_environ["GMA_DESTINO"] = destino
+        if config.get("sheets_id"):
+            os_environ["GMA_SHEETS_ID"] = config["sheets_id"]
+        if config.get("tunel_link"):
+            os_environ["GMA_LINK_FICHA"] = config["tunel_link"]
     else:
         os_environ.setdefault("GMA_DB", db)
         os_environ.setdefault("GMA_DESTINO", destino)
+        if config.get("sheets_id"):
+            os_environ.setdefault("GMA_SHEETS_ID", config["sheets_id"])
+        if config.get("tunel_link"):
+            os_environ.setdefault("GMA_LINK_FICHA", config["tunel_link"])
     return slug, config
 
 
@@ -198,6 +206,59 @@ def definir_destino(slug, caminho):
     if slug not in estado["projetos"]:
         raise ValueError(f"Projeto desconhecido: {slug}")
     estado["projetos"][slug]["destino"] = caminho.strip()
+    salvar_estado(estado)
+
+
+def definir_banco(slug, db):
+    """Define o caminho do banco de um projeto."""
+    estado = carregar_estado()
+    if slug not in estado["projetos"]:
+        raise ValueError(f"Projeto desconhecido: {slug}")
+    estado["projetos"][slug]["db"] = db.strip()
+    salvar_estado(estado)
+
+
+def definir_sheets(slug, sheets_id):
+    """Define o ID da planilha Google de um projeto (por projeto, não no .env)."""
+    estado = carregar_estado()
+    if slug not in estado["projetos"]:
+        raise ValueError(f"Projeto desconhecido: {slug}")
+    estado["projetos"][slug]["sheets_id"] = sheets_id.strip()
+    salvar_estado(estado)
+
+
+def definir_sheets_ativo(slug, ativo):
+    """Ativa ou desativa a sincronização com o Google Sheets de um projeto."""
+    estado = carregar_estado()
+    if slug not in estado["projetos"]:
+        raise ValueError(f"Projeto desconhecido: {slug}")
+    estado["projetos"][slug]["sheets_ativo"] = bool(ativo)
+    salvar_estado(estado)
+
+
+def definir_tunel_link(slug, link):
+    """Define o link override do túnel (vazio = detecta o ngrok automaticamente)."""
+    estado = carregar_estado()
+    if slug not in estado["projetos"]:
+        raise ValueError(f"Projeto desconhecido: {slug}")
+    estado["projetos"][slug]["tunel_link"] = link.strip()
+    salvar_estado(estado)
+
+
+def definir_tunel_ativo(slug, ativo):
+    """Ativa ou desativa o acesso remoto (ficha via túnel) de um projeto."""
+    estado = carregar_estado()
+    if slug not in estado["projetos"]:
+        raise ValueError(f"Projeto desconhecido: {slug}")
+    estado["projetos"][slug]["tunel_ativo"] = bool(ativo)
+    salvar_estado(estado)
+
+
+def definir_host_porta(host, porta):
+    """Define o host e porta do Flask (configuração global; aplica no próximo reinício)."""
+    estado = carregar_estado()
+    estado["host"] = host.strip()
+    estado["porta"] = porta.strip()
     salvar_estado(estado)
 
 

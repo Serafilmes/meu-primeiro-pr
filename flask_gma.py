@@ -5986,6 +5986,8 @@ PAINEL_CSS = """
                    padding:7px 10px; font-size:0.82em; margin-top:6px; }
 .controle-sistema { display:flex; gap:10px; flex-wrap:wrap; }
 .nota-command { color:#868e96; font-size:0.82em; margin-top:12px; line-height:1.5; }
+.conexao-botoes { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px; }
+.conexao.inativo { opacity:0.65; }
 """
 
 
@@ -6092,42 +6094,87 @@ def _conexoes_cockpit():
     _slug, cfg = painel_config.projeto_ativo()
     db = painel_config.caminho_db(cfg)
     destino = cfg.get("destino") or painel_config.DESTINO_PADRAO
+    estado = painel_config.carregar_estado()
 
     def sit(valor):
         return ("definida", "ok") if (valor or "").strip() else ("— (vazia)", "off")
 
-    senha_txt, senha_st = sit(os.environ.get("GMA_SENHA"))
-    tally_txt, tally_st = sit(os.environ.get("TALLY_WEBHOOK_SECRET"))
-    sid = os.environ.get("GMA_SHEETS_ID", "").strip()
+    # Google Sheets — ID por projeto (painel_estado) ou fallback no .env
+    sid = (cfg.get("sheets_id") or os.environ.get("GMA_SHEETS_ID", "")).strip()
+    sheets_ativo = cfg.get("sheets_ativo", True)
     sheets_txt = ("…" + sid[-8:]) if sid else "— (não configurado)"
-    link = os.environ.get("GMA_LINK_FICHA", "").strip()
-    tunel_txt = link if link else "auto (descobre o ngrok)"
-    host = os.environ.get("GMA_HOST", "127.0.0.1").strip() or "127.0.0.1"
-    porta = os.environ.get("GMA_PORT", "5050").strip() or "5050"
+    if not sheets_ativo:
+        sheets_status = "off"
+    elif sid:
+        sheets_status = "ok"
+    else:
+        sheets_status = "aviso"
+
+    # Túnel — link override por projeto (painel_estado) ou fallback no .env
+    tunel_link = (cfg.get("tunel_link") or os.environ.get("GMA_LINK_FICHA", "")).strip()
+    tunel_ativo = cfg.get("tunel_ativo", True)
+    tunel_url_real = tunel_link
+    if not tunel_link and tunel_ativo:
+        # Verifica ngrok ao vivo (timeout curto para não travar o carregamento)
+        try:
+            import urllib.request as _ur
+            with _ur.urlopen("http://127.0.0.1:4040/api/tunnels", timeout=2) as resp:
+                dados = json.loads(resp.read().decode())
+            for t in dados.get("tunnels", []):
+                url = t.get("public_url", "")
+                if url.startswith("https"):
+                    tunel_url_real = url + "/ficha"
+                    break
+        except Exception:
+            pass
+    if not tunel_ativo:
+        tunel_status, tunel_txt = "off", "desativado"
+    elif tunel_url_real:
+        tunel_status, tunel_txt = "ok", tunel_url_real
+    else:
+        tunel_status, tunel_txt = "aviso", "ngrok não encontrado — suba o túnel"
+
+    # Porta / host — estado global ou fallback no .env
+    host = (estado.get("host") or os.environ.get("GMA_HOST", "127.0.0.1")).strip() or "127.0.0.1"
+    porta = (estado.get("porta") or os.environ.get("GMA_PORT", "5050")).strip() or "5050"
+    host_rede = host not in ("127.0.0.1", "localhost")
+
+    senha_txt, senha_st = sit(os.environ.get("GMA_SENHA"))
 
     return [
         {"chave": "banco", "rot": "Banco do projeto", "val": db,
          "desc": "Onde ficam os dados deste projeto (fichas, cartões, planilha).",
-         "status": "ok" if os.path.isfile(db) else "aviso", "testavel": True},
+         "status": "ok" if os.path.isfile(db) else "aviso", "testavel": True,
+         "direcionar": True, "campo": db, "acao": "/painel/banco",
+         "placeholder": "Caminho do banco (ex.: projetos/meu_evento/gma.db)"},
         {"chave": "destino", "rot": "Pasta dos materiais", "val": destino,
          "desc": "Para onde o material é copiado e organizado (EVENTO/DATA/TIPO/NOME).",
          "status": "ok" if os.path.isdir(destino) else "aviso", "testavel": True,
-         "direcionar": True},
+         "direcionar": True, "campo": destino, "acao": "/painel/destino",
+         "placeholder": "Caminho da pasta de destino"},
         {"chave": "sheets", "rot": "Google Sheets", "val": sheets_txt,
-         "desc": "Espelho de entrega na nuvem (editores). Teste gera um token real.",
-         "status": "ok" if sid else "off", "testavel": True},
+         "desc": "Espelho de entrega na nuvem. ID salvo por projeto.",
+         "status": sheets_status, "testavel": bool(sid),
+         "direcionar": True, "campo": sid, "acao": "/painel/sheets-id",
+         "placeholder": "ID da planilha Google (cole o ID longo)",
+         "ativavel": True, "ativo": sheets_ativo, "acao_ativar": "/painel/sheets-ativo"},
         {"chave": "tunel", "rot": "Túnel / ficha remota", "val": tunel_txt,
-         "desc": "Link público da ficha (ngrok) para os celulares do set.",
-         "status": "ok" if link else "off", "testavel": True},
+         "desc": "Link público da ficha (ngrok). Vazio = detecta automaticamente.",
+         "status": tunel_status, "testavel": True,
+         "direcionar": True, "campo": tunel_link, "acao": "/painel/tunel-link",
+         "placeholder": "Link override (ex.: https://xyz.ngrok.io) — vazio = auto",
+         "ativavel": True, "ativo": tunel_ativo, "acao_ativar": "/painel/tunel-ativo"},
         {"chave": "senha", "rot": "Senha das telas", "val": senha_txt,
          "desc": "Portão para a internet. Vazia = uso local livre.",
          "status": senha_st, "testavel": False},
-        {"chave": "tally", "rot": "Tally (reserva)", "val": tally_txt,
-         "desc": "Formulário externo de reserva. Opcional.",
-         "status": tally_st, "testavel": False},
         {"chave": "porta", "rot": "Porta / host", "val": f"{host}:{porta}",
-         "desc": "Onde o painel escuta. 0.0.0.0 libera para a rede local.",
-         "status": "ok", "testavel": False},
+         "desc": "Onde o painel escuta. 0.0.0.0 = libera para a rede local (celulares no Wi-Fi).",
+         "status": "ok", "testavel": False,
+         "direcionar_host": True, "campo_host": host, "campo_porta": porta,
+         "acao": "/painel/host",
+         "ativavel": True, "ativo": host_rede,
+         "acao_ativar": "/painel/host-rede",
+         "label_ativar": "Liberar rede local", "label_desativar": "Só local"},
     ]
 
 
@@ -6190,30 +6237,87 @@ def _pagina_painel(aviso=None, erro=None, resultado_teste=None):
     # ── Conexões (cockpit) ───────────────────────────────────────────────────
     cards = []
     for c in _conexoes_cockpit():
+        chave = c["chave"]
+        c_status = c["status"]
+        c_rot = _esc(c["rot"])
+        c_val = _esc(c["val"])
+        c_desc = _esc(c["desc"])
+        c_ativo = c.get("ativo", True)
+
         res_html = ""
-        if resultado_teste and resultado_teste[0] == c["chave"]:
+        if resultado_teste and resultado_teste[0] == chave:
             _ch, ok, msg = resultado_teste
-            res_html = (f"<div class='resultado-teste'>{'✅' if ok else '⚠️'} {_esc(msg)}</div>")
+            icone = "✅" if ok else "⚠️"
+            res_html = f"<div class='resultado-teste'>{icone} {_esc(msg)}</div>"
+
+        # Botão Testar
         botao_testar = ""
-        if c["testavel"]:
+        if c.get("testavel") and c_ativo:
             botao_testar = (
-                f"<form method='POST' action='/painel/testar/{c['chave']}' style='margin:0'>"
-                f"<button class='btn btn-testar' type='submit'>Testar</button></form>"
+                "<form method='POST' action='/painel/testar/" + chave + "' style='margin:0'>"
+                "<button class='btn btn-testar' type='submit'>Testar</button></form>"
             )
-        direcionar = ""
+
+        # Botão Ativar / Desativar
+        ativar_form = ""
+        if c.get("ativavel"):
+            acao_ativar = c.get("acao_ativar", "")
+            if c_ativo:
+                label = c.get("label_desativar", "Desativar")
+                ativar_form = (
+                    f"<form method='POST' action='{acao_ativar}' style='margin:0'>"
+                    f"<input type='hidden' name='slug' value='{_esc(ativo_slug)}'>"
+                    "<input type='hidden' name='ativo' value='0'>"
+                    f"<button class='btn btn-secund' type='submit'>{label}</button></form>"
+                )
+            else:
+                label = c.get("label_ativar", "Ativar")
+                ativar_form = (
+                    f"<form method='POST' action='{acao_ativar}' style='margin:0'>"
+                    f"<input type='hidden' name='slug' value='{_esc(ativo_slug)}'>"
+                    "<input type='hidden' name='ativo' value='1'>"
+                    f"<button class='btn btn-trocar' type='submit'>{label}</button></form>"
+                )
+
+        botoes = ""
+        if botao_testar or ativar_form:
+            botoes = f"<div class='conexao-botoes'>{botao_testar}{ativar_form}</div>"
+
+        # Formulário de redirecionamento
+        redir_form = ""
         if c.get("direcionar"):
-            direcionar = (
-                "<form method='POST' action='/painel/destino' class='linha-form'>"
+            ph = _esc(c.get("placeholder", "Caminho ou endereço"))
+            val_campo = _esc(c.get("campo", ""))
+            acao = c.get("acao", "")
+            redir_form = (
+                f"<form method='POST' action='{acao}' class='linha-form'>"
                 f"<input type='hidden' name='slug' value='{_esc(ativo_slug)}'>"
-                f"<input type='text' name='destino' value='{_esc(c['val'])}'>"
-                "<button class='btn btn-secund' type='submit'>Direcionar</button></form>"
+                f"<input type='text' name='valor' value='{val_campo}' placeholder='{ph}'>"
+                "<button class='btn btn-secund' type='submit'>Redirecionar</button></form>"
             )
+        elif c.get("direcionar_host"):
+            acao = c.get("acao", "")
+            val_host = _esc(c.get("campo_host", ""))
+            val_porta = _esc(c.get("campo_porta", ""))
+            redir_form = (
+                f"<form method='POST' action='{acao}' class='linha-form'>"
+                f"<input type='hidden' name='slug' value='{_esc(ativo_slug)}'>"
+                f"<input type='text' name='host' value='{val_host}' "
+                "placeholder='host' style='max-width:140px'>"
+                f"<input type='text' name='porta' value='{val_porta}' "
+                "placeholder='porta' style='max-width:72px'>"
+                "<button class='btn btn-secund' type='submit'>Aplicar</button></form>"
+            )
+
+        # "inativo" só para conexões com ativável real (sheets, túnel), não para host
+        inativo_cls = " inativo" if (c.get("ativavel") and not c_ativo and "acao_ativar" in c and c["chave"] != "porta") else ""
         cards.append(
-            "<div class='conexao'>"
-            f"<div class='top'><span class='dot {c['status']}'></span><span class='rot'>{_esc(c['rot'])}</span></div>"
-            f"<div class='val'>{_esc(c['val'])}</div>"
-            f"<div class='desc'>{_esc(c['desc'])}</div>"
-            f"{botao_testar}{direcionar}{res_html}"
+            f"<div class='conexao{inativo_cls}'>"
+            f"<div class='top'><span class='dot {c_status}'></span>"
+            f"<span class='rot'>{c_rot}</span></div>"
+            f"<div class='val'>{c_val}</div>"
+            f"<div class='desc'>{c_desc}</div>"
+            f"{botoes}{redir_form}{res_html}"
             "</div>"
         )
     partes.append(
@@ -6296,7 +6400,8 @@ def painel_novo():
 def painel_destino():
     """Direciona a pasta dos materiais do projeto ativo."""
     slug = (request.form.get("slug") or "").strip()
-    caminho = (request.form.get("destino") or "").strip()
+    # Aceita tanto 'valor' (novo padrão) quanto 'destino' (retrocompat)
+    caminho = (request.form.get("valor") or request.form.get("destino") or "").strip()
     try:
         painel_config.definir_destino(slug, caminho)
         logger.info(f"PAINEL | Destino de '{slug}' → {caminho}")
@@ -6304,6 +6409,112 @@ def painel_destino():
     except Exception as e:
         logger.warning(f"PAINEL | Falha ao direcionar destino: {e}")
         return _pagina_painel(erro=f"Não deu para direcionar a pasta: {e}")
+
+
+@app.route("/painel/banco", methods=["POST"])
+def painel_banco():
+    """Redireciona o caminho do banco do projeto ativo."""
+    slug = (request.form.get("slug") or "").strip()
+    valor = (request.form.get("valor") or "").strip()
+    try:
+        painel_config.definir_banco(slug, valor)
+        logger.info(f"PAINEL | Banco de '{slug}' → {valor}")
+        return _pagina_painel(aviso="Caminho do banco atualizado. Reinicie o sistema para aplicar.")
+    except Exception as e:
+        logger.warning(f"PAINEL | Falha ao redirecionar banco: {e}")
+        return _pagina_painel(erro=f"Não deu para atualizar o banco: {e}")
+
+
+@app.route("/painel/sheets-id", methods=["POST"])
+def painel_sheets_id():
+    """Define o ID da planilha Google do projeto ativo."""
+    slug = (request.form.get("slug") or "").strip()
+    valor = (request.form.get("valor") or "").strip()
+    try:
+        painel_config.definir_sheets(slug, valor)
+        logger.info(f"PAINEL | Sheets ID de '{slug}' atualizado")
+        return _pagina_painel(aviso="ID da planilha atualizado. Reinicie para aplicar ao exportador.")
+    except Exception as e:
+        logger.warning(f"PAINEL | Falha ao atualizar Sheets ID: {e}")
+        return _pagina_painel(erro=f"Não deu para atualizar o Sheets: {e}")
+
+
+@app.route("/painel/sheets-ativo", methods=["POST"])
+def painel_sheets_ativo():
+    """Ativa ou desativa a sincronização com o Google Sheets."""
+    slug = (request.form.get("slug") or "").strip()
+    ativo = request.form.get("ativo", "1") == "1"
+    try:
+        painel_config.definir_sheets_ativo(slug, ativo)
+        msg = "Google Sheets ativado." if ativo else "Google Sheets desativado (exportador pausado)."
+        logger.info(f"PAINEL | Sheets de '{slug}' → {'ativo' if ativo else 'inativo'}")
+        return _pagina_painel(aviso=msg)
+    except Exception as e:
+        logger.warning(f"PAINEL | Falha ao mudar estado Sheets: {e}")
+        return _pagina_painel(erro=f"Não deu para mudar o estado do Sheets: {e}")
+
+
+@app.route("/painel/tunel-link", methods=["POST"])
+def painel_tunel_link():
+    """Define o link override do túnel do projeto ativo."""
+    slug = (request.form.get("slug") or "").strip()
+    valor = (request.form.get("valor") or "").strip()
+    try:
+        painel_config.definir_tunel_link(slug, valor)
+        logger.info(f"PAINEL | Link do túnel de '{slug}' → {valor or '(auto)'}")
+        msg = (f"Link do túnel configurado." if valor
+               else "Link removido — o painel vai detectar o ngrok automaticamente.")
+        return _pagina_painel(aviso=msg)
+    except Exception as e:
+        logger.warning(f"PAINEL | Falha ao atualizar link do túnel: {e}")
+        return _pagina_painel(erro=f"Não deu para atualizar o túnel: {e}")
+
+
+@app.route("/painel/tunel-ativo", methods=["POST"])
+def painel_tunel_ativo():
+    """Ativa ou desativa o acesso remoto (ficha via túnel)."""
+    slug = (request.form.get("slug") or "").strip()
+    ativo = request.form.get("ativo", "1") == "1"
+    try:
+        painel_config.definir_tunel_ativo(slug, ativo)
+        msg = ("Ficha remota ativada — o QR voltará a aparecer." if ativo
+               else "Ficha remota desativada — só operador local acessa agora.")
+        logger.info(f"PAINEL | Túnel de '{slug}' → {'ativo' if ativo else 'inativo'}")
+        return _pagina_painel(aviso=msg)
+    except Exception as e:
+        logger.warning(f"PAINEL | Falha ao mudar estado do túnel: {e}")
+        return _pagina_painel(erro=f"Não deu para mudar o estado do túnel: {e}")
+
+
+@app.route("/painel/host", methods=["POST"])
+def painel_host():
+    """Define o host e porta do Flask (aplica no próximo reinício)."""
+    host = (request.form.get("host") or "127.0.0.1").strip()
+    porta = (request.form.get("porta") or "5050").strip()
+    try:
+        painel_config.definir_host_porta(host, porta)
+        logger.info(f"PAINEL | Host/porta → {host}:{porta}")
+        return _pagina_painel(aviso=f"Host configurado para {host}:{porta}. Reinicie o sistema para aplicar.")
+    except Exception as e:
+        logger.warning(f"PAINEL | Falha ao atualizar host/porta: {e}")
+        return _pagina_painel(erro=f"Não deu para atualizar o host: {e}")
+
+
+@app.route("/painel/host-rede", methods=["POST"])
+def painel_host_rede():
+    """Toggle rápido: libera para a rede local (0.0.0.0) ou volta ao local (127.0.0.1)."""
+    ativo = request.form.get("ativo", "1") == "1"
+    estado = painel_config.carregar_estado()
+    porta = (estado.get("porta") or os.environ.get("GMA_PORT", "5050")).strip() or "5050"
+    host = "0.0.0.0" if ativo else "127.0.0.1"
+    try:
+        painel_config.definir_host_porta(host, porta)
+        msg = ("Rede local liberada (0.0.0.0). Reinicie para aplicar — celulares no Wi-Fi vão conseguir acessar."
+               if ativo else "Voltou para acesso só local (127.0.0.1). Reinicie para aplicar.")
+        logger.info(f"PAINEL | Host-rede → {host}")
+        return _pagina_painel(aviso=msg)
+    except Exception as e:
+        return _pagina_painel(erro=f"Não deu para mudar o host: {e}")
 
 
 @app.route("/painel/testar/<chave>", methods=["POST"])
