@@ -26,6 +26,11 @@ import threading
 import time
 from datetime import datetime
 
+# Painel de Controle (Camada 5): resolve qual projeto está ativo e aplica suas
+# variáveis (GMA_DB, GMA_DESTINO) ao ambiente antes de subir os processos.
+sys.path.insert(0, "/Users/serafa/GMA")
+import painel_config
+
 
 # ── CARREGAMENTO DO .env ───────────────────────────────────────────────────────
 # Lê o arquivo .env (se existir) e exporta as variáveis para o ambiente ANTES
@@ -92,6 +97,14 @@ RAIZ_GMA = "/Users/serafa/GMA"
 
 # Arquivo sentinela: quando existe, o Porteiro processa eventos
 SENTINELA = os.path.join(RAIZ_GMA, ".gma_ativo")
+
+# Sinais do Painel de Controle (Camada 5). O Flask cria estes arquivos quando o
+# operador clica em "Trocar projeto" / "Reiniciar" / "Encerrar". O maestro vigia
+# o laço de espera e age:
+#   .gma_reiniciar → desce todos os processos e sobe de novo no projeto escolhido
+#   .gma_encerrar  → desce tudo e finaliza o sistema (botão "Encerrar")
+SINAL_REINICIAR = os.path.join(RAIZ_GMA, ".gma_reiniciar")
+SINAL_ENCERRAR = os.path.join(RAIZ_GMA, ".gma_encerrar")
 
 # Caminhos dos scripts que serão iniciados
 SCRIPT_PORTEIRO      = os.path.join(RAIZ_GMA, "porteiro.py")
@@ -381,15 +394,56 @@ def encerrar_processo(processo, nome_legivel, timeout=5):
 
 # ── PONTO DE ENTRADA ──────────────────────────────────────────────────────────
 
+def subir_todos():
+    """
+    Sobe os seis processos do GMA na ordem certa e devolve o dicionário deles.
+    A ordem importa: Porteiro (detecta cartões) → Leitor (analisa) →
+    Flask (interface) → Transferência (copia) → Auditoria → Sheets.
+    """
+    processos = {}
+    processos["Porteiro"]        = iniciar_processo(SCRIPT_PORTEIRO,      "porteiro",      "Porteiro")
+    processos["Leitor de Midia"] = iniciar_processo(SCRIPT_LEITOR,        "leitor",        "Leitor de Midia")
+    processos["Flask"]           = iniciar_processo(SCRIPT_FLASK,         "flask",         "Flask")
+    processos["Transferencia"]   = iniciar_processo(SCRIPT_TRANSFERENCIA, "transferencia", "Transferencia")
+    processos["Auditoria"]       = iniciar_processo(SCRIPT_AUDITORIA,     "auditoria",     "Auditoria")
+    processos["Sheets"]          = iniciar_processo(SCRIPT_SHEETS,        "sheets",        "Exportador Sheets")
+
+    iniciados = sum(1 for p in processos.values() if p is not None)
+    print()
+    log("sistema", f"{iniciados} de {len(processos)} processos iniciados com sucesso.")
+    return processos
+
+
+def descer_todos(processos):
+    """Encerra os processos filhos na ordem inversa da inicialização."""
+    encerrar_processo(processos.get("Sheets"),          "Exportador Sheets")
+    encerrar_processo(processos.get("Auditoria"),       "Auditoria")
+    encerrar_processo(processos.get("Transferencia"),   "Transferencia")
+    encerrar_processo(processos.get("Flask"),           "Flask")
+    encerrar_processo(processos.get("Leitor de Midia"), "Leitor de Midia")
+    encerrar_processo(processos.get("Porteiro"),        "Porteiro")
+
+
+def limpar_sinais():
+    """Remove os sinais do painel (caso tenham sobrado de uma sessão anterior)."""
+    for caminho in (SINAL_REINICIAR, SINAL_ENCERRAR):
+        try:
+            if os.path.isfile(caminho):
+                os.remove(caminho)
+        except OSError:
+            pass
+
+
 def main():
     """
     Fluxo principal do inicializador:
 
-    1. Exibe o cabeçalho do GMA.
+    1. Exibe o cabeçalho do GMA e aplica o projeto ativo (Painel de Controle).
     2. Cria o sentinela .gma_ativo.
-    3. Inicia os quatro processos (Porteiro, Leitor, Flask, Transferência).
-    4. Entra em modo de espera, mostrando os logs em tempo real.
-    5. Ao receber Ctrl+C: encerra tudo de forma limpa e remove o sentinela.
+    3. Sobe os seis processos no projeto ativo.
+    4. Entra em modo de espera, mostrando os logs e vigiando os sinais do painel
+       (.gma_reiniciar → reinicia no projeto escolhido; .gma_encerrar → encerra).
+    5. Ao receber Ctrl+C ou o sinal de encerrar: encerra tudo de forma limpa.
     """
 
     print()
@@ -398,6 +452,16 @@ def main():
     print(f"  Inicializando sistema em {agora()}")
     print("=" * 60)
     print()
+
+    # ── Painel de Controle: aplica o projeto ativo ANTES do .env ─────────────
+    # Define GMA_DB e GMA_DESTINO a partir do projeto ativo. Vem antes do .env
+    # para ter prioridade; o .env (Sheets, senha, etc.) preenche o resto.
+    try:
+        slug, config = painel_config.aplicar_ao_ambiente(os.environ)
+        log("sistema", f"Projeto ativo: {config.get('nome', slug)} "
+                       f"(banco: {os.environ.get('GMA_DB')})")
+    except Exception as erro:
+        log("sistema", f"AVISO: nao foi possivel ler o projeto ativo ({erro}). Usando o laboratorio.")
 
     # ── Carrega o .env ANTES de qualquer processo filho ───────────────────────
     # O .env contém variáveis opcionais como TALLY_WEBHOOK_SECRET.
@@ -424,54 +488,63 @@ def main():
     if not verificar_instancias_ativas():
         sys.exit(0)
 
+    # Sinais antigos (de uma sessão anterior) não devem disparar nada agora
+    limpar_sinais()
+
     # Cria o sentinela antes de ligar qualquer processo
     criar_sentinela()
 
-    # Dicionário que guarda os processos filhos iniciados
-    # Chave: nome legivel | Valor: objeto Popen (ou None)
-    processos = {}
-
-    # Inicia cada processo
-    # A ordem importa: Porteiro primeiro (detecta cartões),
-    # depois Leitor (analisa), depois Flask (interface),
-    # e por último a Transferência (aguarda materiais matched na fila)
-    processos["Porteiro"]        = iniciar_processo(SCRIPT_PORTEIRO,      "porteiro",      "Porteiro")
-    processos["Leitor de Midia"] = iniciar_processo(SCRIPT_LEITOR,        "leitor",        "Leitor de Midia")
-    processos["Flask"]           = iniciar_processo(SCRIPT_FLASK,         "flask",         "Flask")
-    processos["Transferencia"]   = iniciar_processo(SCRIPT_TRANSFERENCIA, "transferencia", "Transferencia")
-    processos["Auditoria"]       = iniciar_processo(SCRIPT_AUDITORIA,     "auditoria",     "Auditoria")
-    processos["Sheets"]          = iniciar_processo(SCRIPT_SHEETS,        "sheets",        "Exportador Sheets")
-
-    # Conta quantos processos foram realmente iniciados
-    iniciados = sum(1 for p in processos.values() if p is not None)
-    print()
-    log("sistema", f"{iniciados} de {len(processos)} processos iniciados com sucesso.")
-    log("sistema", "Sistema GMA ativo. Pressione Ctrl+C para encerrar.")
+    # Sobe os processos no projeto ativo
+    processos = subir_todos()
+    log("sistema", "Sistema GMA ativo. Ctrl+C encerra; o Painel de Controle pode "
+                   "reiniciar/trocar de projeto/encerrar.")
     print()
 
-    # ── Loop de espera ────────────────────────────────────────────────────────
-    # O processo principal fica vivo aqui, apenas aguardando o Ctrl+C.
-    # Os logs chegam pelas threads de leitura de cada processo filho.
+    # ── Loop de espera + vigia dos sinais do painel ───────────────────────────
+    # O processo principal fica vivo aqui. Além do Ctrl+C, ele observa os sinais
+    # criados pelo Flask quando o operador usa o Painel de Controle.
     try:
         while True:
             time.sleep(1)
+
+            # Sinal de ENCERRAR (botão "Encerrar sistema" no painel)
+            if os.path.isfile(SINAL_ENCERRAR):
+                os.remove(SINAL_ENCERRAR)
+                print()
+                log("sistema", "Sinal de ENCERRAR recebido pelo painel. Encerrando...")
+                descer_todos(processos)
+                remover_sentinela()
+                print()
+                log("sistema", "Sistema GMA encerrado pelo painel.")
+                print()
+                return
+
+            # Sinal de REINICIAR (botão "Trocar projeto" / "Reiniciar" no painel)
+            if os.path.isfile(SINAL_REINICIAR):
+                os.remove(SINAL_REINICIAR)
+                print()
+                log("sistema", "Sinal de REINICIAR recebido pelo painel. Reiniciando...")
+                descer_todos(processos)
+
+                # Re-aplica o projeto ativo FORÇANDO (a escolha do operador vence).
+                try:
+                    slug, config = painel_config.aplicar_ao_ambiente(os.environ, forcar=True)
+                    log("sistema", f"Reiniciando no projeto: {config.get('nome', slug)} "
+                                   f"(banco: {os.environ.get('GMA_DB')})")
+                except Exception as erro:
+                    log("sistema", f"AVISO: falha ao reaplicar o projeto ({erro}).")
+
+                time.sleep(2)  # respiro para as portas/arquivos liberarem
+                processos = subir_todos()
+                log("sistema", "Sistema GMA reiniciado.")
+                print()
 
     except KeyboardInterrupt:
         # Ctrl+C recebido — encerra tudo de forma limpa
         print()
         log("sistema", "Encerrando sistema...")
-
-        # Encerra os processos filhos na ordem inversa da inicialização
-        encerrar_processo(processos.get("Sheets"),          "Exportador Sheets")
-        encerrar_processo(processos.get("Auditoria"),       "Auditoria")
-        encerrar_processo(processos.get("Transferencia"),   "Transferencia")
-        encerrar_processo(processos.get("Flask"),           "Flask")
-        encerrar_processo(processos.get("Leitor de Midia"), "Leitor de Midia")
-        encerrar_processo(processos.get("Porteiro"),        "Porteiro")
-
-        # Remove o sentinela para sinalizar que o sistema está parado
+        descer_todos(processos)
         remover_sentinela()
-
         print()
         log("sistema", "Sistema GMA encerrado com seguranca.")
         print()

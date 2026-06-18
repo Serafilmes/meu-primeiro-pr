@@ -49,11 +49,17 @@ from datetime import datetime, timedelta
 # Raiz do projeto GMA
 RAIZ_GMA = "/Users/serafa/GMA"
 
-# Pasta com os JSONs de material detectado pelo Porteiro
-PASTA_FILA_MATERIAL = os.path.join(RAIZ_GMA, "fila_material")
+# Isolamento multi-projeto (Camada 5): as filas moram ao lado do banco do projeto
+# ativo (GMA_DB); para o laboratório, são as pastas da raiz de sempre.
+import sys
+sys.path.insert(0, RAIZ_GMA)
+import painel_config
 
-# Pasta com os JSONs de formulários recebidos pelo Flask
-PASTA_FILA_FORMS = os.path.join(RAIZ_GMA, "fila_forms")
+# Pasta com os JSONs de material detectado pelo Porteiro (isolada por projeto)
+PASTA_FILA_MATERIAL = painel_config.pasta_ao_lado_do_banco("fila_material")
+
+# Pasta com os JSONs de formulários recebidos pelo Flask (isolada por projeto)
+PASTA_FILA_FORMS = painel_config.pasta_ao_lado_do_banco("fila_forms")
 
 # Arquivo de log específico do Matcher
 ARQUIVO_LOG = os.path.join(RAIZ_GMA, "logs", "matcher.log")

@@ -13,24 +13,30 @@ gma.db-shm
 gma.db-wal
 gma.db.bak_*
 
-# Sentinela de ativação (estado de runtime)
+# Sentinelas de runtime (ativação + sinais do Painel de Controle, Camada 5)
 .gma_ativo
+.gma_reiniciar
+.gma_encerrar
 
 # Arquivos do macOS
 .DS_Store
 
-# Filas e logs (estado de runtime)
-fila_forms/*.json
-fila_material/*.json
+# Filas, contadores e estado do painel (runtime — por máquina E por projeto).
+# Pastas inteiras: cobre os backups (_arquivo_*/) e as filas isoladas por projeto
+# (projetos/<slug>/fila_*, .../contadores). Nada de runtime vai para o repositório.
+fila_forms/
+fila_material/
+contadores/
+**/fila_forms/
+**/fila_material/
+**/contadores/
+painel_estado.json
 logs/*.log
 logs/*.out
 logs/backup_*
 
 # Config local do Claude Code (específica desta máquina — não versionar)
 .claude/settings.local.json
-
-# Contadores (estado operacional por profissional)
-contadores/*.json
 
 # Material de teste (mídia — insubstituível, pesada, nunca vai para o repositório)
 TESTE LOGAGEM/

@@ -47,6 +47,13 @@ from datetime import datetime
 # Raiz do projeto GMA
 RAIZ_GMA = "/Users/serafa/GMA"
 
+# Isolamento multi-projeto (Camada 5): as filas moram AO LADO do banco do projeto
+# ativo (GMA_DB). Para o laboratório, resolvem para as pastas da raiz de sempre —
+# então nada muda no laboratório; só projetos novos ganham as suas próprias filas.
+import sys
+sys.path.insert(0, RAIZ_GMA)
+import painel_config
+
 # Pasta onde os volumes de mídia são montados no macOS
 PASTA_VOLUMES = "/Volumes"
 
@@ -61,7 +68,8 @@ ARQUIVO_LOG = os.path.join(RAIZ_GMA, "logs", "porteiro.log")
 
 # Pasta onde os JSONs de material detectado ficam aguardando o Matcher
 # (renomeada de fila/ para fila_material/ para distinguir do fila_forms/)
-PASTA_FILA = os.path.join(RAIZ_GMA, "fila_material")
+# Isolada por projeto (mora ao lado do banco ativo; raiz para o laboratório).
+PASTA_FILA = painel_config.pasta_ao_lado_do_banco("fila_material")
 
 # Intervalo entre cada verificação, em segundos
 INTERVALO_POLLING = 2.0
@@ -603,7 +611,7 @@ def verificar_ambiente():
     """
     pastas_necessarias = [
         os.path.join(RAIZ_GMA, "logs"),
-        os.path.join(RAIZ_GMA, "fila_material"),  # renomeada de fila/ para fila_material/
+        PASTA_FILA,   # fila_material do projeto ativo (isolada por projeto)
         PASTA_ENTRADA,   # pasta de ingestão manual
     ]
     for pasta in pastas_necessarias:

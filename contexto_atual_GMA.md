@@ -14,13 +14,25 @@
 | 2 | Transferência | ✅ Concluída e testada com cartão real |
 | 3 | Controle e segurança das informações | ✅ Quase completa — Kanban + Planilha + Molde; grupos editáveis (s33); Sheets dinâmico (s34); **exportador rodando em loop contínuo dentro do sistema completo (s35)** |
 | 4 | Auditoria + liberação do cartão | ✅ Concluída — ciclo integrado testado |
-| 5 | Plataforma profissional + multi-máquina | 🔧 Em planejamento — agente `plataforma-gma` + blueprint criados |
+| 5 | Plataforma profissional + multi-máquina | 🔧 Em construção — **Painel de Controle Fatia 1 ✅ (s37)**: cockpit no Flask (troca de projeto com reinício guiado, conexões com teste, ligar/encerrar) |
 | 6 | IA assíncrona | 📋 Futura |
 | 7 | Marca e design | 📋 Planejada — foco desejado, **sem prazo de data** (s33) |
 
 ---
 
 ## O que acabou de ser feito (sessões recentes)
+
+### ✅ Sessão 37 (BUILD) — PAINEL DE CONTROLE (Camada 5, Fatia 1) — o cockpit
+**Arquivos:** `flask_gma.py`, `inicializar_gma.py`, `transferencia.py`, `painel_config.py` (novo), `Iniciar GMA.command` + `Encerrar GMA.command` (novos). **Sem commit.** Testado: test client do Flask + ciclo real do maestro (boot→reinício→encerrar). Laboratório intocado.
+> Ideia do idealizador (após um podcast): inicializar a construção do app/painel de controle — troca de projeto/usuário, encaminhamentos, "um certo controle no sistema já". Decisão: **não** empacotar o .app ainda (obra grande, pré-requisitos do §7 pendentes), mas **construir o Painel como aba web** no Flask atual (porta 5050), incremental e seguro. O cockpit virou a metáfora dele: *"ligar os motores e testá-los antes de decolar"*.
+
+- **`painel_config.py` (novo) = fonte única** do "qual projeto + quais conexões". Estado em `painel_estado.json` (registro de projetos + ativo); arquivo ausente → laboratório padrão (lab intocado) + auto-descobre `projetos/*/gma.db`. Funções: carregar/salvar_estado, definir_ativo, criar_projeto, definir_destino, `aplicar_ao_ambiente` (setdefault no boot; **forçar** no reinício — a escolha do operador vence).
+- **Maestro virou supervisor (`inicializar_gma.py`):** lê o projeto ativo no boot (define `GMA_DB`+`GMA_DESTINO` antes do `.env`, que preenche o resto). O laço de espera agora **vigia dois sinais** que o Flask cria: `.gma_reiniciar` (derruba os 6 processos e re-sobe no projeto escolhido) e `.gma_encerrar` (desce tudo e sai limpo). Refatorado em `subir_todos`/`descer_todos`. **Testado de verdade:** boot 6/6 → reinício (sinal consumido, 6 re-subidos) → encerrar (0 filhos, sentinela removido, maestro sai limpo).
+- **Pasta de destino configurável:** `transferencia.py` agora lê `GMA_DESTINO` (padrão = "TESTE LOGAGEM" de sempre — nada muda sem mexer). Botão **"Direcionar"** grava por projeto; vale após reiniciar. Mesmo espírito do `GMA_DB`.
+- **Aba "⚙ Painel" (Flask, só base):** (1) **projeto ativo**; (2) **lista de projetos** + **Trocar** (reinício guiado) + **Criar projeto** (faz a pasta isolada + banco vazio inicializado por subprocess); (3) **cockpit de conexões** — TODAS (banco · pasta destino · Google Sheets · túnel/ficha · senha · Tally · porta) com bolinha de status + botão **Testar** ("liga o motor": destino testa escrita, Sheets gera token gcloud real, túnel checa o `127.0.0.1:4040`); (4) **controle do sistema**: Reiniciar/Encerrar + nota dos atalhos. Portão por papel já barra remoto (testado: 403 em GET e POST com Host externo).
+- **Atalhos clicáveis (semente do .app):** `Iniciar GMA.command` (dois cliques → sobe o sistema completo) e `Encerrar GMA.command` (sinal ao maestro, ou `encerrar_gma.py` se ele não estiver no ar). O idealizador liga/desliga sozinho, sem terminal nem pedir ao Claude.
+- **🐛 Correção de isolamento (mesma sessão):** o idealizador viu a aba **Operação** misturando fichas de testes/projetos (11 fichas). Causa: a Operação (`/`) lê as filas **globais** `fila_forms/`+`fila_material/` (e os `contadores/`) — feitas antes do multi-projeto. Os **bancos** já eram isolados (Kanban/Planilha certos); só a "sala de espera" (filas JSON) vazava. **Consertado:** `painel_config.pasta_ao_lado_do_banco()` resolve fila/contador **ao lado do banco** do projeto ativo (deriva do `GMA_DB`; raiz p/ o lab — nada muda no lab). Aplicado em porteiro, leitor, matcher, transferência, flask. **Testado:** Operação do lab 11→0; Rock in Rio = 0 (isolado). As 12 fichas + 1 material velhos foram **arquivados** (movidos p/ `fila_*/_arquivo_<ts>/`, reversível; seguem nos bancos). **Para ativar no sistema rodando: clicar "Reiniciar" no Painel** (re-sobe os processos com o código novo).
+- **🔶 Observações do idealizador registradas p/ Fatia 2:** as conexões ainda vêm do **`.env` global** — movê-las p/ **config por projeto** (Sheets/senha/túnel próprios) é o coração do §1.3; + **testar de verdade no setup** ("motores antes do voo"); + **projeto já configurado ao reiniciar só sinaliza** "passe no painel resolver a conexão" (#2); + **wizard de novo projeto** estilo guia do Rock in Rio (#1). **#4 anotada (futuro):** em que ordem a planilha Google entra no setup (antes do voo?). Login/troca de usuário = Fatia 3.
 
 ### ✅ Sessão 36 (BUILD) — Fatia B: PROGRAMAÇÃO DO DIA (a "virada das fichas")
 **Arquivos:** `banco_dados.py`, `flask_gma.py`, `projetos/rock_in_rio/carregar_lineup.py` (novo), `lineup_2026.json` (novo). **Sem commit.** Construído e testado no banco do festival; lab intocado.
@@ -230,7 +242,7 @@ Candidatos naturais para a próxima sessão:
 
 ## Arquivos com mudanças não commitadas (atenção)
 
-Tudo commitado e enviado ao `origin` até a **S36** (commits `8b0b53e` Rock in Rio + programação do dia, `151047f` Listas colapsável, `2709dd5` fix reordenar grupos). Branch: `fatia5-sheets-multiprojeto`. Backup do laboratório em `gma.db.bak_20260617_*`. Nada solto na árvore de trabalho.
+Commitado até a **S36**. **S37 (Painel de Controle Fatia 1) SEM commit** — `flask_gma.py`, `inicializar_gma.py`, `transferencia.py` modificados; `painel_config.py`, `Iniciar GMA.command`, `Encerrar GMA.command` novos. Branch: `fatia5-sheets-multiprojeto`. (Sugerir commit antes da Fatia 2.) Backup do laboratório em `gma.db.bak_20260617_*`.
 
 ---
 
