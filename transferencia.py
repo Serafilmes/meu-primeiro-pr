@@ -343,32 +343,64 @@ def montar_caminho_destino(dados_material, dados_form):
     tipo_material = (dados_form.get("tipo_material") or "MATERIAL").upper().strip()
 
     # Nome do profissional de captação — sanitizado para uso seguro em nomes de pasta
-    # (ex: "Serafa" → "SERAFA", "João Cam" → "JOAO_CAM")
+    # (ex: "Serafa" → "SERAFA", "João Cam" → "JOAO_CAM"). É o fallback caso o
+    # profissional não esteja cadastrado (ou o cadastro não tenha os nomes curtos).
     nome_bruto = dados_form.get("nome") or "SEM_NOME"
-    nome = "".join(
-        c if c.isalnum() or c in "-_" else "_"
-        for c in nome_bruto.upper().strip()
-    )
+
+    # Nomes curtos do cadastro (#5 da s39): a PASTA DO DIA usa o nome-raiz
+    # (FERNANDO_DUMITRIU) e o CARTÃO usa o nome-curto (DUMITRIU → DUMITRIU_001).
+    # Se o profissional não está cadastrado, cai no nome sanitizado de sempre
+    # (sem acento, ASCII limpo — mesma regra do banco).
+    try:
+        import banco_dados as _bd
+        nome_fallback = _bd._sanitizar_nome_pasta(nome_bruto)
+    except Exception:
+        # Fallback do fallback (banco indisponível): sanitização local simples.
+        nome_fallback = "".join(
+            c if (c.isascii() and (c.isalnum() or c in "-_")) else "_"
+            for c in nome_bruto.upper().strip()
+        ) or "SEM_NOME"
+
+    nome_raiz = nome_fallback
+    nome_curto = nome_fallback
+    try:
+        import banco_dados as _bd
+        _conn = _bd.obter_conexao()
+        try:
+            raiz = _bd.nome_raiz_do_profissional(_conn, nome_bruto)
+            curto = _bd.nome_curto_do_profissional(_conn, nome_bruto)
+            if raiz:
+                nome_raiz = raiz
+            if curto:
+                nome_curto = curto
+        finally:
+            _conn.close()
+    except Exception as erro:
+        logger.warning(
+            f"NOMES CURTOS INDISPONÍVEIS | {erro} | "
+            f"Usando nome sanitizado da ficha: {nome_fallback}"
+        )
 
     # ── Monta o caminho passo a passo ────────────────────────────────────────
 
-    # Pasta do profissional: .../DATA/TIPO/SERAFA/
-    pasta_profissional = os.path.join(PASTA_DESTINO_BASE, data_formatada, tipo_material, nome)
+    # Pasta do profissional (raiz do dia): .../DATA/TIPO/FERNANDO_DUMITRIU/
+    pasta_profissional = os.path.join(PASTA_DESTINO_BASE, data_formatada, tipo_material, nome_raiz)
 
-    # Busca o próximo número do cartão deste profissional (no arquivo-contador)
-    # Conceito: "é o 3º cartão que o fulano entrega neste trabalho"
-    numero = proximo_numero_sequencial(nome)
+    # Busca o próximo número do cartão deste profissional (no arquivo-contador).
+    # O contador é POR NOME CURTO (contadores/DUMITRIU.json) — "é o 3º cartão que
+    # o fulano entrega neste trabalho".
+    numero = proximo_numero_sequencial(nome_curto)
 
-    # Nome final da subpasta: NOME_NNN → JOAO_001, PAULO_005...
-    # A pasta carrega o nome do profissional + o número do cartão na sequência dele
-    nome_subpasta = f"{nome}_{numero:03d}"
+    # Nome final da subpasta: CURTO_NNN → DUMITRIU_001, PAULO_005...
+    nome_subpasta = f"{nome_curto}_{numero:03d}"
 
-    # Caminho completo de destino: .../JOAO/JOAO_001
+    # Caminho completo de destino: .../FERNANDO_DUMITRIU/DUMITRIU_001
     caminho_destino = os.path.join(pasta_profissional, nome_subpasta)
 
     logger.info(
         f"DESTINO MONTADO | Data: {data_formatada} | Tipo: {tipo_material} | "
-        f"Nome: {nome} | Cartão nº: {numero:03d} | Caminho: {caminho_destino}"
+        f"Raiz: {nome_raiz} | Curto: {nome_curto} | Cartão nº: {numero:03d} | "
+        f"Caminho: {caminho_destino}"
     )
 
     return caminho_destino

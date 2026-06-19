@@ -4917,6 +4917,49 @@ def profissionais_camera(prof_id):
     return redirect("/profissionais")
 
 
+@app.route("/profissionais/<int:prof_id>/nomes", methods=["POST"])
+def profissionais_nomes(prof_id):
+    """
+    Edita os nomes curtos de um profissional (#5 s39): pasta do dia (nome_raiz) e
+    cartão (nome_curto). Só permitido ANTES do primeiro cartão logado — depois o
+    banco trava (mudar quebraria pastas/numeração já criadas).
+
+    Acesso: somente base (localhost). Remoto recebe 403 pelo portão existente.
+    """
+    if not BANCO_DISPONIVEL:
+        return _pagina_profissionais(erro="Banco de dados indisponível.")
+
+    nome_raiz = (request.form.get("nome_raiz") or "").strip()
+    nome_curto = (request.form.get("nome_curto") or "").strip()
+    try:
+        _conn = bd.obter_conexao()
+        resultado = bd.definir_nomes_profissional(
+            _conn, prof_id, nome_raiz=nome_raiz, nome_curto=nome_curto
+        )
+        _conn.close()
+    except Exception as _err:
+        logger.error(f"PROFISSIONAIS | Erro ao gravar nomes (id={prof_id}): {_err}")
+        return _pagina_profissionais(erro=f"Erro ao gravar os nomes: {_err}")
+
+    if resultado == "travado":
+        logger.warning(f"PROFISSIONAIS | nomes recusados (id={prof_id}): cartão já logado")
+        return _pagina_profissionais(
+            erro="Esse profissional já tem cartão logado — os nomes ficam travados "
+                 "para não quebrar as pastas já criadas."
+        )
+    if resultado == "duplicado":
+        return _pagina_profissionais(
+            erro=f"O nome de cartão '{nome_curto.upper()}' já pertence a outro profissional."
+        )
+    if resultado == "vazio":
+        return _pagina_profissionais(erro="Os nomes não podem ficar vazios.")
+    if resultado == "inexistente":
+        return redirect("/profissionais")
+
+    logger.info(f"PROFISSIONAIS | id={prof_id} nomes → pasta={nome_raiz} cartão={nome_curto}")
+    return redirect("/profissionais")
+
+
 @app.route("/profissionais/<int:prof_id>/excluir", methods=["POST"])
 def profissionais_excluir(prof_id):
     """
@@ -4966,12 +5009,14 @@ def _pagina_profissionais(
     # ── Carrega a lista do banco ───────────────────────────────────────────────
     lista = []
     em_uso = set()  # nomes que aparecem em alguma ficha → não podem ser excluídos
+    travados = set()  # nomes com cartão logado → nomes curtos travados p/ edição
     aviso_banco = ""
     if BANCO_DISPONIVEL:
         try:
             _conn = bd.obter_conexao()
             lista = bd.listar_profissionais(_conn)
             em_uso = bd.nomes_em_uso(_conn)
+            travados = bd.profissionais_travados(_conn)
             _conn.close()
         except Exception as _err_lista:
             aviso_banco = f"Não foi possível carregar a lista: {_err_lista}"
@@ -5049,6 +5094,44 @@ def _pagina_profissionais(
                 f'</form>'
             )
 
+            # Célula dos NOMES CURTOS (#5 s39): pasta do dia (raiz) + cartão (curto).
+            # Editável até o 1º cartão logado; depois TRAVA (mudar quebraria pastas).
+            raiz_atual = p.get("nome_raiz") or ""
+            curto_atual = p.get("nome_curto") or ""
+            travado = nome_norm in travados
+            if travado:
+                celula_nomes = (
+                    f'<div style="font-size:0.82em;line-height:1.5;text-align:left">'
+                    f'<div><span style="color:#adb5bd">pasta</span> '
+                    f'<span style="font-family:ui-monospace,monospace">{_esc(raiz_atual) or "—"}</span></div>'
+                    f'<div><span style="color:#adb5bd">cartão</span> '
+                    f'<span style="font-family:ui-monospace,monospace;font-weight:600">{_esc(curto_atual) or "—"}</span> '
+                    f'<span title="Travado: já tem cartão logado">🔒</span></div>'
+                    f'</div>'
+                )
+            else:
+                celula_nomes = (
+                    f'<form action="/profissionais/{p["id"]}/nomes" method="post" '
+                    f'style="margin:0;display:flex;flex-direction:column;gap:4px;text-align:left">'
+                    f'<div style="display:flex;gap:4px;align-items:center">'
+                    f'<span style="color:#adb5bd;font-size:0.74em;width:42px">pasta</span>'
+                    f'<input type="text" name="nome_raiz" value="{_esc(raiz_atual)}" '
+                    f'placeholder="NOME_SOBRENOME" autocomplete="off" '
+                    f'style="width:130px;padding:3px 6px;border:1px solid #ced4da;'
+                    f'border-radius:5px;font-size:0.8em;font-family:ui-monospace,monospace"></div>'
+                    f'<div style="display:flex;gap:4px;align-items:center">'
+                    f'<span style="color:#adb5bd;font-size:0.74em;width:42px">cartão</span>'
+                    f'<input type="text" name="nome_curto" value="{_esc(curto_atual)}" '
+                    f'placeholder="SOBRENOME" autocomplete="off" '
+                    f'style="width:130px;padding:3px 6px;border:1px solid #ced4da;'
+                    f'border-radius:5px;font-size:0.8em;font-family:ui-monospace,monospace">'
+                    f'<button type="submit" title="Salvar nomes" '
+                    f'style="background:#fff;border:1px solid #ced4da;color:#1a1a2e;'
+                    f'border-radius:5px;padding:3px 7px;font-size:0.76em;cursor:pointer;'
+                    f'font-family:inherit">salvar</button></div>'
+                    f'</form>'
+                )
+
             linhas_tabela += f"""
             <tr style="{estilo_linha}">
                 <td style="font-family:ui-monospace,monospace;font-size:1.1em;
@@ -5056,6 +5139,7 @@ def _pagina_profissionais(
                     {_esc(p['letra'])}
                 </td>
                 <td style="font-weight:600">{selo}{_esc(p['nome'])}</td>
+                <td style="text-align:left">{celula_nomes}</td>
                 <td style="text-align:center;{_cor_icone(p['tem_foto'])}">{_icone(p['tem_foto'])}</td>
                 <td style="text-align:center;{_cor_icone(p['tem_audio'])}">{_icone(p['tem_audio'])}</td>
                 <td style="text-align:center;{_cor_icone(p['tem_video'])}">{_icone(p['tem_video'])}</td>
@@ -5072,7 +5156,7 @@ def _pagina_profissionais(
     else:
         linhas_tabela = """
             <tr>
-                <td colspan="7" style="text-align:center;color:#adb5bd;padding:24px">
+                <td colspan="8" style="text-align:center;color:#adb5bd;padding:24px">
                     Nenhum profissional cadastrado ainda.
                 </td>
             </tr>"""
@@ -5124,6 +5208,10 @@ def _pagina_profissionais(
                         <th style="padding:9px 12px;text-align:left;background:#f8f9fa;
                                    color:#6c757d;text-transform:uppercase;font-size:0.78em;
                                    letter-spacing:0.4px;border-bottom:1px solid #dee2e6">Nome</th>
+                        <th style="padding:9px 12px;text-align:left;background:#f8f9fa;
+                                   color:#6c757d;text-transform:uppercase;font-size:0.78em;
+                                   letter-spacing:0.4px;border-bottom:1px solid #dee2e6;
+                                   width:200px">Pasta · Cartão</th>
                         <th style="padding:9px 12px;text-align:center;background:#f8f9fa;
                                    color:#6c757d;text-transform:uppercase;font-size:0.78em;
                                    letter-spacing:0.4px;border-bottom:1px solid #dee2e6;
