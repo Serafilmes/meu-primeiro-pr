@@ -26,6 +26,7 @@ Pré-requisitos:
 import sqlite3
 import os
 import json
+import unicodedata
 from datetime import datetime
 
 # ── CONSTANTES ────────────────────────────────────────────────────────────────
@@ -1995,7 +1996,319 @@ def migrar_schema_profissionais(conn):
     if "camera" not in colunas:
         conn.execute("ALTER TABLE profissionais ADD COLUMN camera TEXT")
 
+    # Migração para bancos sem os nomes curtos (#5 da s39). O nome COMPLETO segue
+    # em `nome`; estas duas guardam as formas usadas em pasta/tela/planilha:
+    #   nome_raiz  → pasta do dia  (ex.: FERNANDO_DUMITRIU)
+    #   nome_curto → cartão NNN    (ex.: DUMITRIU → DUMITRIU_001)
+    # Preenchidas com um palpite automático; o operador edita à mão antes do 1º
+    # cartão logado. NULL nos bancos antigos → o backfill abaixo resolve.
+    if "nome_raiz" not in colunas:
+        conn.execute("ALTER TABLE profissionais ADD COLUMN nome_raiz TEXT")
+    if "nome_curto" not in colunas:
+        conn.execute("ALTER TABLE profissionais ADD COLUMN nome_curto TEXT")
+
     conn.commit()
+
+    # Preenche os curtos que ainda estão vazios (cadastros anteriores à s39).
+    backfill_nomes_curtos(conn)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Nome curto do profissional (#5 da s39)
+#
+# O nome COMPLETO mora no cadastro; pasta/tela/planilha usam uma forma CURTA:
+#   raiz do dia  →  FERNANDO_DUMITRIU   (1º nome + sobrenome)
+#   cartão       →  DUMITRIU_001        (só o sobrenome + número do contador)
+#
+# A forma curta é resolvida UMA VEZ e gravada no cadastro (coluna `nome_curto`),
+# para que o NOME_NNN de um cartão já criado nunca mude depois. A numeração do
+# contador passa a ser por nome curto.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Partículas de nomes compostos em português — não servem sozinhas como nome curto
+# ("de Souza" → o sobrenome útil é SOUZA, não DE).
+_PARTICULAS_NOME = {"DE", "DA", "DO", "DAS", "DOS", "E"}
+
+
+def _tokens_nome(nome_completo):
+    """Quebra o nome completo em tokens MAIÚSCULOS e sanitizados (alnum/_),
+    descartando vazios. Ex.: 'Fernando  Dumitriu' → ['FERNANDO', 'DUMITRIU']."""
+    bruto = (nome_completo or "").upper().strip()
+    tokens = []
+    for parte in bruto.split():
+        limpo = "".join(c if c.isalnum() or c in "-_" else "" for c in parte)
+        if limpo:
+            tokens.append(limpo)
+    return tokens
+
+
+def _remover_acentos(texto):
+    """Translitera acentos para ASCII (Ã→A, É→E, Ç→C, Ñ→N…). Nome de pasta/cartão
+    precisa ser ASCII limpo — acento atrapalha leitura e portabilidade da estrutura."""
+    nfkd = unicodedata.normalize("NFKD", texto or "")
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
+def _sanitizar_nome_pasta(texto):
+    """Sanitiza um texto para uso seguro em nome de pasta: SEM ACENTO, MAIÚSCULAS,
+    só ASCII alfanumérico + '-'/'_'. Tudo que não for isso vira '_'. Texto sem
+    nenhuma letra/número (ex.: '!!!' → '___') conta como vazio → 'SEM_NOME'.
+
+    Ex.: 'Magrão' → 'MAGRAO'; 'João' → 'JOAO'; 'de Souza' → 'DE_SOUZA'.
+    """
+    base = _remover_acentos((texto or "").upper().strip())
+    limpo = "".join(
+        c if (c.isascii() and (c.isalnum() or c in "-_")) else "_"
+        for c in base
+    )
+    if not any(c.isalnum() for c in limpo):
+        return "SEM_NOME"
+    return limpo
+
+
+def nome_de_pasta_do_dia(nome_completo):
+    """Forma da PASTA DO DIA (raiz do profissional): 1º nome + sobrenome.
+    Ex.: 'Fernando Garcia Dumitriu' → 'FERNANDO_DUMITRIU'.
+    Com um só token, devolve ele mesmo; vazio → 'SEM_NOME'."""
+    tokens = _tokens_nome(nome_completo)
+    if not tokens:
+        return "SEM_NOME"
+    if len(tokens) == 1:
+        return _sanitizar_nome_pasta(tokens[0])
+    # Sobrenome = último token útil (pula "de/da…" e sufixos "Junior/Filho…").
+    ignorar = _PARTICULAS_NOME | _SUFIXOS_NOME
+    sobrenome = next((t for t in reversed(tokens) if t not in ignorar), tokens[-1])
+    return _sanitizar_nome_pasta(f"{tokens[0]}_{sobrenome}")
+
+
+# Sufixos de geração — não servem como sobrenome curto ("... Santos Junior" → o
+# sobrenome útil é SANTOS, não JUNIOR). Tratados como partícula para esse fim.
+_SUFIXOS_NOME = {"JUNIOR", "JR", "FILHO", "NETO", "SOBRINHO", "SEGUNDO"}
+
+
+def _candidatos_nome_curto(nome_completo):
+    """Lista ORDENADA de candidatos a nome curto (do CARTÃO), do preferido ao
+    último recurso. O nome curto é SEMPRE UM TOKEN ÚNICO (NOME_NNN, nunca
+    NOME_SOBRENOME_NNN). O resultado é só um PALPITE PADRÃO — o operador edita à
+    mão na aba Profissionais antes do primeiro cartão logado.
+
+    Regra (decidida na s39) — sempre propõe um NOME (não iniciais); o resto é edição:
+      1) sobrenome (último token útil, pulando partículas e sufixos)  → DUMITRIU
+         ('... Santos Junior' → SANTOS; 'Maria de Souza' → SOUZA)
+      2) em colisão, 1º nome                                          → JOAO
+      3) ainda em colisão, 2º nome                                    → ALEXANDRE
+    (esgotados os nomes, derivar_nome_curto acrescenta sufixo numérico como rede.)
+    """
+    tokens = _tokens_nome(nome_completo)
+    if not tokens:
+        return ["SEM_NOME"]
+    if len(tokens) == 1:
+        return [tokens[0]]
+
+    ignorar = _PARTICULAS_NOME | _SUFIXOS_NOME
+    uteis = [t for t in tokens if t not in ignorar] or tokens
+    sobrenome = uteis[-1]
+    primeiro = uteis[0]
+
+    candidatos = [sobrenome]                       # 1) sobrenome único
+
+    if primeiro != sobrenome:
+        candidatos.append(primeiro)                # 2) primeiro nome
+
+    segundo = next((t for t in uteis[1:] if t != sobrenome), None)
+    if segundo and segundo not in candidatos:
+        candidatos.append(segundo)                 # 3) segundo nome
+
+    return candidatos
+
+
+def derivar_nome_curto(nome_completo, curtos_existentes):
+    """Resolve a forma curta (do cartão) para um nome completo, evitando colisão
+    com os curtos JÁ atribuídos.
+
+    Args:
+        nome_completo:     nome do cadastro (ex.: 'Fernando Dumitriu').
+        curtos_existentes: iterável dos nomes curtos já gravados (MAIÚSCULAS).
+
+    Returns:
+        O nome curto escolhido (str, MAIÚSCULAS, sanitizado para pasta). Se todos os
+        candidatos colidirem, acrescenta sufixo numérico (_2, _3…) como rede final.
+    """
+    ja_usados = {str(c).upper().strip() for c in (curtos_existentes or [])}
+    for candidato in _candidatos_nome_curto(nome_completo):
+        curto = _sanitizar_nome_pasta(candidato)
+        if curto not in ja_usados:
+            return curto
+    # Rede final: nenhum candidato livre → sufixo numérico sobre o sobrenome.
+    base = _sanitizar_nome_pasta(_candidatos_nome_curto(nome_completo)[0])
+    n = 2
+    while f"{base}_{n}" in ja_usados:
+        n += 1
+    return f"{base}_{n}"
+
+
+def backfill_nomes_curtos(conn):
+    """Preenche `nome_raiz`/`nome_curto` dos profissionais que ainda estão sem eles
+    (cadastros anteriores ao #5 da s39). Idempotente: só toca em linha com curto
+    vazio, e respeita os curtos já atribuídos para não colidir.
+
+    Não força nada onde o operador já editou — só completa o que falta.
+    """
+    rows = conn.execute(
+        "SELECT id, nome, nome_curto FROM profissionais ORDER BY id"
+    ).fetchall()
+
+    # Curtos já gravados (de quem não precisa de backfill) entram no conjunto de
+    # ocupados, para os novos não colidirem com eles.
+    ocupados = {
+        str(r[2]).upper().strip() for r in rows
+        if r[2] and str(r[2]).strip()
+    }
+
+    for prof_id, nome, curto in rows:
+        if curto and str(curto).strip():
+            continue  # já tem — não mexe
+        novo_curto = derivar_nome_curto(nome, ocupados)
+        novo_raiz = nome_de_pasta_do_dia(nome)
+        ocupados.add(novo_curto)
+        conn.execute(
+            "UPDATE profissionais SET nome_raiz = ?, nome_curto = ? WHERE id = ?",
+            (novo_raiz, novo_curto, prof_id),
+        )
+    conn.commit()
+
+
+def _curtos_existentes(conn, excluir_id=None):
+    """Conjunto dos nomes curtos já atribuídos (MAIÚSCULAS), opcionalmente
+    excluindo um profissional (útil ao re-derivar/validar a edição dele)."""
+    if excluir_id is None:
+        rows = conn.execute(
+            "SELECT nome_curto FROM profissionais WHERE nome_curto IS NOT NULL"
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT nome_curto FROM profissionais "
+            "WHERE nome_curto IS NOT NULL AND id <> ?",
+            (excluir_id,),
+        ).fetchall()
+    return {str(r[0]).upper().strip() for r in rows if r[0] and str(r[0]).strip()}
+
+
+def nome_curto_do_profissional(conn, nome):
+    """Devolve o nome curto (do cartão) cadastrado para um profissional, buscando
+    pelo nome completo (ignora maiúsculas/espaços). Usado pela Camada 2 para montar
+    o NOME_NNN. Cai para None se o profissional não está cadastrado ou sem curto —
+    a C2 então usa o comportamento antigo (sanitiza o nome da ficha)."""
+    if not nome or not str(nome).strip():
+        return None
+    row = conn.execute(
+        "SELECT nome_curto FROM profissionais WHERE UPPER(TRIM(nome)) = UPPER(TRIM(?))",
+        (nome,),
+    ).fetchone()
+    return (row[0] if row and row[0] and str(row[0]).strip() else None)
+
+
+def nome_raiz_do_profissional(conn, nome):
+    """Como `nome_curto_do_profissional`, mas devolve a forma da PASTA DO DIA
+    (FERNANDO_DUMITRIU). None se não cadastrado/sem raiz → C2 usa o fallback."""
+    if not nome or not str(nome).strip():
+        return None
+    row = conn.execute(
+        "SELECT nome_raiz FROM profissionais WHERE UPPER(TRIM(nome)) = UPPER(TRIM(?))",
+        (nome,),
+    ).fetchone()
+    return (row[0] if row and row[0] and str(row[0]).strip() else None)
+
+
+def profissional_tem_cartao_logado(conn, nome):
+    """True se o profissional já tem ALGUM cartão numerado (NOME_NNN gravado).
+    A partir daí o nome curto/raiz fica TRAVADO para edição — mudar quebraria as
+    pastas/numeração já criadas (princípio nº 2: segurança dos arquivos).
+
+    Liga-se pelo `formularios.nome` (nome completo) → match → `cartoes.numero_cartao`.
+    """
+    if not nome or not str(nome).strip():
+        return False
+    n = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM cartoes c
+        JOIN matches m      ON m.cartao_id = c.id
+        JOIN formularios f  ON f.id = m.formulario_id
+        WHERE c.numero_cartao IS NOT NULL AND TRIM(c.numero_cartao) <> ''
+          AND UPPER(TRIM(f.nome)) = UPPER(TRIM(?))
+        """,
+        (nome,),
+    ).fetchone()[0]
+    return n > 0
+
+
+def profissionais_travados(conn):
+    """Conjunto de nomes completos (MAIÚSCULAS) que JÁ têm cartão logado — e por
+    isso têm os nomes curtos travados para edição. Uma query só (a tela usa para
+    decidir, por profissional, se mostra os campos editáveis ou só leitura+🔒)."""
+    rows = conn.execute(
+        """
+        SELECT DISTINCT UPPER(TRIM(f.nome))
+        FROM cartoes c
+        JOIN matches m      ON m.cartao_id = c.id
+        JOIN formularios f  ON f.id = m.formulario_id
+        WHERE c.numero_cartao IS NOT NULL AND TRIM(c.numero_cartao) <> ''
+          AND f.nome IS NOT NULL AND TRIM(f.nome) <> ''
+        """
+    ).fetchall()
+    return {r[0] for r in rows}
+
+
+def definir_nomes_profissional(conn, prof_id, nome_raiz=None, nome_curto=None):
+    """Edita as formas curtas de um profissional (aba Profissionais), com TRAVA:
+    só permite enquanto o profissional não tiver cartão logado.
+
+    Args:
+        prof_id:    id do profissional.
+        nome_raiz:  nova pasta-do-dia (None = não altera).
+        nome_curto: novo nome do cartão (None = não altera).
+
+    Returns:
+        "ok"          — gravado.
+        "travado"     — recusado: o profissional já tem cartão logado.
+        "duplicado"   — recusado: o nome_curto já pertence a outro profissional.
+        "vazio"       — recusado: nome_curto/raiz ficaria vazio após sanitizar.
+        "inexistente" — id não encontrado.
+    """
+    row = conn.execute(
+        "SELECT nome FROM profissionais WHERE id = ?", (prof_id,)
+    ).fetchone()
+    if row is None:
+        return "inexistente"
+
+    if profissional_tem_cartao_logado(conn, row[0]):
+        return "travado"
+
+    novo_raiz = _sanitizar_nome_pasta(nome_raiz) if nome_raiz is not None else None
+    novo_curto = _sanitizar_nome_pasta(nome_curto) if nome_curto is not None else None
+
+    if (nome_raiz is not None and novo_raiz == "SEM_NOME") or \
+       (nome_curto is not None and novo_curto == "SEM_NOME"):
+        return "vazio"
+
+    if novo_curto is not None and novo_curto in _curtos_existentes(conn, excluir_id=prof_id):
+        return "duplicado"
+
+    campos, valores = [], []
+    if novo_raiz is not None:
+        campos.append("nome_raiz = ?")
+        valores.append(novo_raiz)
+    if novo_curto is not None:
+        campos.append("nome_curto = ?")
+        valores.append(novo_curto)
+    if not campos:
+        return "ok"  # nada a alterar
+
+    valores.append(prof_id)
+    conn.execute(f"UPDATE profissionais SET {', '.join(campos)} WHERE id = ?", valores)
+    conn.commit()
+    return "ok"
 
 
 def _indice_para_letra(n):
@@ -2072,30 +2385,38 @@ def criar_profissional(conn, nome, tipos, camera=None):
 
     letra = _proxima_letra(conn)
 
+    # Palpite automático dos nomes curtos, evitando colidir com os já atribuídos.
+    # O operador pode editar depois (definir_nomes_profissional), até o 1º cartão.
+    nome_curto = derivar_nome_curto(nome, _curtos_existentes(conn))
+    nome_raiz = nome_de_pasta_do_dia(nome)
+
     conn.execute(
         """
-        INSERT INTO profissionais (nome, tem_foto, tem_audio, tem_video, letra, camera)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO profissionais
+            (nome, tem_foto, tem_audio, tem_video, letra, camera, nome_raiz, nome_curto)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (nome, tem_foto, tem_audio, tem_video, letra, camera),
+        (nome, tem_foto, tem_audio, tem_video, letra, camera, nome_raiz, nome_curto),
     )
     conn.commit()
 
     row = conn.execute(
-        "SELECT id, nome, tem_foto, tem_audio, tem_video, letra, camera, criado_em "
-        "FROM profissionais WHERE nome = ?",
+        "SELECT id, nome, tem_foto, tem_audio, tem_video, letra, camera, criado_em, "
+        "nome_raiz, nome_curto FROM profissionais WHERE nome = ?",
         (nome,),
     ).fetchone()
 
     return {
-        "id":        row[0],
-        "nome":      row[1],
-        "tem_foto":  bool(row[2]),
-        "tem_audio": bool(row[3]),
-        "tem_video": bool(row[4]),
-        "letra":     row[5],
-        "camera":    row[6],
-        "criado_em": row[7],
+        "id":         row[0],
+        "nome":       row[1],
+        "tem_foto":   bool(row[2]),
+        "tem_audio":  bool(row[3]),
+        "tem_video":  bool(row[4]),
+        "letra":      row[5],
+        "camera":     row[6],
+        "criado_em":  row[7],
+        "nome_raiz":  row[8],
+        "nome_curto": row[9],
     }
 
 
@@ -2191,21 +2512,24 @@ def listar_profissionais(conn, filtro_tipo=None, apenas_ativos=False):
 
     where = (" WHERE " + " AND ".join(condicoes)) if condicoes else ""
     sql = (
-        "SELECT id, nome, tem_foto, tem_audio, tem_video, letra, ativo, camera "
+        "SELECT id, nome, tem_foto, tem_audio, tem_video, letra, ativo, camera, "
+        "nome_raiz, nome_curto "
         f"FROM profissionais{where} ORDER BY length(letra), letra"
     )
     rows = conn.execute(sql).fetchall()
 
     return [
         {
-            "id":        r[0],
-            "nome":      r[1],
-            "tem_foto":  bool(r[2]),
-            "tem_audio": bool(r[3]),
-            "tem_video": bool(r[4]),
-            "letra":     r[5],
-            "ativo":     bool(r[6]),
-            "camera":    r[7],
+            "id":         r[0],
+            "nome":       r[1],
+            "tem_foto":   bool(r[2]),
+            "tem_audio":  bool(r[3]),
+            "tem_video":  bool(r[4]),
+            "letra":      r[5],
+            "ativo":      bool(r[6]),
+            "camera":     r[7],
+            "nome_raiz":  r[8],
+            "nome_curto": r[9],
         }
         for r in rows
     ]
@@ -3365,6 +3689,8 @@ def excluir_coluna_custom(conn, chave):
 CATALOGO_PLANILHA = [
     # chave            rótulo           bloco            tipo        campo                          vis
     ("prof_nome",    "Profissional",  "identificacao", "especial", "prof_nome",                    1),
+    ("prof_raiz",    "Nome",          "identificacao", "dado",     "prof_raiz",                    1),
+    ("prof_curto",   "Cartão",        "identificacao", "dado",     "prof_curto",                   1),
     ("marca_camera", "Câmera",        "identificacao", "dado",     "marca_camera",                 1),
     ("tipo_material","Tipo",          "identificacao", "dado",     "tipo_material",                 1),
     ("data_gravacao","Data",          "identificacao", "dado",     "data_gravacao",                 1),
@@ -3398,12 +3724,14 @@ _SQL_PLANILHA = """
            c.destino_pasta,
            f.id AS form_id,
            f.nome AS prof_nome, f.nome_audio AS prof_nome_audio, f.data_gravacao,
+           p.nome_raiz AS prof_raiz, p.nome_curto AS prof_curto,
            c.criado_em AS _ordenacao
     FROM cartoes c
     LEFT JOIN matches m ON m.id = (
         SELECT id FROM matches WHERE cartao_id = c.id ORDER BY id DESC LIMIT 1
     )
     LEFT JOIN formularios f ON f.id = m.formulario_id
+    LEFT JOIN profissionais p ON UPPER(TRIM(p.nome)) = UPPER(TRIM(f.nome))
     -- Só entra na Planilha (vista de entrega) o cartão que VIROU entrega: tem match.
     -- Cartão cru (detectado/aguardando, sem ficha) é assunto da Operação, não dos
     -- editores; e cartão 'descartado' some de vez. Isso tira o ruído do EOS_DIGITAL.
@@ -3418,8 +3746,10 @@ _SQL_PLANILHA = """
            NULL AS tamanho_transferido_bytes, NULL AS destino_pasta,
            f.id AS form_id,
            f.nome AS prof_nome, f.nome_audio AS prof_nome_audio, f.data_gravacao,
+           p.nome_raiz AS prof_raiz, p.nome_curto AS prof_curto,
            f.recebido_em AS _ordenacao
     FROM formularios f
+    LEFT JOIN profissionais p ON UPPER(TRIM(p.nome)) = UPPER(TRIM(f.nome))
     WHERE NOT EXISTS (SELECT 1 FROM matches m WHERE m.formulario_id = f.id)
       AND f.status <> 'cancelado'   -- Post cancelado não aparece na entrega
 
