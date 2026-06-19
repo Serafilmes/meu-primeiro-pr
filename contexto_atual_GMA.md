@@ -1,7 +1,7 @@
 # Contexto Atual — Sistema GMA
 ## Estado vivo do projeto (carregar em TODA sessão junto com `arquitetura_GMA.md`)
 
-> Última atualização: 2026-06-17 (sessão 35)
+> Última atualização: 2026-06-19 (sessão 39)
 > Para detalhes técnicos históricos, ver `historico_GMA.md` (não carregar por padrão).
 
 ---
@@ -12,7 +12,7 @@
 |---|---|---|
 | 1 | Check-in e identificação | ⚠️ Quase completa — Nova Ficha v2 ✅ + multi-seleção/data inteligente/"quem preencheu" (s33); falta mural dos câmeras, login do operador (2.3) e domínio fixo do túnel |
 | 2 | Transferência | ✅ Concluída e testada com cartão real |
-| 3 | Controle e segurança das informações | ✅ Quase completa — Kanban + Planilha + Molde; grupos editáveis (s33); Sheets dinâmico (s34); **exportador rodando em loop contínuo dentro do sistema completo (s35)** |
+| 3 | Controle e segurança das informações | ✅ Quase completa — Kanban + Planilha + Molde; grupos editáveis (s33); Sheets dinâmico (s34); exportador em loop (s35); **Sheets por projeto ligado no exportador (s39)** |
 | 4 | Auditoria + liberação do cartão | ✅ Concluída — ciclo integrado testado |
 | 5 | Plataforma profissional + multi-máquina | 🔧 Em construção — **Painel de Controle Fatia 1 ✅ (s37)**: cockpit no Flask (troca de projeto com reinício guiado, conexões com teste, ligar/encerrar) |
 | 6 | IA assíncrona | 📋 Futura |
@@ -21,6 +21,38 @@
 ---
 
 ## O que acabou de ser feito (sessões recentes)
+
+### ✅ Sessão 39 (TESTE ao vivo + BUILD #1) — cópia real GoPro, Sheets por projeto, redesenho C2/C4
+**Branch:** `s39-sheets-por-projeto`. **Sem commit.** Teste com cartão GoPro real (HERO7, 107 arq / 7,7 GB) no projeto **SP2B**.
+
+**🧪 O teste de cópia (ponta a ponta, com tropeços reais):**
+- **1ª cópia FALHOU** na auditoria: 2 arquivos (`GOPR9381.JPG/.GPR`) deram `[Errno 6] Device not configured` = **desconexão momentânea do cartão** (leitor/porta). O sistema agiu certo — reprovou e **não liberou o cartão**. Cartão íntegro (lia normal depois).
+- **Reset para MATCH** (a pedido): revertido cartão+Post ao estado `matched` — banco (`status`, limpa campos de transferência, apaga 106 linhas de `arquivos`), JSON da fila (`status=matched`, tira marcas de transferência), contador de volta a 001, **match preservado**. Backups: `gma.db.bak_reset_*`, `/tmp/porteiro_sp2b.bak.json`.
+- **2ª cópia OK** (porta nova ~4x mais rápida: **6min44s** vs ~30min): 106/106 checksums OK.
+- **Mas C4 travou em loop infinito** reprovando "108 vs 106": **2 `.DS_Store`** que o Finder criou na pasta (a ignore-list da auditoria cobre `.sppo`/`.pdf` mas não lixo do macOS). Removidos os `.DS_Store` → **ciclo fechou**: Parashoot check OK + erase OK → cartão **CONCLUIDO**.
+- **Lição estrutural (vira redesenho):** a "contagem de arquivos" tropeçou em 3 não-mídias diferentes numa noite — `.fseventsd` (sistema do cartão), `.DS_Store` (macOS), e o `.sppo`/`.pdf` (do próprio GMA). **Falta UMA regra única do que é "mídia real".**
+
+**✅ #1 PRONTO E VERIFICADO — Google Sheets por projeto (a ponta solta do s39):**
+- **Bug:** `exportador_sheets.py` lia só o `GMA_SHEETS_ID` **global do `.env`**; a planilha por-projeto (painel_estado `sheets_id`) só aparecia no painel, nunca no daemon → dados do SP2B caíam na **planilha global** ("outro caminho").
+- **Conserto:** novo `_resolver_sheet_alvo()` resolve a planilha do **projeto ativo dinamicamente**; `_abrir_planilha(sheet_id)` recebe o ID por parâmetro; `_credenciais_configuradas()` passou a checar só a autenticação. **Regra de isolamento:** projeto com planilha própria usa a dele; **laboratório** cai no global do `.env` (compat.); **projeto real sem planilha → PAUSA** (não vaza pro global) com log claro.
+- **SP2B estava sem `sheets_id`** (só rio2c/rock_in_rio tinham) → configurado (`1Z-lQ3...EsRK9Ydk`, diferente do rio2c). **Verificado:** `--teste` com `GMA_DB` do SP2B + `/usr/bin/python3` (o que tem gspread) escreveu o cartão na planilha certa.
+- **🔶 Falta aplicar no daemon vivo:** o exportador rodando (PID antigo) só adota o código novo após **Reiniciar pelo painel**; até lá segue escrevendo na global (ruído inofensivo).
+
+**🎯 #2 DESENHADO (proxy × frame) — NÃO construído ainda:**
+- Classificação hoje é **só por extensão** (`ler_cartao.EXTENSOES`) — sem noção de proxy nem de still-de-vídeo. Neste cartão: `.LRV` (proxy GoPro) e `.GPR` (RAW) caem errado em "OUTRO".
+- **Decisão do idealizador — proxies:** **política central** com 3 modos (**sempre aceitar / caso a caso / nunca**), **lembrada no cadastro da câmera** (não pergunta de novo até ele atualizar); quando aceita, **copia E marca como proxy** (ligado ao original, não conta como vídeo, não gera frames).
+- **Foto×frame:** provavelmente são thumbnails (Sony) → **só preparar estrutura**, sem heurística agora.
+- **Fatias propostas:** **A** = detecção honesta no Leitor (proxy `.LRV`→PROXY ligado ao vídeo; `.GPR`→FOTO) — isolada e testável; **B** = política central no cadastro + pular na cópia.
+
+**🎯 Redesenho C2/C4 + benchmark (em desenho com o idealizador — registrar e construir depois):**
+- **C2:** copiar rápido (1 leitura do cartão — checksum *durante* a cópia, não em passada separada); verificar por **contagem+peso** com a **regra única do que é mídia**; **auto-curar** (recopiar só o que divergiu, usando o manifesto `.sppo`). Motivo: velocidade é crítica (hardware/servidor).
+- **C4 + frames:** **frames travam a liberação** do cartão (com opção de desligar); **10 frames/vídeo**; **foto não gera frame**. Origem×cópia da extração **automática pela velocidade da pasta destino** (destino lento → extrai do cartão); configurável numa aba **Reports**. (Frames já parcialmente na C4 — `auditoria.py` chama `extrator_frames.py`.)
+- **Benchmark de velocidade:** **sob demanda** (botões na Operação: cópia em andamento, pasta destino, cartão fora de cópia), **nunca automático no ciclo**; alimenta também a decisão automática dos frames.
+
+**📋 Considerações do teste ainda PENDENTES (#3, #4, #5):**
+- **#3 — Cancelar/reverter Post:** idealizador com problema; quer mais limpo (sobra só um relatório com logs) + **botões de excluir** pros Posts sem uso. Irmão do match manual ([[casamento-manual-e-apagar-postin]]). Provável sessão própria.
+- **#4 — Data errada (Concluído 01/01/2016):** DIAGNOSTICADO — a coluna "Concluído" agrupa por `data_inicio` ([flask_gma.py:1780](flask_gma.py:1780), [:1805](flask_gma.py:1805)) = arquivo mais antigo = **relógio zoado da GoPro (2016)**. A pasta acertou (`20260619`). Conserto: agrupar pela **data da logagem** (`data_fim`/`criado_em`), não `data_inicio`.
+- **#5 — Nomes curtos:** nome completo só no cadastro; pasta/visualização/planilha usam forma curta — raiz do dia `FERNANDO_DUMITRIU`, cartão `DUMITRIU_001`. Colisão de sobrenome (Silva)→usa o 2º nome; 2º nome composto ("de Souza")→próximo sobrenome. Toca C2 (pasta)+tela+planilha.
 
 ### ✅ Sessão 38 (BUILD) — MATCH MANUAL (Camada 1) — o "último recurso" do operador
 **Arquivos:** `banco_dados.py`, `matcher.py`, `flask_gma.py`. **Sem commit.** Testado ponta a ponta em banco isolado (`/tmp`) + test client do Flask; laboratório e projetos intocados.
