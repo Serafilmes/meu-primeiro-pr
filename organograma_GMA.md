@@ -9,7 +9,7 @@
 > O sistema guarda o dado em um lugar só; as telas são jeitos diferentes de LER
 > esse mesmo dado. Nada diverge.
 >
-> Última atualização: 2026-06-19 (sessão 39 — TESTE de cópia real (GoPro 7,7GB) ponta a ponta no projeto SP2B; BUILD: Google Sheets POR PROJETO no exportador (#1), PROXY marcado na cópia (sempre copia + avisa — Fatias A/B), EXCLUIR Post definitivo (#3), DATA DE LOGAGEM pelo relógio do sistema (#4). Em desenho: redesenho C2/C4 com "regra única do que é mídia" + benchmark de velocidade. Antes: MATCH MANUAL + GATE DOS CARTÕES + Acompanhamento AO VIVO (s38), PAINEL DE CONTROLE / cockpit (s37), Rock in Rio + programação do dia (s36), Sheets real+dinâmico (s32/s34), grupos editáveis (s33).)
+> Última atualização: 2026-06-19 (sessão 39 — TESTE de cópia real (GoPro 7,7GB) ponta a ponta no projeto SP2B; BUILD: Google Sheets POR PROJETO no exportador (#1), PROXY marcado na cópia (sempre copia + avisa — Fatias A/B), EXCLUIR Post definitivo (#3), DATA DE LOGAGEM pelo relógio do sistema (#4), NOMES CURTOS editáveis (#5: nome_raiz/nome_curto, pasta+cartão+planilha, ASCII), CENTRO DE CONTROLE DOS POSTS na Nova Ficha (grupos recolhíveis por status + cancelar/restaurar/excluir; Operação ficou só com o MATCH). Em desenho: redesenho C2/C4 com "regra única do que é mídia" + benchmark de velocidade. Antes: MATCH MANUAL + GATE DOS CARTÕES + Acompanhamento AO VIVO (s38), PAINEL DE CONTROLE / cockpit (s37), Rock in Rio + programação do dia (s36), Sheets real+dinâmico (s32/s34), grupos editáveis (s33).)
 
 ---
 
@@ -31,7 +31,9 @@ ANDAR                                       PROGRESSO
         └─ s38: MATCH MANUAL — operador resolve cartão órfão na mão
            (escolhe 1 cartão + 1 Post → dispara a cópia). Cancelar/restaurar Posts.
         └─ NOVO (s39): EXCLUIR Post definitivo (#3, guarda match real) · LEITOR
-           classifica PROXY (.LRV→clipe) e RAW (.GPR→foto)
+           classifica PROXY (.LRV→clipe) e RAW (.GPR→foto) · NOMES CURTOS editáveis (#5)
+        └─ NOVO (s39): CENTRO DE CONTROLE DOS POSTS na Nova Ficha — grupos recolhíveis
+           por status + editar/cancelar/restaurar/excluir; Operação ficou só com o MATCH
         └─ falta: mural dos câmeras · login do operador (2.3) · domínio fixo do túnel
 2 · Transferência (copiar com segurança)    ████████████  PRONTO ✅
         └─ s38: pasta de destino configurável (GMA_DESTINO) + falha limpa
@@ -359,7 +361,12 @@ Nenhuma decisão foi à toa. Cada uma resolveu um problema que apareceu
               de apagar; guarda recusa Post com match real). Cancelar/restaurar já eram da s38
            🛠️ #4 BUILD: DATA DE LOGAGEM pelo relógio do SISTEMA (a GoPro com relógio de 2016
               mostrava "Concluído 01/01/2016") — usa timestamp da transferência, nunca o mtime
-           💾 Commitado (branch s39-sheets-por-projeto): #1, proxy A/B, #3, #4
+           🛠️ #5 BUILD: NOMES CURTOS editáveis (nome_raiz=pasta do dia, nome_curto=cartão;
+              palpite automático + edição manual com TRAVA após 1º cartão; ASCII sem acento;
+              planilha ganhou colunas "Nome"+"Cartão") — PR #9, mergeado
+           🛠️ BUILD: CENTRO DE CONTROLE DOS POSTS na Nova Ficha — tabela "Fichas recentes" virou
+              grupos recolhíveis por status (editar/cancelar/restaurar/excluir); Operação = só o MATCH
+           💾 Commitado (branch s39-sheets-por-projeto): #1, proxy A/B, #3, #4 · #5 (PR #9)
 ```
 
 ---
@@ -386,11 +393,10 @@ Em ordem de impacto:
    no projeto ATIVO no momento do envio, não no destino do link → contaminou o laboratório
    com uma ficha do Rock in Rio (s38). É refactor de roteamento por-requisição (Camada 5,
    Fatia 2). PAUSADO a pedido do idealizador (vai confirmar/delegar aos agentes).
-2. 🗂️ **Reorganizar o ciclo de vida do Post na "Nova Ficha"** — a divisão de abas foi definida
-   na s38: Operação = só o MATCH; Nova Ficha = editar/cancelar/restaurar/EXCLUIR Post.
-   O `excluir` (hard delete + cascade + guard de match real) já foi CONSTRUÍDO (s39 ✅); falta a
-   REORG: migrar o "cancelar" + "Posts cancelados" da Operação p/ a Nova Ficha, agrupando por status.
-   ⏭️ falta também: "reverter ENTREGA" (desfazer cartão já matched — hoje só pelo reset manual do teste).
+2. ✅ **Ciclo de vida do Post na "Nova Ficha" — FEITO (s39).** A divisão de abas foi implementada:
+   Operação = só o MATCH; Nova Ficha = centro de controle dos Posts (grupos recolhíveis por status +
+   editar/cancelar/restaurar/excluir). ⏭️ falta só: "reverter ENTREGA" (desfazer cartão já matched —
+   hoje só pelo reset manual do teste) e garantir que TODAS as ações gravem no Log + rename "ficha"→"Post".
 2b. 🧱 **Redesenho C2/C4 + "regra única do que é mídia"** (em desenho com o idealizador) — o teste
    da s39 tropeçou em 3 não-mídias diferentes (.fseventsd · .DS_Store · .sppo/.pdf). Definir UMA
    regra do que conta como "mídia real" e usá-la na contagem da C2 E da C4. Junto: C2 copia rápido

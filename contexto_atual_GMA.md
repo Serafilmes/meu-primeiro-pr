@@ -60,7 +60,7 @@
   - **Fatia 2 (`transferencia.py`):** `montar_caminho_destino` usa `nome_raiz` na pasta do dia e `nome_curto` no cartão; **contador por nome curto** (`contadores/DUMITRIU.json`); fallback ASCII se não cadastrado.
   - **Fatia 3 (`flask_gma.py` + planilha):** aba Profissionais com coluna "Pasta · Cartão" editável inline + 🔒 quando travado (rota `/profissionais/<id>/nomes`). Planilha ganhou **2 colunas: "Nome" (raiz) + "Cartão" (curto)** — decisão do idealizador (colunas separadas, não o formato combinado). `_SQL_PLANILHA` faz LEFT JOIN `profissionais` por `f.nome`.
   - **Testes:** `teste_nomes_curtos.py` (Fatia 1) · `teste_nomes_curtos_c2.py` (pasta/contador) · `teste_nomes_curtos_c3.py` (planilha) — todos verdes; laboratório intocado (bancos em `/tmp`).
-  - **🔶 Próxima peça irmã (NÃO é #5):** reorg da tabela "Fichas recentes" (aba Nova Ficha) — hoje só tem "editar"; trazer **cancelar/restaurar/excluir** (motor já existe, ligado só na Operação) + agrupar por status. Ver [[casamento-manual-e-apagar-postin]].
+  - **✅ Peça irmã CONSTRUÍDA (s39) — Centro de controle dos Posts na Nova Ficha:** reorg de `_fichas_recentes_html` (`flask_gma.py`). A tabela "Fichas recentes" virou **grupos recolhíveis por status** (`⏳ Aguardando match`, `📭 Aguardando material`, `✅ Com match`, `📋 Outros` p/ status imprevisto + 🗂️ **Posts cancelados**), cada grupo com badge de contagem e `<details>` abre/fecha. Cada Post ativo: **editar + cancelar**; grupo cancelados: **restaurar + excluir** (mesmo motor `bd.cancelar/restaurar/excluir_formulario` + rotas `/post/<id>/...` que já existiam). **A Operação ficou só com o MATCH** — removidos o botão "cancelar" por linha (+ a coluna vazia) e o bloco "Posts cancelados" de lá. CSS novo `.grupo-posts`/`.grupo-cancelados`. **Verificado** contra o banco real do laboratório (grupo "Aguardando match" com 9 Posts, cada um com editar/cancelar; Operação sem rastro de cancelados). **Sem branch** (mudança contida em `flask_gma.py`, motor já testado). Ver [[casamento-manual-e-apagar-postin]].
 
 ### ✅ Sessão 38 (BUILD) — MATCH MANUAL (Camada 1) — o "último recurso" do operador
 **Arquivos:** `banco_dados.py`, `matcher.py`, `flask_gma.py`. **Sem commit.** Testado ponta a ponta em banco isolado (`/tmp`) + test client do Flask; laboratório e projetos intocados.
@@ -100,11 +100,10 @@
 - **🔶 PRÓXIMO (#2, aprovado, ainda a construir): AMARRAR A FICHA AO PROJETO** — o link/QR carrega o projeto destino e o `/ficha` + `/forms` gravam NAQUELE projeto, não no "ativo". Impede a contaminação na raiz. É refactor de roteamento por-requisição (hoje o `GMA_DB` é global do processo) → Camada 5 / Fatia 2, merece sessão própria. **PAUSADO** a pedido do idealizador (vai confirmar/delegar com os agentes).
 
 ### 🎯 Em desenho com o idealizador (s38 — NÃO construir ainda; ele confirma/delega aos agentes)
-- **Divisão de funções entre abas (DEFINIDA pelo idealizador):**
-  - **Operação = o MATCH** (painel de match manual, já construído na s38 — fica só isso quanto a Posts).
+- **Divisão de funções entre abas (DEFINIDA pelo idealizador — ✅ JÁ IMPLEMENTADA na s39):**
+  - **Operação = o MATCH** (painel de match manual; agora é só isso quanto a Posts).
   - **Nova Ficha = ciclo de vida do Post:** **editar · cancelar · restaurar · excluir** (aba exclusiva do operador).
-- **Consequência (a fazer na reorg):** o **cancelar** e a seção **"Posts cancelados"** que entraram na **Operação** (s38) **migram para a Nova Ficha**. A Operação fica só com o MATCH.
-- **Centro de controle dos POSTS na "Nova Ficha":** reorganizar a tabela "Fichas recentes" **agrupada por status dos Posts**, com **minimizar/expandir** por grupo; ações por Post — editar/cancelar/restaurar/excluir — **TUDO no Log**. Falta construir `excluir` (hard delete + cascade chips/textos/candidatos + guard de match real + JSON).
+- **✅ FEITO (s39):** a reorg está construída — ver "Centro de controle dos Posts na Nova Ficha" na Sessão 39 acima. O cancelar e a seção "Posts cancelados" migraram da Operação; a tabela virou grupos recolhíveis por status; `excluir` (hard delete) já existia (#3). **Resta opcional:** garantir que todas as ações gravem no Log e o rename amplo "ficha"→"Post".
 - **Terminologia: a unidade de check-in é "POST"**, não "ficha"/"formulário" ([[terminologia-post]]). Padronizar rótulos visíveis (incl. aba "Nova Ficha" e a tabela) — rename amplo a confirmar com ele.
 - **Entrada de cartão mais robusta** — a ser desenhada com o agente da **Camada 1 (`checkin-gma`)**; conversa o gate dos cartões (s38) com a identidade mais robusta ([[identidade-cartao-camadas]]).
 - **Conduzir com os agentes:** #2 (binding) + reorg dos Posts + entrada robusta = Camada 1/5 → delegar a `checkin-gma`/`plataforma-gma` quando ele confirmar o layout.

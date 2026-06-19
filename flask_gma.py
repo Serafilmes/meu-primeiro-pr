@@ -864,15 +864,8 @@ def painel():
     todos_matched.sort(key=lambda x: x[0], reverse=True)
     matches_recentes = todos_matched[:10]
 
-    # Posts cancelados (aba separada — não se misturam com os que valem)
-    posts_cancelados = []
-    if BANCO_DISPONIVEL:
-        try:
-            _conn_canc = bd.obter_conexao()
-            posts_cancelados = bd.listar_formularios_cancelados(_conn_canc)
-            _conn_canc.close()
-        except Exception as _err_canc:
-            logger.error(f"OPERACAO | Falha ao listar Posts cancelados | {_err_canc}")
+    # Posts cancelados agora vivem na Nova Ficha (centro de controle dos Posts);
+    # a Operação não os exibe mais.
 
     # Identifica órfãos
     orfaos = identificar_orfaos()
@@ -938,14 +931,8 @@ def painel():
             f"<input type='radio' name='ficha_sel' value='{fid}' onclick='gmaMatchRefresh()'>"
             if fid is not None else "<span style='color:#ced4da'>—</span>"
         )
-        # Botão "cancelar" do Post (soft-delete → seção "Posts cancelados", reversível)
-        cancelar = (
-            f"<form action='/post/{fid}/cancelar' method='post' style='margin:0' "
-            f"onsubmit=\"return confirm('Cancelar este Post? Ele sai das telas e vai para "
-            f"Posts cancelados (reversível).');\">"
-            f"<button type='submit' style='background:none;border:none;color:#c0392b;"
-            f"font-size:0.78em;cursor:pointer;text-decoration:underline'>cancelar</button></form>"
-        ) if fid is not None else ""
+        # Cancelar/restaurar/excluir agora moram na Nova Ficha (centro de controle
+        # dos Posts). Aqui a Operação cuida só do match.
         return (
             f"<tr>"
             f"<td style='text-align:center'>{sel}</td>"
@@ -955,7 +942,6 @@ def painel():
             f"<td style='color:{cor_prioridade};font-weight:600'>{prioridade}</td>"
             f"<td>{operador}</td>"
             f"<td>{tempo}</td>"
-            f"<td style='text-align:right'>{cancelar}</td>"
             f"</tr>"
         )
 
@@ -1188,42 +1174,8 @@ def painel():
     else:
         bloco_orfaos = ""
 
-    # ── Seção "Posts cancelados" (recolhível, separada dos que valem) ──────────
-    if posts_cancelados:
-        linhas_canc = "".join(
-            f"<tr><td>{_esc(c['nome'])}</td>"
-            f"<td>{_esc(c['tipo_material'] or '—')}</td>"
-            f"<td>{_esc(c['data_gravacao'] or '—')}</td>"
-            f"<td>{_esc(c['recebido_em'] or '—')}</td>"
-            f"<td style='text-align:right;white-space:nowrap'>"
-            f"<form action='/post/{c['id']}/restaurar' method='post' style='margin:0;display:inline'>"
-            f"<button type='submit' style='background:none;border:none;color:#2e7d32;"
-            f"font-size:0.78em;cursor:pointer;text-decoration:underline'>restaurar</button>"
-            f"</form>"
-            # Excluir definitivo: o passo final para sobra/lixo. Irreversível —
-            # só o registro no Log permanece. Confirmação obrigatória.
-            f"<form action='/post/{c['id']}/excluir' method='post' style='margin:0;display:inline;margin-left:12px' "
-            f"onsubmit=\"return confirm('Excluir {_esc(c['nome'])} DE VEZ? Não tem volta — "
-            f"sobra só o registro no Log do sistema.');\">"
-            f"<button type='submit' style='background:none;border:none;color:#adb5bd;"
-            f"font-size:0.78em;cursor:pointer;text-decoration:underline'>excluir</button>"
-            f"</form></td></tr>"
-            for c in posts_cancelados
-        )
-        bloco_cancelados = f"""
-        <details class="card card-full" style="margin-top:20px">
-            <summary style="padding:12px 16px;font-weight:600;font-size:0.9em;cursor:pointer;
-                            background:#f1f3f5;list-style:none">
-                🗂️ Posts cancelados <span class="badge">{len(posts_cancelados)}</span>
-                <span style="font-weight:400;color:#adb5bd;font-size:0.85em">— fora da Operação e da Planilha; clique para ver / restaurar / excluir</span>
-            </summary>
-            <table>
-                <tr><th>Nome</th><th>Tipo</th><th>Gravado</th><th>Recebido</th><th></th></tr>
-                {linhas_canc}
-            </table>
-        </details>"""
-    else:
-        bloco_cancelados = ""
+    # Posts cancelados (restaurar/excluir) migraram para o centro de controle na
+    # Nova Ficha; a Operação não monta mais esse bloco.
 
     # ── Monta o HTML completo ──────────────────────────────────────────────────
     pagina_html = f"""<!DOCTYPE html>
@@ -1434,7 +1386,6 @@ def painel():
                         <th>Prioridade</th>
                         <th>Operador</th>
                         <th>Ha quanto tempo</th>
-                        <th></th>
                     </tr>
                     {linhas_forms}
                 </table>
@@ -1470,8 +1421,6 @@ def painel():
                 </div>
             </div>
         </div>
-
-        {bloco_cancelados}
 
         <p class="rodape">
             GMA Camada 1 &mdash; Atualiza automaticamente a cada 5 segundos &mdash;
@@ -2805,6 +2754,19 @@ CSS_FICHA = """
     .badge-mini { border-radius:10px; padding:1px 8px; font-size:0.74em; font-weight:700; color:#fff; }
     .link-editar { color:#2196f3; text-decoration:none; font-weight:600; }
     .link-editar:hover { text-decoration:underline; }
+    /* ── Grupos recolhíveis de Posts (centro de controle) ── */
+    .grupo-posts { margin-bottom:12px; }
+    .grupo-posts > summary { cursor:pointer; padding:9px 14px; background:#f1f3f5;
+        border-radius:8px; font-weight:600; font-size:0.9em; color:#495057;
+        list-style:none; user-select:none; }
+    .grupo-posts > summary::-webkit-details-marker { display:none; }
+    .grupo-posts > summary::before { content:"▸ "; color:#adb5bd; }
+    .grupo-posts[open] > summary::before { content:"▾ "; }
+    .grupo-posts[open] > summary { border-radius:8px 8px 0 0; }
+    .grupo-posts .tab-recentes { border-radius:0 0 8px 8px; margin-top:0; }
+    .grupo-posts .badge { background:#dee2e6; color:#495057; border-radius:10px;
+        padding:1px 9px; font-size:0.82em; font-weight:700; margin-left:4px; }
+    .grupo-cancelados > summary { background:#faf3f3; color:#a94442; }
     /* ── Tipo multi-seleção (checkboxes) ── */
     .tipo-checks { display:flex; gap:16px; align-items:center; flex-wrap:wrap; margin-top:2px; }
     .tipo-checks label { font-size:0.92em; font-weight:600; color:#495057;
@@ -3561,50 +3523,144 @@ def _bloco_tipo_nome_ficha(d, trava, profissionais):
     return bloco
 
 
-def _fichas_recentes_html(limite=12):
-    """Tabela das fichas mais recentes, cada uma com um link para editar."""
+# Centro de controle dos Posts (Nova Ficha): cada status vira um grupo recolhível.
+# Ordem = do mais acionável (precisa de atenção) ao já resolvido. O que não estiver
+# nesta lista cai num grupo "Outros" no fim, então nada some se surgir status novo.
+_GRUPOS_POSTS = [
+    ("aguardando_match",    "⏳ Aguardando match",    True),
+    ("aguardando_material", "📭 Aguardando material", True),
+    ("matched",             "✅ Com match",           True),
+]
+
+
+def _linha_post_html(f):
+    """Uma linha da tabela de Posts: dados + ações (editar / cancelar)."""
+    fid = f["id"]
+    status = f["status"] or ""
+    cor = COR_STATUS_FICHA.get(status, "#495057")
+    # Nome principal + (quando há áudio de outra pessoa) o 2º nome — Fatia 5.
+    nome_html = f"<b>{_esc(f['nome'])}</b>"
+    if f["nome_audio"]:
+        nome_html += (f' <span style="color:#6c757d;font-size:0.85em">'
+                      f'+ {_esc(f["nome_audio"])} (áudio)</span>')
+    # Ação "cancelar": soft-delete reversível → grupo "Posts cancelados" (mesmo
+    # motor da Operação, rota /post/<id>/cancelar).
+    cancelar = (
+        f"<form action='/post/{fid}/cancelar' method='post' style='margin:0;display:inline' "
+        f"onsubmit=\"return confirm('Cancelar este Post? Ele sai das telas e vai para "
+        f"Posts cancelados (reversível).');\">"
+        f"<button type='submit' style='background:none;border:none;color:#c0392b;"
+        f"font-size:0.82em;cursor:pointer;text-decoration:underline'>cancelar</button></form>"
+    )
+    return f"""
+      <tr>
+        <td class="mono">{fid}</td>
+        <td>{nome_html}</td>
+        <td>{_esc(_tipo_display(f['tipo_material']))}</td>
+        <td class="mono">{_esc(f['data_gravacao'])}</td>
+        <td><span class="badge-mini" style="background:{cor}">{_esc(status) or '—'}</span></td>
+        <td style="white-space:nowrap">
+          <a class="link-editar" href="/ficha/{fid}/editar">editar ✎</a>
+          <span style="color:#dee2e6;margin:0 6px">·</span>
+          {cancelar}
+        </td>
+      </tr>"""
+
+
+def _grupo_posts_html(titulo, fichas, aberto):
+    """Bloco recolhível de um status, com a tabela de Posts daquele grupo."""
+    if not fichas:
+        return ""
+    linhas = "".join(_linha_post_html(f) for f in fichas)
+    open_attr = " open" if aberto else ""
+    return f"""
+    <details class="grupo-posts"{open_attr}>
+      <summary>{titulo} <span class="badge">{len(fichas)}</span></summary>
+      <table class="tab-recentes">
+        <thead><tr><th>#</th><th>Nome</th><th>Tipo</th>
+                   <th>Data</th><th>Status</th><th></th></tr></thead>
+        <tbody>{linhas}</tbody>
+      </table>
+    </details>"""
+
+
+def _grupo_cancelados_html(cancelados):
+    """Grupo recolhível dos Posts cancelados: restaurar (volta) / excluir (de vez)."""
+    if not cancelados:
+        return ""
+    linhas = "".join(
+        f"<tr><td>{_esc(c['nome'])}</td>"
+        f"<td>{_esc(_tipo_display(c['tipo_material']) if c['tipo_material'] else '—')}</td>"
+        f"<td class='mono'>{_esc(c['data_gravacao'] or '—')}</td>"
+        f"<td style='white-space:nowrap'>"
+        f"<form action='/post/{c['id']}/restaurar' method='post' style='margin:0;display:inline'>"
+        f"<button type='submit' style='background:none;border:none;color:#2e7d32;"
+        f"font-size:0.82em;cursor:pointer;text-decoration:underline'>restaurar</button></form>"
+        # Excluir definitivo: passo final para sobra/lixo. Irreversível — sobra só o Log.
+        f"<span style='color:#dee2e6;margin:0 6px'>·</span>"
+        f"<form action='/post/{c['id']}/excluir' method='post' style='margin:0;display:inline' "
+        f"onsubmit=\"return confirm('Excluir {_esc(c['nome'])} DE VEZ? Não tem volta — "
+        f"sobra só o registro no Log do sistema.');\">"
+        f"<button type='submit' style='background:none;border:none;color:#adb5bd;"
+        f"font-size:0.82em;cursor:pointer;text-decoration:underline'>excluir</button></form>"
+        f"</td></tr>"
+        for c in cancelados
+    )
+    return f"""
+    <details class="grupo-posts grupo-cancelados">
+      <summary>🗂️ Posts cancelados <span class="badge">{len(cancelados)}</span>
+        <span style="font-weight:400;color:#adb5bd;font-size:0.85em">
+          — fora das telas e da Planilha; restaurar ou excluir de vez</span>
+      </summary>
+      <table class="tab-recentes">
+        <thead><tr><th>Nome</th><th>Tipo</th><th>Data</th><th></th></tr></thead>
+        <tbody>{linhas}</tbody>
+      </table>
+    </details>"""
+
+
+def _fichas_recentes_html(limite=40):
+    """
+    Centro de controle dos Posts: lista os Posts agrupados por status (cada grupo
+    recolhível) com as ações editar/cancelar, e um grupo separado para os
+    cancelados (restaurar/excluir). É a casa das ações que antes só existiam na
+    Operação — lá fica só o match.
+    """
     if not BANCO_DISPONIVEL:
         return ""
     try:
         conn = bd.obter_conexao()
-        fichas = conn.execute(
+        ativas = conn.execute(
             "SELECT id, nome, nome_audio, tipo_material, data_gravacao, status "
-            "FROM formularios ORDER BY id DESC LIMIT ?", (limite,)
+            "FROM formularios WHERE status <> 'cancelado' OR status IS NULL "
+            "ORDER BY id DESC LIMIT ?", (limite,)
         ).fetchall()
+        cancelados = bd.listar_formularios_cancelados(conn)
         conn.close()
     except Exception as erro:
-        logger.error(f"FICHA | Erro ao listar fichas recentes | {erro}")
+        logger.error(f"FICHA | Erro ao listar Posts | {erro}")
         return ""
 
-    if not fichas:
+    if not ativas and not cancelados:
         return ""
 
-    linhas = []
-    for f in fichas:
-        status = f["status"] or ""
-        cor = COR_STATUS_FICHA.get(status, "#495057")
-        # Nome principal + (quando há áudio de outra pessoa) o 2º nome — Fatia 5.
-        nome_html = f"<b>{_esc(f['nome'])}</b>"
-        if f["nome_audio"]:
-            nome_html += (f' <span style="color:#6c757d;font-size:0.85em">'
-                          f'+ {_esc(f["nome_audio"])} (áudio)</span>')
-        linhas.append(f"""
-          <tr>
-            <td class="mono">{f['id']}</td>
-            <td>{nome_html}</td>
-            <td>{_esc(_tipo_display(f['tipo_material']))}</td>
-            <td class="mono">{_esc(f['data_gravacao'])}</td>
-            <td><span class="badge-mini" style="background:{cor}">{_esc(status) or '—'}</span></td>
-            <td><a class="link-editar" href="/ficha/{f['id']}/editar">editar ✎</a></td>
-          </tr>""")
+    # Distribui os Posts ativos nos grupos conhecidos; o resto vai para "Outros".
+    por_status = {}
+    for f in ativas:
+        por_status.setdefault(f["status"] or "", []).append(f)
+
+    blocos = []
+    for chave, titulo, aberto in _GRUPOS_POSTS:
+        blocos.append(_grupo_posts_html(titulo, por_status.pop(chave, []), aberto))
+    # Qualquer status não previsto não pode sumir — agrupa em "Outros".
+    sobras = [f for grupo in por_status.values() for f in grupo]
+    blocos.append(_grupo_posts_html("📋 Outros", sobras, True))
+    blocos.append(_grupo_cancelados_html(cancelados))
+
     return f"""
     <div class="recentes">
-      <h2>Fichas recentes (clique para editar)</h2>
-      <table class="tab-recentes">
-        <thead><tr><th>#</th><th>Nome</th><th>Tipo</th>
-                   <th>Data</th><th>Status</th><th></th></tr></thead>
-        <tbody>{''.join(linhas)}</tbody>
-      </table>
+      <h2>Posts (clique no grupo para abrir/fechar)</h2>
+      {''.join(b for b in blocos if b)}
     </div>"""
 
 
