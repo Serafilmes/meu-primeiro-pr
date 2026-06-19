@@ -10,7 +10,7 @@
 
 | Camada | Nome | Status |
 |---|---|---|
-| 1 | Check-in e identificação | ⚠️ Quase completa — Nova Ficha v2 ✅ + multi-seleção/data inteligente/"quem preencheu" (s33); falta mural dos câmeras, login do operador (2.3) e domínio fixo do túnel |
+| 1 | Check-in e identificação | ⚠️ Quase completa — Nova Ficha v2 ✅ (s33); **match manual** (s38); **nomes curtos editáveis** (#5) + **centro de controle dos Posts** na Nova Ficha (grupos por status + cancelar/restaurar/excluir; Operação só com o MATCH) (s39); falta mural dos câmeras, login do operador (2.3) e domínio fixo do túnel |
 | 2 | Transferência | ✅ Concluída e testada com cartão real |
 | 3 | Controle e segurança das informações | ✅ Quase completa — Kanban + Planilha + Molde; grupos editáveis (s33); Sheets dinâmico (s34); exportador em loop (s35); **Sheets por projeto ligado no exportador (s39)** |
 | 4 | Auditoria + liberação do cartão | ✅ Concluída — ciclo integrado testado |
@@ -278,13 +278,13 @@ Depois de testar a Fatia 1, o idealizador esclareceu e expandiu:
 
 5. 📊 **Google Sheets real** (Camada 3) — ✅ **NO AR (s32)** via impersonação. Pendências menores: o exportador precisa do `gcloud` no PATH e roda na sincronização do `inicializar_gma` a cada 60s; testar dentro do sistema completo (até agora só rodado à mão).
 
-8. 🗂️ **Gestão de listas/grupos de contexto** (operador) — Fatia 1 ✅ (aba "Listas", s31); ponte chips→ficha→planilha ✅ (s32); Molde da Planilha ✅ (s33); **GRUPOS EDITÁVEIS Fatias 1-4 ✅ + modo texto ✅ (s33)** — 1 ponto de criação: grupo → chip na ficha + coluna na planilha; lista ou preenchimento livre. **Próxima — FATIA 5 (próxima sessão):** espelhar no Google Sheets as colunas dinâmicas dos grupos **+ multi-projeto** (cada evento = uma planilha Google nova conectada). Cruza Camada 3/5. Ver desenho na memória [[grupos-editaveis-design]]. Pendências menores: agrupar a planilha por profissional; login do operador (2.3 da ficha).
+6. 🗂️ **Gestão de listas/grupos de contexto** (operador) — Fatia 1 ✅ (aba "Listas", s31); ponte chips→ficha→planilha ✅ (s32); Molde da Planilha ✅ (s33); **GRUPOS EDITÁVEIS Fatias 1-4 ✅ + modo texto ✅ (s33)** — 1 ponto de criação: grupo → chip na ficha + coluna na planilha; lista ou preenchimento livre. **Próxima — FATIA 5:** espelhar no Google Sheets as colunas dinâmicas dos grupos **+ multi-projeto** (cada evento = uma planilha Google nova conectada). Cruza Camada 3/5. Ver desenho na memória [[grupos-editaveis-design]]. Pendências menores: agrupar a planilha por profissional; login do operador (2.3 da ficha).
 
-9. 📥 **Central de Entrada — importação de fontes** (preparação) — montar as listas a partir de lista colada / planilha remota-CSV / PDF / print(OCR); pipeline Fontes→Extração→Revisão do operador→`listas_contexto`. Desenho alinhado (s31, sem código); começar pela planilha remota/CSV (já provada).
+7. 📥 **Central de Entrada — importação de fontes** (preparação) — montar as listas a partir de lista colada / planilha remota-CSV / PDF / print(OCR); pipeline Fontes→Extração→Revisão do operador→`listas_contexto`. Desenho alinhado (s31, sem código); começar pela planilha remota/CSV (já provada).
 
-6. 🖥️ **Mural dos câmeras** (2º monitor) — tela read-only de status + QR fixo (desenho pronto, sessão 21).
+8. 🖥️ **Mural dos câmeras** (2º monitor) — tela read-only de status + QR fixo (desenho pronto, sessão 21).
 
-7. **foto+vídeo na estrutura de pastas** — decidir junto com Camada 2 (adiado da S30).
+9. **foto+vídeo na estrutura de pastas** — decidir junto com Camada 2 (adiado da S30).
 
 ---
 
@@ -326,9 +326,11 @@ Candidatos naturais para a próxima sessão:
 
 ---
 
-## Arquivos com mudanças não commitadas (atenção)
+## Estado de commit (atenção)
 
-Commitado até a **S36**. **S37 (Painel de Controle Fatia 1) + S38 (Casamento Manual) SEM commit** — S37: `flask_gma.py`, `inicializar_gma.py`, `transferencia.py` modificados; `painel_config.py`, `Iniciar GMA.command`, `Encerrar GMA.command` novos. S38: `banco_dados.py` (+`registrar_match_manual`), `matcher.py` (+`fazer_match_manual`), `flask_gma.py` (barra "Match na mão", rotas `/match-manual/*`, banner ok/aviso, auto-refresh em JS). Branch: `fatia5-sheets-multiprojeto`. (Sugerir commit — são duas peças fechadas e testadas.) Backup do laboratório em `gma.db.bak_20260617_*`.
+**Tudo da S37 → S39 está commitado e mergeado no `main`.** Histórico: Painel de Controle / cockpit (S37, commit `3520567`), Match Manual + gate dos cartões + Acompanhamento ao vivo (S38, PR #6 `b6a42a5`), Sheets por projeto + proxy + #3 + #4 (S39, PRs #7/#8), Nomes Curtos #5 (S39, PR #9 `cf24790`).
+
+**🔶 Pendência de hoje (s39):** o commit `c712c5c` (centro de controle dos Posts na Nova Ficha) está **no `main` local mas ainda NÃO foi enviado** (`git push`). Working tree limpo. Backups do laboratório em `gma.db.bak_*`.
 
 ---
 
