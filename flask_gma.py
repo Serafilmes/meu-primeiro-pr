@@ -5988,6 +5988,15 @@ PAINEL_CSS = """
 .nota-command { color:#868e96; font-size:0.82em; margin-top:12px; line-height:1.5; }
 .conexao-botoes { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px; }
 .conexao.inativo { opacity:0.65; }
+.ajuda-sheets { background:#f0fbf6; border:1px solid #c6efdd; border-radius:6px;
+                padding:8px 10px; margin-bottom:8px; }
+.ajuda-passos { font-size:0.78em; color:#0b6b4a; margin-bottom:6px; line-height:1.4; }
+.ajuda-sa { display:flex; align-items:center; gap:6px; }
+.ajuda-sa code { flex:1; background:#fff; border:1px solid #c6efdd; border-radius:5px;
+                 padding:5px 8px; font-size:0.76em; color:#155; word-break:break-all; }
+.btn-copiar { background:#1D9E75; color:#fff; border:none; border-radius:5px;
+              padding:5px 10px; font-size:0.76em; cursor:pointer; white-space:nowrap; }
+.btn-copiar:hover { background:#178a65; }
 """
 
 
@@ -6089,6 +6098,31 @@ def _testar_conexao(chave):
     return False, "Conexão desconhecida."
 
 
+def _ajuda_sheets_html():
+    """Caixa de ajuda do Google Sheets: a conta de serviço pronta para copiar.
+
+    O operador precisa COMPARTILHAR a planilha nova (como Editor) com esta conta —
+    senão o exportador não consegue escrever. Deixar o e-mail copiável aqui, ao lado
+    da caixinha, evita ter de procurá-lo em outro lugar (pedido do idealizador).
+    """
+    sa = (os.environ.get("GMA_SHEETS_SA", "") or "").strip()
+    if not sa:
+        return ""
+    sa_esc = _esc(sa)
+    return (
+        "<div class='ajuda-sheets'>"
+        "<div class='ajuda-passos'>Planilha NOVA por projeto → "
+        "<b>Compartilhar</b> como <b>Editor</b> com esta conta → cole o link aqui:</div>"
+        "<div class='ajuda-sa'>"
+        f"<code id='sa-email'>{sa_esc}</code>"
+        f"<button type='button' class='btn btn-copiar' "
+        f"onclick=\"navigator.clipboard.writeText('{sa_esc}').then(function(){{"
+        "var b=event.target;var t=b.textContent;b.textContent='copiado ✓';"
+        "setTimeout(function(){b.textContent=t;},1500);})\">copiar</button>"
+        "</div></div>"
+    )
+
+
 def _conexoes_cockpit():
     """Monta a lista de conexões do projeto ativo para o cockpit."""
     _slug, cfg = painel_config.projeto_ativo()
@@ -6156,7 +6190,8 @@ def _conexoes_cockpit():
          "desc": "Espelho de entrega na nuvem. ID salvo por projeto.",
          "status": sheets_status, "testavel": bool(sid),
          "direcionar": True, "campo": sid, "acao": "/painel/sheets-id",
-         "placeholder": "ID da planilha Google (cole o ID longo)",
+         "placeholder": "Cole o link (ou o ID) da planilha Google deste projeto",
+         "ajuda_html": _ajuda_sheets_html(),
          "ativavel": True, "ativo": sheets_ativo, "acao_ativar": "/painel/sheets-ativo"},
         {"chave": "tunel", "rot": "Túnel / ficha remota", "val": tunel_txt,
          "desc": "Link público da ficha (ngrok). Vazio = detecta automaticamente.",
@@ -6317,6 +6352,7 @@ def _pagina_painel(aviso=None, erro=None, resultado_teste=None):
             f"<span class='rot'>{c_rot}</span></div>"
             f"<div class='val'>{c_val}</div>"
             f"<div class='desc'>{c_desc}</div>"
+            f"{c.get('ajuda_html', '')}"
             f"{botoes}{redir_form}{res_html}"
             "</div>"
         )

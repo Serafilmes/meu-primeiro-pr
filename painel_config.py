@@ -218,12 +218,37 @@ def definir_banco(slug, db):
     salvar_estado(estado)
 
 
+def _so_o_id_da_planilha(valor):
+    """Extrai o ID puro de uma URL do Google Sheets (ou devolve o valor cru)."""
+    import re
+    valor = (valor or "").strip()
+    m = re.search(r"/d/([a-zA-Z0-9_-]+)", valor)
+    return m.group(1) if m else valor
+
+
 def definir_sheets(slug, sheets_id):
-    """Define o ID da planilha Google de um projeto (por projeto, não no .env)."""
+    """Define o ID da planilha Google de um projeto (por projeto, não no .env).
+
+    Aceita URL inteira colada do navegador ou o ID puro — guarda sempre o ID puro.
+
+    GUARDA ANTI-COLISÃO: recusa um ID que já pertence a OUTRO projeto. Cada projeto
+    tem a SUA planilha; reusar a de outro faria o exportador escrever por cima da
+    entrega alheia (princípio de segurança: nunca destruir dado existente).
+    """
     estado = carregar_estado()
     if slug not in estado["projetos"]:
         raise ValueError(f"Projeto desconhecido: {slug}")
-    estado["projetos"][slug]["sheets_id"] = sheets_id.strip()
+    novo_id = _so_o_id_da_planilha(sheets_id)
+    if novo_id:
+        for outro_slug, outro_cfg in estado["projetos"].items():
+            if outro_slug != slug and outro_cfg.get("sheets_id") == novo_id:
+                nome_outro = outro_cfg.get("nome", outro_slug)
+                raise ValueError(
+                    f"essa planilha já é do projeto \"{nome_outro}\". "
+                    f"Crie uma planilha NOVA para este projeto (sheets.new) para não "
+                    f"sobrescrever a entrega do \"{nome_outro}\"."
+                )
+    estado["projetos"][slug]["sheets_id"] = novo_id
     salvar_estado(estado)
 
 

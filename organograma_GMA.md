@@ -9,7 +9,7 @@
 > O sistema guarda o dado em um lugar só; as telas são jeitos diferentes de LER
 > esse mesmo dado. Nada diverge.
 >
-> Última atualização: 2026-06-15 (sessão 31 — DESENHO da Planilha de Entrega (4 blocos: identificação · classificação · técnicas · futuro), do rumo da IA (Missão A → transcrição local → imagem) e da Central de Entrada (2 modos: aba "Listas" ao vivo + importação de fontes, com revisão do operador). BUILD: aba "Listas" (Fatia 1 da gestão de vocabulário). Sem commit ainda.)
+> Última atualização: 2026-06-18 (sessão 38 — BUILD: MATCH MANUAL (o "último recurso" do operador para cartão órfão), GATE DOS CARTÕES (blindagem em 3 camadas contra o "cartão-fantasma"), cancelar/descartar/restaurar Posts, Acompanhamento AO VIVO (poll de 1s). Antes: GRUPOS EDITÁVEIS de classificação (s33), Google Sheets real via impersonação (s32) + Sheets DINÂMICO (s34), Projeto-festival Rock in Rio + programação do dia (s36), PAINEL DE CONTROLE / cockpit no Flask — Camada 5 Fatia 1 (s37).)
 
 ---
 
@@ -22,23 +22,30 @@ testado com cartão de verdade.
 ```
 ANDAR                                       PROGRESSO
 ──────────────────────────────────────────────────────────────────
-1 · Check-in (identificar o cartão)         ████████████  PRONTO ✅
+1 · Check-in (identificar o cartão)         ███████████░  QUASE ✅
         └─ Matcher seguro + perfil que aprende cada pessoa
         └─ ficha PRÓPRIA no GMA (gabarito + edição) · online c/ senha · QR
-        └─ NOVO: cartão SEM MÍDIA tratado em 2 níveis (ignora × chama operador)
-        └─ Nova Ficha v2 COMPLETA ✅ (Fatias 1-5): aba Profissionais com
-           ativar/desativar/excluir + CÂMERA no cadastro; TIPO em caixinhas +
-           NOME dropdown fechado; câmera saiu da ficha → Matcher lê do cadastro;
-           grava multi-tipo (booleanos) + 2º nome (áudio) — Matcher entende multi-tipo
+        └─ cartão SEM MÍDIA tratado em 2 níveis (ignora × chama operador)
+        └─ Nova Ficha v2 COMPLETA ✅ (Fatias 1-5): cadastro de Profissionais +
+           CÂMERA no cadastro; multi-seleção, data inteligente, "quem preencheu" (s33)
+        └─ NOVO (s38): MATCH MANUAL — operador resolve cartão órfão na mão
+           (escolhe 1 cartão + 1 Post → dispara a cópia). Cancelar/restaurar Posts.
+        └─ falta: mural dos câmeras · login do operador (2.3) · domínio fixo do túnel
 2 · Transferência (copiar com segurança)    ████████████  PRONTO ✅
-3 · Banco de dados (guardar tudo)           ██████████░░  QUASE
-                                                          (Kanban + Planilha no ar; falta Google Sheets real)
-        └─ NOVO (s31): aba "Listas" (vocabulário do operador) + desenho da Planilha
-           de Entrega (4 blocos) e da Central de Entrada (ao vivo + importação)
+        └─ NOVO (s38): pasta de destino configurável (GMA_DESTINO) + falha limpa
+           quando o volume some (acaba o "copiando eterno")
+3 · Banco de dados (guardar tudo)           ███████████░  QUASE ✅
+        └─ Kanban + Planilha + Google Sheets REAL no ar (s32, via impersonação)
+        └─ GRUPOS EDITÁVEIS (s33): 1 ponto de criação → chip na ficha + coluna na
+           planilha; Sheets DINÂMICO espelha o molde (s34); montador compartilhado
+        └─ NOVO (s38): GATE DOS CARTÕES (blindagem 3 camadas contra cartão-fantasma)
 4 · Auditoria + devolver o cartão           ████████████  PRONTO ✅
         └─ embaralha · ejeta · RESTAURA pelo Parashoot — testado com cartão real
-5 · Tela bonita + várias máquinas           █░░░░░░░░░░░  EM PLANEJAMENTO
-        └─ agente plataforma-gma + blueprint · acesso por papel e mural já desenhados
+5 · Tela bonita + várias máquinas           ███░░░░░░░░░  EM CONSTRUÇÃO
+        └─ NOVO (s37): PAINEL DE CONTROLE (cockpit no Flask) — troca de projeto com
+           reinício guiado, conexões com Testar, ligar/encerrar por atalho clicável
+        └─ projeto-festival Rock in Rio + programação do dia (s36); por-projeto isolado
+        └─ falta: conexões por-projeto (Fatia 2) · login/usuário (Fatia 3) · .app
 6 · Inteligência artificial (opcional)      ░░░░░░░░░░░░  futuro
 7 · Marca e identidade visual               ░░░░░░░░░░░░  sem prazo (próximo foco)
 ──────────────────────────────────────────────────────────────────
@@ -261,6 +268,68 @@ Nenhuma decisão foi à toa. Cada uma resolveu um problema que apareceu
               Extração → Revisão do operador (gate) → listas_contexto. Nada entra cru.
            ⏭️ A fazer: a "ponte" chips→ficha→planilha (faz tudo aparecer); depois a importação.
            💾 Sem commit ainda (a critério do idealizador)
+
+15/06  S32 🧩 BUILD da ponte chips→ficha→planilha (tabela formularios_chips N-N) —
+              chips clicáveis na ficha (vocabulário fechado) → 5 colunas na planilha
+           📊 Google Sheets REAL NO AR — via IMPERSONAÇÃO de conta de serviço (sem chave):
+              a org bloqueia chaves JSON e o OAuth do gcloud → token curto sob demanda
+           🔑 SA gma-exportador + roles/serviceAccountTokenCreator p/ ale@serafa.me
+           ⚠️ roda com /usr/bin/python3 (3.9, tem gspread); o python@3.14 do gcloud NÃO tem
+
+15/06  S33 🛠️ BUILD GRUPOS EDITÁVEIS de classificação (peça grande, Camada 3)
+           🔶 PRINCÍPIO: 1 PONTO DE CRIAÇÃO — criar um grupo → vira chip na ficha E
+              coluna na planilha. Os grupos deixaram de ser fixos no código e viraram DADOS
+           🧩 Fatia 1: tabela grupos_classificacao · Fatia 2: ficha lê do banco ·
+              Fatia 3: painel de grupos na aba "Listas" · Fatia 4: planilha gera as colunas
+           ➕ 2 modos por grupo: "escolhe da lista" (chips) e "escreve na hora" (texto livre)
+           📱 Nova Ficha: multi-seleção em todos os grupos · data assume Hoje ·
+              "quem está preenchendo?" · campos antigos aposentados
+           🗄️ Molde da Planilha (liga/desliga colunas e blocos) · fundação do Log (eventos)
+           💾 Tudo commitado (branch melhoria/readme)
+
+15/06  S34 📊 BUILD Sheets DINÂMICO — o exportador deixou de ter 26 colunas FIXAS
+           🔶 MONTADOR COMPARTILHADO em banco_dados.py (montar_planilha) = fonte ÚNICA das
+              colunas/valores p/ a /planilha local E o Google Sheets — nunca mais divergem
+           ➕ "POST IN" na planilha: fichas recebidas sem cartão já aparecem (material a caminho)
+           🔶 Multi-projeto virou Camada 5 (Painel de Controle, troca ao vivo) — não aqui
+
+16/06  S35 🔌 Exportador integrado ao sistema completo (loop contínuo de 60s)
+           🐛 Raiz: o sistema usava sys.executable (python@3.14 sem libs) → PYTHON fixado
+              em /usr/bin/python3 (3.9). 6/6 processos sobem; Sheets atualiza no 1º ciclo
+           💾 Commitado
+
+17/06  S36 🎪 BUILD Projeto-festival "Rock in Rio (teste)" + banco POR PROJETO (GMA_DB)
+           🌱 Seed: 28 profissionais + grupos do festival (palco/show/lugares/momentos/marcas)
+           📅 PROGRAMAÇÃO DO DIA (a "virada das fichas"): a ficha é UMA SÓ; só o grupo SHOW
+              troca conforme o DIA ATIVO. Line-up real (155 shows) lido do site com o MCP do Chrome
+           🔗 Cascata palco→shows-do-dia · palco virou múltipla (soma os shows) · Fatia B2 (add show)
+           💾 Sem commit (lab intocado, backup em gma.db.bak)
+
+18/06  S37 🎛️ BUILD PAINEL DE CONTROLE (Camada 5, Fatia 1) — o "cockpit"
+           🔶 Ideia: "ligar os motores e testá-los antes de decolar". Não empacota o .app ainda;
+              constrói o Painel como aba web no Flask atual (incremental e seguro)
+           ⚙ painel_config.py (novo) = fonte única do "qual projeto + quais conexões"
+           🎚️ Maestro virou SUPERVISOR: vigia .gma_reiniciar / .gma_encerrar → troca de projeto
+              com reinício guiado dos 6 processos. Testado de verdade (boot→reinício→encerrar)
+           🔌 Cockpit de conexões com botão "Testar" (destino escreve, Sheets gera token real,
+              túnel checa o 127.0.0.1:4040) · atalhos clicáveis "Iniciar/Encerrar GMA.command"
+           🐛 Isolamento: filas/contadores JSON viraram POR-PROJETO (eram globais) → Operação isolada
+           💾 Sem commit
+
+18/06  S38 🔗 BUILD MATCH MANUAL — o "último recurso" do operador
+           🔶 Dor: um cartão entrou como "detectado" e nada pontuou (score<3) → virou ÓRFÃO
+              sem nenhuma forma de dar match na mão. registrar_match_manual resolve o par direto
+           🖥️ Operação ganhou seletor de rádio (1 cartão + 1 Post → botão MATCH dispara a cópia)
+           🛡️ GATE DOS CARTÕES (falha grave do "cartão-fantasma"): o EOS foi removido fisicamente,
+              mas nada o invalidou → o Matcher casou com o fantasma → "copiando eterno".
+              Blindagem em 3 camadas: Porteiro invalida volume removido · Matcher confere existência ·
+              Transferência falha limpo e sincroniza o banco
+           🗂️ Cancelar/restaurar Posts (soft-delete em aba separada) · Descartar cartão · Planilha filtrada
+           ⚡ Acompanhamento AO VIVO: reload de 8s → poll de 1s só do quadro (sem flicker)
+           🐛 Contaminação entre projetos achada: a ficha remota grava no projeto ATIVO, não no
+              destino → AMARRAR A FICHA AO PROJETO é o #2 aprovado (Fatia 2, pausado)
+           ✅ Terminologia "casamento" eliminada do projeto (.py) — termo único: "match"
+           💾 Sem commit (S37+S38 pendentes na branch fatia5-sheets-multiprojeto)
 ```
 
 ---
@@ -283,34 +352,38 @@ Nenhuma decisão foi à toa. Cada uma resolveu um problema que apareceu
 
 Em ordem de impacto:
 
-1. 🎨 **Marca / identidade visual (andar 7)** — sem prazo de data + o relatório PDF de hoje
-   ficou abaixo do esperado (sem padrão, layout fraco). Definir logo, paleta,
-   tipografia e grid ANTES de refazer o PDF, pra ele nascer bonito e consistente.
-2. 📄 **PDF Overview** — refazer o gerador no estilo dashboard + folha de contato
-   (briefing pronto na §12 do `arquitetura_GMA.md`, material de teste já gerado),
-   já aplicando o padrão visual do andar 7.
-3. 🔌 **Ligar frames + PDF ao fluxo automático** — hoje o extrator de frames roda
-   à mão depois da cópia; falta plugá-lo dentro da transferência.
-4. 🧠 **Fase 2 do perfil** — fazer o sistema USAR o que aprende (câmera, prefixo,
-   numeração) para desempatar sozinho, com tolerância a gaps. Tira o operador do caminho.
-5. 📊 **Google Sheets real** (andar 3) — criar a planilha na nuvem + credenciais.
-   (O Kanban e a Planilha locais já estão no ar desde a sessão 19, lendo da fonte única.)
-6. 🖥️ **Mural dos câmeras** (2º monitor) — construir a tela read-only de status em
-   linguagem de set + QR fixo (desenho pronto na sessão 21; layout em aberto).
-7. 🌐 **Endereço fixo do túnel** (opcional) — hoje a ficha online usa URL temporária
-   do ngrok (o QR se auto-atualiza). Um domínio fixo deixa o link estável.
-8. 🧩 **Ponte chips→ficha→planilha** — ligar os itens das "Listas" como chips na ficha e
-   fazê-los aparecer na planilha (foi o que faltou no teste da s31). Próxima fatia natural.
+1. 🔗 **Amarrar a ficha ao projeto (#2, aprovado)** — a ficha remota (QR/ngrok) hoje grava
+   no projeto ATIVO no momento do envio, não no destino do link → contaminou o laboratório
+   com uma ficha do Rock in Rio (s38). É refactor de roteamento por-requisição (Camada 5,
+   Fatia 2). PAUSADO a pedido do idealizador (vai confirmar/delegar aos agentes).
+2. 🗂️ **Reorganizar o ciclo de vida do Post na "Nova Ficha"** — a divisão de abas foi definida
+   na s38: Operação = só o MATCH; Nova Ficha = editar/cancelar/restaurar/EXCLUIR Post.
+   O "cancelar" + "Posts cancelados" que entraram na Operação migram p/ a Nova Ficha; falta
+   construir o `excluir` (hard delete + cascade + guard de match real).
+3. 🎨 **Marca / identidade visual (andar 7)** — sem prazo de data + o relatório PDF de hoje
+   ficou abaixo do esperado. Definir logo, paleta, tipografia e grid ANTES de refazer o PDF.
+4. 📄 **PDF Overview** — refazer o gerador no estilo dashboard + folha de contato
+   (briefing na §12 do `arquitetura_GMA.md`, material de teste já gerado), com o padrão do andar 7.
+5. 🔌 **Ligar frames + PDF ao fluxo automático** — hoje o extrator de frames roda à mão
+   depois da cópia; falta plugá-lo dentro da transferência.
+6. 🧠 **Fase 2 do perfil** — fazer o sistema USAR o que aprende (câmera, prefixo, numeração)
+   para desempatar sozinho. Tira o operador do caminho.
+7. 🎛️ **Painel de Controle — Fatia 2 (conexões por-projeto)** — hoje as conexões (Sheets/senha/
+   túnel) vêm do `.env` GLOBAL; mover p/ config por projeto + testar de verdade no setup +
+   wizard de novo projeto. Fatia 3 = login/troca de usuário.
+8. 🖥️ **Mural dos câmeras** (2º monitor) — tela read-only de status em linguagem de set + QR
+   fixo (desenho pronto na sessão 21).
 9. 📥 **Central de Entrada (importação)** — montar as listas a partir de planilha remota/CSV,
    colar texto, PDF e print (OCR). Desenho alinhado na s31; começar pela planilha/CSV.
+10. 📊 **Agrupar a planilha por profissional** (modelo das planilhas antigas), não só por dia.
 
-> ✅ Resolvido na S21: a **entrada de dados** não depende mais do Tally — a ficha própria
-> do GMA é o canal principal (Tally vira reserva opcional). Guia do Tally segue válido
-> (`guia_tally_gma.md`) só se quiser o canal de reserva.
+> ✅ Resolvido desde a S31: a **ponte chips→ficha→planilha** (s32), o **Google Sheets real**
+> (s32, impersonação) e **dinâmico** (s34), os **grupos editáveis** (s33), o **multi-projeto**
+> com banco isolado (s36) e o **Painel de Controle** (s37). A entrada não depende do Tally (S21).
 >
-> Pendências menores guardadas: bug do "0 arquivos no banco" (S7); consistência do
-> banco quando dois cartões têm o mesmo nome de volume ("Untitled") — visto no teste do Joe;
-> Passo 2 (tela de confirmação de match no clique); loop automático da auditoria.py.
+> Pendências menores guardadas: bug do "0 arquivos no banco" (S7); consistência do banco
+> quando dois cartões têm o mesmo nome de volume ("Untitled"); loop automático da auditoria.py
+> ainda não exercitado em produção; renomear `produtora`→`nome` no Google Forms externo.
 
 ---
 
@@ -354,7 +427,7 @@ Em ordem de impacto:
 ┌─────────────────────────────────────────────────────────────────────┐
 │  ZONA 3 — NUVEM / ENTREGA                                            │
 │                                                                       │
-│   📊 Google Sheets (espelho de entrega para editores) — a integrar   │
+│   📊 Google Sheets (espelho de entrega p/ editores) — ✅ NO AR (s32) │
 │   📋 Notion (vitrine opcional — espelho do Kanban)                    │
 │                                                                       │
 │   ⚠️  Os arquivos de mídia NUNCA sobem. Ficam no HD físico.          │
@@ -398,8 +471,10 @@ Em ordem de impacto:
  │ OFFLINE-FIRST      │  │ (read-only)             │  │ (nuvem)            │
  │                    │  │ + espelho Notion (opc.) │  │                    │
  ├────────────────────┤  ├─────────────────────────┤  ├────────────────────┤
- │ STATUS: no ar      │  │ STATUS: rascunho        │  │ STATUS: espelho    │
- │ (abas; lê JSON)    │  │ (/kanban + post-it)     │  │ local; Sheets falta│
+ │ STATUS: no ar +    │  │ STATUS: no ar, AO VIVO  │  │ STATUS: no ar —    │
+ │ ⚙Painel (cockpit)  │  │ (poll 1s, s38)          │  │ Google Sheets real │
+ │ + Match manual     │  │ + post-it · Concluído   │  │ (s32) + DINÂMICO   │
+ │ (s37-38)           │  │   agrupado por dia      │  │ (s34, espelha molde)│
  └────────────────────┘  └─────────────────────────┘  └────────────────────┘
 
   CRÍTICO / OFFLINE  ◄──────────────────────────────►  ENTREGA / NUVEM
@@ -443,7 +518,9 @@ vitrine espelhada, nunca o operacional.
 
 ```
                         inicializar_gma.py
-                  (sobe tudo com um comando)
+              (sobe tudo · SUPERVISOR desde a s37:
+               vigia .gma_reiniciar / .gma_encerrar —
+               troca de projeto com reinício guiado)
                                 │
         ┌───────────┬───────────┼───────────┬────────────┐
         ▼           ▼           ▼           ▼            ▼
@@ -491,6 +568,12 @@ vitrine espelhada, nunca o operacional.
 
    encerrar_gma.py  →  encerramento de emergência (desliga tudo)
    .gma_ativo       →  sentinela: existe = sistema processando
+
+   NOVO (s37) — Camada 5 / cockpit:
+   painel_config.py →  fonte única do "qual projeto + quais conexões"
+                       (painel_estado.json · banco e destino por projeto)
+   Iniciar/Encerrar GMA.command  →  atalhos clicáveis (semente do .app)
+   GMA_DB · GMA_DESTINO          →  banco e pasta de destino por projeto (isolados)
 ```
 
 ---
@@ -510,16 +593,18 @@ vitrine espelhada, nunca o operacional.
        ┌───────────────┬──────────┼──────────┬───────────────┐
        ▼               ▼          ▼          ▼               ▼
  ┌───────────┐  ┌──────────────┐ ┌────────┐ ┌─────────┐ ┌──────────────┐
- │checkin-gma│  │transferencia-│ │banco-  │ │auditoria│ │ testes /     │
- │ Camada 1  │  │gma           │ │dados-  │ │-gma     │ │ documentação │
- │  ✅        │  │ Camada 2 ✅  │ │gma     │ │Camada 4 │ │ (futuros)    │
+ │checkin-gma│  │transferencia-│ │banco-  │ │auditoria│ │plataforma-gma│
+ │ Camada 1  │  │gma           │ │dados-  │ │-gma     │ │ Camada 5     │
+ │  ✅        │  │ Camada 2 ✅  │ │gma     │ │Camada 4 │ │  🔧          │
  │           │  │              │ │Camada3 │ │  ✅     │ │              │
- │leitura,   │  │copiador.py,  │ │🔧      │ │Parashoot│ │              │
- │Forms,     │  │checksum MD5, │ │SQLite, │ │check/   │ │              │
- │numeração  │  │.sppo, PDF    │ │Sheets, │ │erase/   │ │              │
- │           │  │              │ │3 telas │ │restore  │ │              │
+ │leitura,   │  │copiador.py,  │ │✅quase │ │Parashoot│ │Painel/cockpit│
+ │Forms,     │  │checksum MD5, │ │SQLite, │ │check/   │ │supervisor,   │
+ │numeração, │  │.sppo, PDF,   │ │Sheets  │ │erase/   │ │por-projeto,  │
+ │match      │  │GMA_DESTINO   │ │real+din│ │restore  │ │.app (futuro) │
+ │manual     │  │              │ │,3 telas│ │         │ │              │
  └───────────┘  └──────────────┘ └────────┘ └─────────┘ └──────────────┘
-   EXISTE         EXISTE          EXISTE     EXISTE ✅    a criar
+   EXISTE         EXISTE          EXISTE     EXISTE ✅    EXISTE 🔧
+   (testes / documentação = agentes futuros, ainda a criar)
 ```
 
 **Onde as 3 telas entram no roadmap:**

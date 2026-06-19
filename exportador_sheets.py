@@ -172,13 +172,28 @@ def _tem_internet(host="www.google.com", porta=443, timeout=5):
 
 # ── SINCRONIZAÇÃO COM O SHEETS ─────────────────────────────────────────────────
 
+def _extrair_id_planilha(valor):
+    """
+    Aceita tanto o ID puro da planilha quanto a URL inteira de compartilhamento
+    (https://docs.google.com/spreadsheets/d/<ID>/edit?...) e devolve sempre o ID
+    puro — que é o que o gspread.open_by_key() espera. O Painel de Controle pode
+    salvar a URL colada pelo operador; aqui a gente normaliza na hora de usar.
+    """
+    import re
+    valor = (valor or "").strip()
+    m = re.search(r"/d/([a-zA-Z0-9_-]+)", valor)
+    if m:
+        return m.group(1)
+    return valor
+
+
 def _abrir_planilha():
     """
     Abre a planilha. Usa impersonação (GMA_SHEETS_SA) quando configurada — sem
     chave; senão cai para a chave de conta de serviço (GOOGLE_CREDENTIALS_JSON).
     """
     import gspread
-    sheet_id = os.environ["GMA_SHEETS_ID"]
+    sheet_id = _extrair_id_planilha(os.environ["GMA_SHEETS_ID"])
     sa = os.environ.get("GMA_SHEETS_SA", "").strip()
 
     if sa:
