@@ -1195,10 +1195,18 @@ def painel():
             f"<td>{_esc(c['tipo_material'] or '—')}</td>"
             f"<td>{_esc(c['data_gravacao'] or '—')}</td>"
             f"<td>{_esc(c['recebido_em'] or '—')}</td>"
-            f"<td style='text-align:right'>"
-            f"<form action='/post/{c['id']}/restaurar' method='post' style='margin:0'>"
+            f"<td style='text-align:right;white-space:nowrap'>"
+            f"<form action='/post/{c['id']}/restaurar' method='post' style='margin:0;display:inline'>"
             f"<button type='submit' style='background:none;border:none;color:#2e7d32;"
             f"font-size:0.78em;cursor:pointer;text-decoration:underline'>restaurar</button>"
+            f"</form>"
+            # Excluir definitivo: o passo final para sobra/lixo. Irreversível —
+            # só o registro no Log permanece. Confirmação obrigatória.
+            f"<form action='/post/{c['id']}/excluir' method='post' style='margin:0;display:inline;margin-left:12px' "
+            f"onsubmit=\"return confirm('Excluir {_esc(c['nome'])} DE VEZ? Não tem volta — "
+            f"sobra só o registro no Log do sistema.');\">"
+            f"<button type='submit' style='background:none;border:none;color:#adb5bd;"
+            f"font-size:0.78em;cursor:pointer;text-decoration:underline'>excluir</button>"
             f"</form></td></tr>"
             for c in posts_cancelados
         )
@@ -1207,7 +1215,7 @@ def painel():
             <summary style="padding:12px 16px;font-weight:600;font-size:0.9em;cursor:pointer;
                             background:#f1f3f5;list-style:none">
                 🗂️ Posts cancelados <span class="badge">{len(posts_cancelados)}</span>
-                <span style="font-weight:400;color:#adb5bd;font-size:0.85em">— fora da Operação e da Planilha; clique para ver / restaurar</span>
+                <span style="font-weight:400;color:#adb5bd;font-size:0.85em">— fora da Operação e da Planilha; clique para ver / restaurar / excluir</span>
             </summary>
             <table>
                 <tr><th>Nome</th><th>Tipo</th><th>Gravado</th><th>Recebido</th><th></th></tr>
@@ -1765,6 +1773,27 @@ def _tipos_post(row):
     return tipos
 
 
+def _data_logagem(cartao):
+    """
+    Data em que o material foi LOGADO no sistema — a data que deve aparecer (e
+    agrupar) na coluna "Concluído".
+
+    Usa SEMPRE um carimbo do relógio do sistema, na ordem: fim da cópia →
+    início da cópia → criação do registro. NUNCA usa data_inicio/data_fim, que
+    são mtimes dos arquivos do cartão: com o relógio da câmera errado (ex.: GoPro
+    travada em 2016) eles mentem a data e jogavam o Post em "01/01/2016". A pasta
+    de destino já acertava porque usa a data informada na ficha; a coluna não.
+    """
+    def _campo(nome):
+        try:
+            return cartao[nome]
+        except (KeyError, IndexError):
+            return None
+    return (_campo("transferencia_timestamp_fim")
+            or _campo("transferencia_timestamp_inicio")
+            or _campo("criado_em"))
+
+
 def _bar_concluido(cartao):
     """
     Barra compacta de um Post CONCLUÍDO (cartão ejetado), no estilo da barra
@@ -1777,7 +1806,8 @@ def _bar_concluido(cartao):
     tamanho = bd._fmt_tamanho_planilha(tam_bytes) if tam_bytes else "—"
     n_arq = cartao["total_arquivos_transferidos"] or cartao["total_arquivos_detectados"]
     info_tam = tamanho + (f" · {n_arq} arq." if n_arq else "")
-    data = cartao["data_inicio"] or cartao["data_fim"]
+    # Data da LOGAGEM (relógio do sistema), não o mtime dos arquivos (#4 s39).
+    data = _data_logagem(cartao)
     tipos = _tipos_post(cartao)
     tipo_html = (f"<span class='bar-tipo'>{_esc(' · '.join(tipos))}</span>"
                  if tipos else "")
@@ -1794,15 +1824,15 @@ def _bar_concluido(cartao):
 
 def _coluna_concluido_corpo(cards):
     """
-    Corpo da coluna "Concluído": agrupa os Posts por dia (data_inicio, queda para
-    data_fim) em blocos recolhíveis (<details> nativo, sem JS), mais recentes no
-    topo — exatamente como a barra lateral do ShotPut Pro.
+    Corpo da coluna "Concluído": agrupa os Posts por dia DA LOGAGEM (relógio do
+    sistema — ver _data_logagem) em blocos recolhíveis (<details> nativo, sem JS),
+    mais recentes no topo — exatamente como a barra lateral do ShotPut Pro.
     """
     if not cards:
         return "<p class='coluna-vazia'>—</p>"
     grupos = {}
     for c in cards:
-        dia = (c["data_inicio"] or c["data_fim"] or "")[:10]
+        dia = (_data_logagem(c) or "")[:10]
         grupos.setdefault(dia, []).append(c)
     # Dias em ordem decrescente; "sem data" (string vazia) vai para o fim
     dias_ord = sorted(grupos.keys(), key=lambda d: d or "0000-00-00", reverse=True)
@@ -2270,6 +2300,68 @@ def post_restaurar(formulario_id):
     if resultado.get("ok"):
         _mover_json_form(formulario_id, para_arquivo=False)
         logger.info(f"POST RESTAURAR | Ficha {formulario_id} restaurada | nome={resultado.get('nome')}")
+    return redirect("/")
+
+
+def _excluir_json_form(formulario_id):
+    """
+    Tombstone do JSON da ficha excluída: procura o JSON (na fila ou na subpasta de
+    cancelados) pelo db_formulario_id e o move para fila_forms/_arquivo_excluidos/.
+
+    Não APAGA o arquivo: o registro de verdade (a linha do banco) já saiu em
+    excluir_formulario; aqui só tiramos o JSON de qualquer lugar operacional e o
+    guardamos como lápide. JSON é metadado (não é mídia), mas a postura conservadora
+    do projeto é nunca destruir sem necessidade. Defensivo: falha só é logada.
+    """
+    try:
+        if not os.path.isdir(PASTA_FILA_FORMS):
+            return
+        arquivados = os.path.join(PASTA_FILA_FORMS, "_arquivo_cancelados")
+        excluidos = os.path.join(PASTA_FILA_FORMS, "_arquivo_excluidos")
+        # Procura nas duas origens prováveis: a fila viva e a pasta de cancelados.
+        for origem_dir in (PASTA_FILA_FORMS, arquivados):
+            if not os.path.isdir(origem_dir):
+                continue
+            for nome in os.listdir(origem_dir):
+                if not nome.endswith(".json"):
+                    continue
+                caminho = os.path.join(origem_dir, nome)
+                try:
+                    with open(caminho, "r", encoding="utf-8") as f:
+                        dados = json.load(f)
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if dados.get("db_formulario_id") == formulario_id:
+                    os.makedirs(excluidos, exist_ok=True)
+                    os.rename(caminho, os.path.join(excluidos, nome))
+                    logger.info(f"POST | JSON da ficha excluída movido para lápide | {nome}")
+                    return
+    except Exception as erro:
+        logger.error(f"POST | Falha ao mover JSON da ficha excluída {formulario_id} | {erro}")
+
+
+@app.route("/post/<int:formulario_id>/excluir", methods=["POST"])
+def post_excluir(formulario_id):
+    """
+    Exclui DEFINITIVAMENTE um Post sem uso (hard delete): apaga a linha do banco
+    (cascata chips/textos/candidatos, desvincula os eventos do Log) e move o JSON
+    para a lápide. Irreversível — sobra só o registro no Log. Recusa Post com match
+    real. Acesso só na base (o portão barra remoto).
+    """
+    resultado = {"ok": False, "motivo": "banco_indisponivel"}
+    if BANCO_DISPONIVEL:
+        try:
+            conn = bd.obter_conexao()
+            resultado = bd.excluir_formulario(conn, formulario_id)
+            conn.close()
+        except Exception as erro:
+            logger.error(f"POST EXCLUIR | Erro | ficha {formulario_id} | {erro}")
+            resultado = {"ok": False, "motivo": f"erro_interno: {erro}"}
+    if resultado.get("ok"):
+        _excluir_json_form(formulario_id)
+        logger.info(f"POST EXCLUIR | Ficha {formulario_id} excluída | nome={resultado.get('nome')}")
+    else:
+        logger.warning(f"POST EXCLUIR | Não excluída | ficha {formulario_id} | motivo={resultado.get('motivo')}")
     return redirect("/")
 
 

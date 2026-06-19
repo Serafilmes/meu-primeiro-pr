@@ -41,6 +41,9 @@ logs/backup_*
 # Material de teste (mídia — insubstituível, pesada, nunca vai para o repositório)
 TESTE LOGAGEM/
 
+# Destino por-projeto (GMA_DESTINO) — mídia copiada dos cartões; mesma regra: fora do repo
+PROJETO/
+
 # Miniaturas geradas pelo extrator de frames (saída operacional, recriável)
 _GMA_frames/
 *_manifesto.json

@@ -35,6 +35,12 @@ from datetime import datetime, timedelta
 # Raiz do projeto GMA
 RAIZ_GMA = "/Users/serafa/GMA"
 
+# Classificador de extensão e ponte proxy→clipe — fonte ÚNICA da identidade do
+# tipo de arquivo (VIDEO/FOTO/AUDIO/PROXY/OUTRO). Usar ler_cartao aqui evita uma
+# segunda tabela de extensões divergente dentro do copiador.
+sys.path.insert(0, RAIZ_GMA)
+import ler_cartao
+
 # Arquivo de log deste módulo (separado do log de transferencia.py)
 ARQUIVO_LOG = os.path.join(RAIZ_GMA, "logs", "copiador.log")
 
@@ -274,6 +280,8 @@ def gerar_log_xml(
     total_avisos = sum(
         1 for r in lista_resultados if not r.get("critico", True) and not r["verificado"]
     )
+    # Proxies copiados (não contam como vídeo) — informativo para o relatório.
+    total_proxies = sum(1 for r in lista_resultados if r.get("tipo") == "PROXY")
     tamanho_total = sum(r["tamanho_bytes"] for r in lista_resultados)
 
     # Velocidade média em MB/s (evita divisão por zero)
@@ -322,7 +330,13 @@ def gerar_log_xml(
             # "yes" = arquivo crítico (footage); "no" = arquivo de sistema.
             # Permite ao relatório PDF mostrar falha não-crítica como AVISO.
             "critical": "yes" if resultado.get("critico", True) else "no",
+            # Tipo honesto do arquivo (video/foto/audio/proxy/outro). O relatório e
+            # o banco usam isto para tratar o proxy como derivado, não como vídeo.
+            "kind":     (resultado.get("tipo") or "OUTRO").lower(),
         }
+        # Se for proxy, registra o clipe principal a que ele pertence (pista por nome).
+        if resultado.get("proxy_de"):
+            attrib_arquivo["proxyOf"] = resultado["proxy_de"]
         # Se houve erro, registra a mensagem de erro como atributo
         if resultado.get("erro"):
             attrib_arquivo["error"] = resultado["erro"]
@@ -335,6 +349,7 @@ def gerar_log_xml(
         "verified":       str(total_verificados),
         "failed":         str(total_falhos),         # apenas falhas CRÍTICAS
         "systemWarnings": str(total_avisos),         # falhas em arquivos de sistema
+        "proxies":        str(total_proxies),        # proxies copiados (não são vídeo)
         "totalSize":      str(tamanho_total),
         "duration":       duracao_str,
         "speed":          velocidade_str,
@@ -459,6 +474,7 @@ def copiar(caminho_origem, caminho_destino, nome_job=""):
             "total_verificados": 0,
             "total_falhos": 0,
             "total_avisos": 0,
+            "total_proxies": 0,
             "tamanho_total_bytes": 0,
             "duracao_segundos": 0,
             "arquivos": [],
@@ -490,6 +506,15 @@ def copiar(caminho_origem, caminho_destino, nome_job=""):
         caminho_arquivo_destino = os.path.join(caminho_destino, caminho_relativo)
         pasta_pai_destino = os.path.dirname(caminho_arquivo_destino)
 
+        # Classificação honesta do tipo (Fatia B): VIDEO/FOTO/AUDIO/PROXY/OUTRO.
+        # O proxy (ex.: .LRV da GoPro) é SEMPRE copiado — pular a cópia deixaria o
+        # cartão com arquivos que nunca foram verificados, e a Camada 4 liberaria
+        # o embaralhamento (Parashoot) apagando material não copiado. Em vez de
+        # pular, MARCAMOS o proxy e o ligamos ao clipe principal: assim ele não
+        # conta como vídeo nem gera frames lá na frente, mas a cópia fica completa.
+        tipo_arquivo = ler_cartao.classificar_extensao(nome_arquivo)
+        proxy_de = ler_cartao.proxy_do_clipe(nome_arquivo) if tipo_arquivo == "PROXY" else None
+
         resultado_arquivo = {
             "nome":            nome_arquivo,
             "caminho_origem":  caminho_arquivo_origem,
@@ -501,7 +526,12 @@ def copiar(caminho_origem, caminho_destino, nome_job=""):
             # Crítico = footage e qualquer coisa não listada como sistema.
             # Uma falha em arquivo crítico zera a transferência; em arquivo de
             # sistema vira só AVISO. Ver eh_arquivo_sistema() e a política acima.
+            # O proxy é crítico (footage derivado) — copiado e verificado como tal.
             "critico":         not eh_arquivo_sistema(nome_arquivo),
+            # Tipo do arquivo e, se for proxy, o nome do clipe principal a que ele
+            # pertence (pista por nome; o Matcher segue sendo a autoridade).
+            "tipo":            tipo_arquivo,
+            "proxy_de":        proxy_de,
             "erro":            "",
         }
 
@@ -591,6 +621,10 @@ def copiar(caminho_origem, caminho_destino, nome_job=""):
     total_avisos = sum(
         1 for r in lista_resultados if not r["critico"] and not r["verificado"]
     )
+    # PROXIES: derivados de baixa resolução (ex.: .LRV) copiados junto. São SEMPRE
+    # copiados e verificados como footage; aqui só os contamos para avisar o
+    # operador — eles não contam como vídeo nem geram frames lá na frente.
+    total_proxies = sum(1 for r in lista_resultados if r.get("tipo") == "PROXY")
     tamanho_total = sum(r["tamanho_bytes"] for r in lista_resultados)
     copia_ok = (total_falhos == 0)
 
@@ -612,6 +646,13 @@ def copiar(caminho_origem, caminho_destino, nome_job=""):
         f" | {total_avisos} arquivo(s) de sistema com aviso (não-crítico)"
         if total_avisos else ""
     )
+
+    # Aviso de proxy: copiados e marcados, ligados aos clipes principais.
+    if total_proxies:
+        logger.info(
+            f"PROXY | {total_proxies} arquivo(s) de proxy copiado(s) e marcado(s) "
+            f"(ligados aos clipes; não contam como vídeo nem geram frames)"
+        )
 
     if copia_ok:
         logger.info(
@@ -635,6 +676,7 @@ def copiar(caminho_origem, caminho_destino, nome_job=""):
         "total_verificados":   total_verificados,
         "total_falhos":        total_falhos,
         "total_avisos":        total_avisos,
+        "total_proxies":       total_proxies,
         "tamanho_total_bytes": tamanho_total,
         "duracao_segundos":    duracao_segundos,
         "arquivos":            lista_resultados,
@@ -663,6 +705,7 @@ def _resultado_falha(nome_job, motivo):
         "total_verificados":   0,
         "total_falhos":        0,
         "total_avisos":        0,
+        "total_proxies":       0,
         "tamanho_total_bytes": 0,
         "duracao_segundos":    0,
         "arquivos":            [],

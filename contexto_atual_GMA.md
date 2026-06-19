@@ -22,7 +22,7 @@
 
 ## O que acabou de ser feito (sessões recentes)
 
-### ✅ Sessão 39 (TESTE ao vivo + BUILD #1) — cópia real GoPro, Sheets por projeto, redesenho C2/C4
+### ✅ Sessão 39 (TESTE ao vivo + BUILD #1 + #2 proxy A/B) — cópia real GoPro, Sheets por projeto, proxy na C2, redesenho C2/C4
 **Branch:** `s39-sheets-por-projeto`. **Sem commit.** Teste com cartão GoPro real (HERO7, 107 arq / 7,7 GB) no projeto **SP2B**.
 
 **🧪 O teste de cópia (ponta a ponta, com tropeços reais):**
@@ -38,20 +38,23 @@
 - **SP2B estava sem `sheets_id`** (só rio2c/rock_in_rio tinham) → configurado (`1Z-lQ3...EsRK9Ydk`, diferente do rio2c). **Verificado:** `--teste` com `GMA_DB` do SP2B + `/usr/bin/python3` (o que tem gspread) escreveu o cartão na planilha certa.
 - **🔶 Falta aplicar no daemon vivo:** o exportador rodando (PID antigo) só adota o código novo após **Reiniciar pelo painel**; até lá segue escrevendo na global (ruído inofensivo).
 
-**🎯 #2 DESENHADO (proxy × frame) — NÃO construído ainda:**
-- Classificação hoje é **só por extensão** (`ler_cartao.EXTENSOES`) — sem noção de proxy nem de still-de-vídeo. Neste cartão: `.LRV` (proxy GoPro) e `.GPR` (RAW) caem errado em "OUTRO".
-- **Decisão do idealizador — proxies:** **política central** com 3 modos (**sempre aceitar / caso a caso / nunca**), **lembrada no cadastro da câmera** (não pergunta de novo até ele atualizar); quando aceita, **copia E marca como proxy** (ligado ao original, não conta como vídeo, não gera frames).
-- **Foto×frame:** provavelmente são thumbnails (Sony) → **só preparar estrutura**, sem heurística agora.
-- **Fatias propostas:** **A** = detecção honesta no Leitor (proxy `.LRV`→PROXY ligado ao vídeo; `.GPR`→FOTO) — isolada e testável; **B** = política central no cadastro + pular na cópia.
+**✅ #2 PROXY — Fatia A ✅ (Leitor) + Fatia B ✅ (marca na C2). NÃO commitado.**
+- **Fatia A (Leitor, s39 antes):** `ler_cartao.EXTENSOES` ganhou `PROXY` (`.lrv`) ligado ao clipe via `proxy_do_clipe` (GoPro: `GL019385.LRV`→`GX019385.MP4`); `.gpr` (RAW) virou FOTO. Antes caíam em "OUTRO".
+- **🔄 VIRADA DE DESENHO (s39, com o idealizador):** a ideia original ("nunca aceitar = **pular** o proxy na cópia") foi **descartada** — pular deixaria o cartão com arquivos nunca verificados, e a C4 liberaria o **Parashoot embaralhar/apagar** material não copiado (fere o princípio nº 2) + bagunçaria a contagem. **Nova regra: SEMPRE copiar, mas AVISAR** (e marcar). A política de 3 modos no cadastro fica **pra depois** ("só o aviso, por enquanto"); se voltar, mora **no profissional** (decidido), não na marca.
+- **Fatia B construída (s39) — marca de proxy atravessa o pipeline:** `copiador.py` classifica cada arquivo por `ler_cartao` (fonte única), **sempre copia**, marca o proxy (`tipo=PROXY` + `proxy_de`=clipe), grava `kind`/`proxyOf` no **`.sppo`** + `proxies` no summary, conta `total_proxies` e **avisa no log**. `gma_relatorio_pdf.parse_shotputpro_log` lê a marca de volta (fallback por extensão) + `total_proxies`. `banco_dados`: colunas novas `tipo`/`proxy_de` em `arquivos` (migração não-destrutiva `migrar_schema_arquivos`) gravadas por `gravar_arquivos_do_log`. `transferencia.py` leva o aviso "N proxies copiados" pro JSON do material + log.
+- **"Não conta como vídeo" SIM; "não gera frames" NÃO — correção do idealizador (s39):** o proxy **NÃO** vira uma entrada de vídeo própria (não duplica a contagem nem a entrega). Mas **o proxy É a fonte preferida dos frames do clipe** — `extrator_frames.thumbnails_de_video` faz `fonte = lrv if lrv else original` ([extrator_frames.py:377](extrator_frames.py:377)): usa o `.LRV` (leve/compatível) pra **não sobrecarregar o destino** processando o arquivo pesado; **sem proxy, extrai do original**. Os frames pertencem ao clipe; o proxy é só a fonte. **A Fatia B não tocou nessa lógica** — ela já estava assim e continua certa.
+- **Testes:** `teste_proxy_c2.py` (novo) cobre copiador→.sppo→parser→banco — passou; `teste_copiador_politica.py` (integridade) sem regressão.
+- **Foto×frame:** provavelmente thumbnails (Sony) → **só estrutura**, sem heurística agora (segue adiado).
+- **🔶 Para ativar no sistema rodando:** Reiniciar pelo Painel (re-sobe os processos com o código novo).
 
 **🎯 Redesenho C2/C4 + benchmark (em desenho com o idealizador — registrar e construir depois):**
 - **C2:** copiar rápido (1 leitura do cartão — checksum *durante* a cópia, não em passada separada); verificar por **contagem+peso** com a **regra única do que é mídia**; **auto-curar** (recopiar só o que divergiu, usando o manifesto `.sppo`). Motivo: velocidade é crítica (hardware/servidor).
 - **C4 + frames:** **frames travam a liberação** do cartão (com opção de desligar); **10 frames/vídeo**; **foto não gera frame**. Origem×cópia da extração **automática pela velocidade da pasta destino** (destino lento → extrai do cartão); configurável numa aba **Reports**. (Frames já parcialmente na C4 — `auditoria.py` chama `extrator_frames.py`.)
 - **Benchmark de velocidade:** **sob demanda** (botões na Operação: cópia em andamento, pasta destino, cartão fora de cópia), **nunca automático no ciclo**; alimenta também a decisão automática dos frames.
 
-**📋 Considerações do teste ainda PENDENTES (#3, #4, #5):**
-- **#3 — Cancelar/reverter Post:** idealizador com problema; quer mais limpo (sobra só um relatório com logs) + **botões de excluir** pros Posts sem uso. Irmão do match manual ([[casamento-manual-e-apagar-postin]]). Provável sessão própria.
-- **#4 — Data errada (Concluído 01/01/2016):** DIAGNOSTICADO — a coluna "Concluído" agrupa por `data_inicio` ([flask_gma.py:1780](flask_gma.py:1780), [:1805](flask_gma.py:1805)) = arquivo mais antigo = **relógio zoado da GoPro (2016)**. A pasta acertou (`20260619`). Conserto: agrupar pela **data da logagem** (`data_fim`/`criado_em`), não `data_inicio`.
+**📋 Considerações do teste (#3 ✅, #4 ✅ na s39; #5 pendente):**
+- **✅ #3 — EXCLUIR Post sem uso (hard delete) — construído (s39).** Recorte escolhido pelo idealizador: a peça que faltava era o **excluir definitivo** (cancelar/restaurar já existiam da s38). `banco_dados.excluir_formulario`: apaga a linha de `formularios` em cascata (chips/textos/`match_candidatos`), **desvincula os eventos do Log** (`eventos.formulario_id`→NULL, não apaga) + grava `post_excluido` com nome/id = "sobra só um relatório com logs". **Guarda:** recusa Post com **match real** (`ficha_em_uso`). Flask: rota `POST /post/<id>/excluir` + botão **"excluir"** na seção "Posts cancelados" (padrão cancela→exclui, igual aos profissionais) + `_excluir_json_form` move o JSON pra lápide `fila_forms/_arquivo_excluidos/`. Teste `teste_excluir_post.py` (A cascata+Log sobrevive · C guarda match · D inexistente) ✅. **Falta (fora do recorte):** "reverter ENTREGA" (desfazer cartão já matched — o reset-para-MATCH manual do teste) e a reorg que migra cancelar/cancelados pra aba "Nova Ficha".
+- **✅ #4 — Data errada (Concluído 01/01/2016) — corrigido (s39).** A coluna "Concluído" agrupava e exibia por `data_inicio` (mtime do arquivo mais antigo = **relógio zoado da GoPro 2016**). Novo helper `_data_logagem(cartao)` usa SEMPRE o relógio do sistema: `transferencia_timestamp_fim` → `transferencia_timestamp_inicio` → `criado_em`; **nunca** `data_inicio`/`data_fim` (que mentem com câmera desajustada — por isso `data_fim` do plano original não resolveria). Aplicado em `_bar_concluido` e `_coluna_concluido_corpo` ([flask_gma.py:1768](flask_gma.py:1768)).
 - **#5 — Nomes curtos:** nome completo só no cadastro; pasta/visualização/planilha usam forma curta — raiz do dia `FERNANDO_DUMITRIU`, cartão `DUMITRIU_001`. Colisão de sobrenome (Silva)→usa o 2º nome; 2º nome composto ("de Souza")→próximo sobrenome. Toca C2 (pasta)+tela+planilha.
 
 ### ✅ Sessão 38 (BUILD) — MATCH MANUAL (Camada 1) — o "último recurso" do operador

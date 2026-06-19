@@ -423,6 +423,15 @@ def inicializar_banco():
                 -- Caminho do thumbnail/frame extraído para o PDF (no storage)
                 caminho_thumbnail       TEXT,
 
+                -- ── Tipo e proxy (Camada 2 — copiador.py, #2 Fatia B) ──────
+                -- Classificação honesta: video/foto/audio/proxy/outro (do .sppo).
+                tipo                    TEXT,
+
+                -- Para um proxy (ex: .LRV da GoPro), o nome do clipe principal a
+                -- que ele pertence. NULL para todo o resto. Pista por nome — o
+                -- proxy é sempre copiado, mas não conta como vídeo nem gera frames.
+                proxy_de                TEXT,
+
                 -- ── Timestamp de controle ──────────────────────────────────
                 -- Criado: quando o registro foi inserido no banco
                 criado_em               TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
@@ -628,6 +637,11 @@ def inicializar_banco():
     # `configuracao` (chave-valor; guarda o dia_ativo). É a "programação do dia"
     # da cobertura de festival (Fatia B): a ficha mostra só os shows do dia ativo.
     migrar_schema_programacao(conn)
+
+    # Migração incremental: acrescenta as colunas `tipo` e `proxy_de` à tabela
+    # `arquivos` (detecção de proxy da Camada 2 — #2 Fatia B). Marca o proxy
+    # (ex.: .LRV) ligado ao clipe principal para ele não contar como vídeo.
+    migrar_schema_arquivos(conn)
 
     return conn
 
@@ -1260,6 +1274,64 @@ def listar_formularios_cancelados(conn):
     ).fetchall()
 
 
+def excluir_formulario(conn, formulario_id):
+    """
+    Exclui DEFINITIVAMENTE um Post sem uso (hard delete) — o passo final depois do
+    cancelamento, para sobra/lixo que nem deve ficar na aba "Cancelados". Espelha o
+    excluir_profissional: irreversível, e só para quem não virou entrega.
+
+    Diferença para cancelar (soft-delete): aqui a linha é REMOVIDA do banco. Mas o
+    Log permanece — os eventos da ficha são DESVINCULADOS (formulario_id → NULL),
+    não apagados, e um evento 'post_excluido' guarda nome/id. É o "sobra só um
+    relatório com logs" pedido pelo idealizador (#3).
+
+    Segurança:
+      - Recusa se houver MATCH REAL (linha em matches) — esse Post tem cartão/cópia,
+        não é sobra; mesma guarda do cancelar.
+      - Apaga em cascata os filhos que referenciam a ficha (FK foreign_keys=ON):
+        formularios_chips, formularios_textos, match_candidatos.
+
+    Retorna {"ok": True, "nome": ...} ou {"ok": False, "motivo": ...}
+      motivos: ficha_inexistente · ficha_em_uso
+    """
+    f = conn.execute(
+        "SELECT id, nome, status FROM formularios WHERE id = ?", (formulario_id,)
+    ).fetchone()
+    if f is None:
+        return {"ok": False, "motivo": "ficha_inexistente"}
+
+    # Guarda: Post que virou entrega (match real) NUNCA é apagado por aqui.
+    tem_match_real = conn.execute(
+        "SELECT 1 FROM matches WHERE formulario_id = ? LIMIT 1", (formulario_id,)
+    ).fetchone()
+    if tem_match_real:
+        return {"ok": False, "motivo": "ficha_em_uso"}
+
+    # Apaga os filhos primeiro (FK ON impede apagar a ficha enquanto referenciada).
+    conn.execute("DELETE FROM formularios_chips   WHERE formulario_id = ?", (formulario_id,))
+    conn.execute("DELETE FROM formularios_textos  WHERE formulario_id = ?", (formulario_id,))
+    conn.execute("DELETE FROM match_candidatos    WHERE formulario_id = ?", (formulario_id,))
+
+    # Preserva o histórico do Log: desvincula os eventos da ficha (não os apaga).
+    # Assim a linha de formularios pode sair sem violar a FK eventos.formulario_id,
+    # e o rastro de auditoria continua legível (descrição + dados_json intactos).
+    conn.execute("UPDATE eventos SET formulario_id = NULL WHERE formulario_id = ?", (formulario_id,))
+
+    conn.execute("DELETE FROM formularios WHERE id = ?", (formulario_id,))
+    conn.commit()
+
+    # Evento do próprio apagamento — sem FK (a ficha já não existe); o nome/id
+    # ficam no texto e no dados_json para a governança.
+    registrar_evento(
+        conn,
+        tipo="post_excluido",
+        descricao=f"Post EXCLUÍDO definitivamente pelo operador: {f['nome']} (id {formulario_id})",
+        formulario_id=None,
+        dados={"nome": f["nome"], "id": formulario_id, "status_anterior": f["status"]},
+    )
+    return {"ok": True, "nome": f["nome"]}
+
+
 def invalidar_cartoes_do_volume(conn, volume):
     """
     GATE (Camada 1): quando um volume é removido fisicamente, marca como 'ausente'
@@ -1573,6 +1645,10 @@ def gravar_arquivos_do_log(conn, cartao_id, dados_log):
         checksum = arq.get("checksum", None)  # o parser já trunca para 16 chars
         ok = bool(arq.get("ok", False))
         critico = bool(arq.get("critico", True))
+        # Tipo honesto (video/foto/audio/proxy/outro) e, para proxy, o clipe-pai.
+        # Vêm do .sppo (atributos kind/proxyOf, gravados pelo copiador da Camada 2).
+        tipo = arq.get("tipo") or None
+        proxy_de = arq.get("proxy_de") or None
 
         # Determina o status da cópia deste arquivo
         if ok:
@@ -1597,8 +1673,9 @@ def gravar_arquivos_do_log(conn, cartao_id, dados_log):
             INSERT OR IGNORE INTO arquivos
                 (cartao_id, nome_arquivo, caminho_origem,
                  tamanho_bytes, checksum_md5_origem,
-                 verificado, eh_arquivo_sistema, status_copia)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 verificado, eh_arquivo_sistema, status_copia,
+                 tipo, proxy_de)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 cartao_id,
@@ -1609,6 +1686,8 @@ def gravar_arquivos_do_log(conn, cartao_id, dados_log):
                 1 if ok else 0,
                 0 if critico else 1,   # critico=False → é arquivo de sistema
                 status_copia,
+                tipo,
+                proxy_de,
             )
         )
 
@@ -1866,6 +1945,25 @@ def consultar_perfil(conn, nome):
 # Tabela `profissionais`: nome + booleanos de tipo de material + letra sequencial
 # imutável (A, B, C…). A letra é pista visual das câmeras no set, NÃO autoridade
 # de identidade (a B do set pode não ser a B do cadastro).
+
+def migrar_schema_arquivos(conn):
+    """
+    Acrescenta as colunas `tipo` e `proxy_de` à tabela `arquivos`, se faltarem.
+    Não-destrutivo (ALTER TABLE ADD COLUMN) — seguro chamar quantas vezes quiser.
+
+    - tipo:     classificação honesta do arquivo (video/foto/audio/proxy/outro),
+                vinda do .sppo (atributo `kind`, gravado pelo copiador da Camada 2).
+    - proxy_de: para um proxy (ex.: .LRV da GoPro), o nome do clipe principal a que
+                ele pertence. NULL para todo o resto. Pista por nome — o Matcher
+                segue sendo a autoridade da identidade.
+    """
+    colunas = [linha[1] for linha in conn.execute("PRAGMA table_info(arquivos)").fetchall()]
+    if "tipo" not in colunas:
+        conn.execute("ALTER TABLE arquivos ADD COLUMN tipo TEXT")
+    if "proxy_de" not in colunas:
+        conn.execute("ALTER TABLE arquivos ADD COLUMN proxy_de TEXT")
+    conn.commit()
+
 
 def migrar_schema_profissionais(conn):
     """Cria a tabela `profissionais` se não existir. Segura para bancos existentes."""
