@@ -5252,7 +5252,15 @@ def _pagina_profissionais(
                 </span>
             </h2>
             {bloco_aviso}
-            <table style="width:100%;border-collapse:collapse;background:#fff;
+            <style>
+                /* Organização mínima: respiro + linha separadora entre profissionais,
+                   pra nomes longos não embolarem uns nos outros. */
+                .tab-prof td {{ padding:12px 12px; border-bottom:1px solid #e9ecef;
+                                vertical-align:middle; }}
+                .tab-prof tbody tr:last-child td {{ border-bottom:none; }}
+                .tab-prof tbody tr:hover td {{ background:#f8f9fa; }}
+            </style>
+            <table class="tab-prof" style="width:100%;border-collapse:collapse;background:#fff;
                           border-radius:8px;overflow:hidden;
                           box-shadow:0 1px 4px rgba(0,0,0,0.08);font-size:0.88em">
                 <thead>
