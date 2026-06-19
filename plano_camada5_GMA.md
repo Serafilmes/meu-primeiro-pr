@@ -177,6 +177,41 @@ virando UI" e pôde nascer incremental e seguro. Metáfora do idealizador para o
 - **#4 (anotado, futuro):** em que **ordem** a planilha Google é criada/conectada no setup
   do projeto — antes do sistema "voar"? Decidir junto do wizard.
 
+### 1.5. AUTENTICAÇÃO do Google Sheets — laboratório vs. PRODUÇÃO (idealizador, sessão 39, 2026-06-18)
+
+Conversa com o idealizador sobre "essa integração é sempre assim? é arriscada? é estável?".
+A distinção que precisa ficar registrada: **fragilidade ≠ segurança** — e neste caso elas vão
+em direções opostas (a montagem atual é a mais SEGURA, mas a menos ESTÁVEL).
+
+**Hoje (laboratório):** impersonação de conta de serviço **sem chave** (ver memória
+[[sheets-auth-impersonacao]]). O exportador pede um token curto emprestando o login pessoal
+`ale@serafa.me` (`gcloud auth print-access-token --impersonate-service-account=…`). A org
+Workspace `serafa.me` fecha os dois caminhos clássicos (proíbe baixar chave de SA; bloqueia o
+OAuth do gcloud para Drive/Sheets), então a impersonação foi a saída que **respeita a política
+e não deixa segredo em disco**.
+
+- **Segurança: ALTA.** Nenhuma chave/senha gravada; só metadados vão à nuvem (mídia jamais);
+  a SA só enxerga a planilha compartilhada; guarda anti-colisão impede sobrescrever a planilha
+  de outro projeto (s39).
+- **Fragilidade: é o ponto fraco.** A política da org exige **re-login interativo periódico**
+  (`gcloud auth login`); quando vence, o Sheets para de sincronizar. **Mas, por offline-first,
+  nada se perde** — o ciclo crítico (cópia/integridade/banco/ficha) segue; só o espelho da nuvem
+  atrasa. O Sheets está FORA do ciclo crítico, por princípio.
+
+**Produção (decisão a executar na virada protótipo→produto):** o robô ganha **chave própria**.
+Opções, em ordem de preferência para o nosso caso:
+1. **🥇 Projeto Google FORA da org `serafa.me`** (conta sem as travas de política) onde a chave de
+   SA **pode** ser gerada → exportador entra sozinho, **headless, sem re-login, estável**. Troca
+   "zero segredo em disco" por "estabilidade total" — aceitável porque a chave só abre **uma
+   planilha de metadados**, nunca a mídia. Chave mora na config externa (`.env`/`config/`,
+   nunca no git; ver §6.1 "separação cérebro/config/dados").
+2. **OAuth com refresh token** (autoriza uma vez, registra app próprio) — estável, mais setup.
+3. **Plano B — largar o Google:** como o Sheets é opcional (offline-first), entregar por CSV/
+   outra nuvem. Fica como saída de emergência.
+
+**Recomendação registrada:** opção 1. É tarefa do `plataforma-gma`, junto das "conexões por
+projeto" (§1.4) e do wizard de setup (#4). Enquanto for laboratório, segue a impersonação.
+
 ---
 
 ## 2. Decisão de stack (justificada)

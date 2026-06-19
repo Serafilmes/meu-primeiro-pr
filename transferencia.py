@@ -715,6 +715,16 @@ def processar_material(caminho_json_material, dados_material):
         _marcar_falha(caminho_json_material, "Copiador não gerou arquivo de log")
         return
 
+    # ── Aviso de proxy (Fatia B): proxies (ex.: .LRV) são SEMPRE copiados, mas
+    # marcados e ligados ao clipe — não contam como vídeo nem geram frames. Aqui
+    # só registramos o aviso para o operador; o copiador já marcou no .sppo/banco.
+    total_proxies = resultado_copia.get("total_proxies", 0)
+    if total_proxies:
+        logger.info(
+            f"PROXY | {nome_json} | {total_proxies} proxy(ies) copiado(s) e marcado(s) "
+            f"(ligados aos clipes; não contam como vídeo)"
+        )
+
     # ── Passo 5: Valida a integridade (tripla verificação) ───────────────────
     resultado_validacao = validar_transferencia(caminho_log_xml, dados_material)
 
@@ -736,6 +746,7 @@ def processar_material(caminho_json_material, dados_material):
         "transferencia_log_xml":            caminho_log_xml,
         "total_arquivos_transferidos":      resultado_validacao.get("total_arquivos", 0),
         "total_falhos":                     resultado_validacao.get("total_falhos", 0),
+        "total_proxies":                    total_proxies,
         "tamanho_transferido_bytes":        resultado_validacao.get("tamanho_bytes", 0),
         "transferencia_alertas":            resultado_validacao.get("alertas", []),
     }

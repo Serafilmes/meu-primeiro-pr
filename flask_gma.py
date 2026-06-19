@@ -1195,10 +1195,18 @@ def painel():
             f"<td>{_esc(c['tipo_material'] or '—')}</td>"
             f"<td>{_esc(c['data_gravacao'] or '—')}</td>"
             f"<td>{_esc(c['recebido_em'] or '—')}</td>"
-            f"<td style='text-align:right'>"
-            f"<form action='/post/{c['id']}/restaurar' method='post' style='margin:0'>"
+            f"<td style='text-align:right;white-space:nowrap'>"
+            f"<form action='/post/{c['id']}/restaurar' method='post' style='margin:0;display:inline'>"
             f"<button type='submit' style='background:none;border:none;color:#2e7d32;"
             f"font-size:0.78em;cursor:pointer;text-decoration:underline'>restaurar</button>"
+            f"</form>"
+            # Excluir definitivo: o passo final para sobra/lixo. Irreversível —
+            # só o registro no Log permanece. Confirmação obrigatória.
+            f"<form action='/post/{c['id']}/excluir' method='post' style='margin:0;display:inline;margin-left:12px' "
+            f"onsubmit=\"return confirm('Excluir {_esc(c['nome'])} DE VEZ? Não tem volta — "
+            f"sobra só o registro no Log do sistema.');\">"
+            f"<button type='submit' style='background:none;border:none;color:#adb5bd;"
+            f"font-size:0.78em;cursor:pointer;text-decoration:underline'>excluir</button>"
             f"</form></td></tr>"
             for c in posts_cancelados
         )
@@ -1207,7 +1215,7 @@ def painel():
             <summary style="padding:12px 16px;font-weight:600;font-size:0.9em;cursor:pointer;
                             background:#f1f3f5;list-style:none">
                 🗂️ Posts cancelados <span class="badge">{len(posts_cancelados)}</span>
-                <span style="font-weight:400;color:#adb5bd;font-size:0.85em">— fora da Operação e da Planilha; clique para ver / restaurar</span>
+                <span style="font-weight:400;color:#adb5bd;font-size:0.85em">— fora da Operação e da Planilha; clique para ver / restaurar / excluir</span>
             </summary>
             <table>
                 <tr><th>Nome</th><th>Tipo</th><th>Gravado</th><th>Recebido</th><th></th></tr>
@@ -1765,6 +1773,27 @@ def _tipos_post(row):
     return tipos
 
 
+def _data_logagem(cartao):
+    """
+    Data em que o material foi LOGADO no sistema — a data que deve aparecer (e
+    agrupar) na coluna "Concluído".
+
+    Usa SEMPRE um carimbo do relógio do sistema, na ordem: fim da cópia →
+    início da cópia → criação do registro. NUNCA usa data_inicio/data_fim, que
+    são mtimes dos arquivos do cartão: com o relógio da câmera errado (ex.: GoPro
+    travada em 2016) eles mentem a data e jogavam o Post em "01/01/2016". A pasta
+    de destino já acertava porque usa a data informada na ficha; a coluna não.
+    """
+    def _campo(nome):
+        try:
+            return cartao[nome]
+        except (KeyError, IndexError):
+            return None
+    return (_campo("transferencia_timestamp_fim")
+            or _campo("transferencia_timestamp_inicio")
+            or _campo("criado_em"))
+
+
 def _bar_concluido(cartao):
     """
     Barra compacta de um Post CONCLUÍDO (cartão ejetado), no estilo da barra
@@ -1777,7 +1806,8 @@ def _bar_concluido(cartao):
     tamanho = bd._fmt_tamanho_planilha(tam_bytes) if tam_bytes else "—"
     n_arq = cartao["total_arquivos_transferidos"] or cartao["total_arquivos_detectados"]
     info_tam = tamanho + (f" · {n_arq} arq." if n_arq else "")
-    data = cartao["data_inicio"] or cartao["data_fim"]
+    # Data da LOGAGEM (relógio do sistema), não o mtime dos arquivos (#4 s39).
+    data = _data_logagem(cartao)
     tipos = _tipos_post(cartao)
     tipo_html = (f"<span class='bar-tipo'>{_esc(' · '.join(tipos))}</span>"
                  if tipos else "")
@@ -1794,15 +1824,15 @@ def _bar_concluido(cartao):
 
 def _coluna_concluido_corpo(cards):
     """
-    Corpo da coluna "Concluído": agrupa os Posts por dia (data_inicio, queda para
-    data_fim) em blocos recolhíveis (<details> nativo, sem JS), mais recentes no
-    topo — exatamente como a barra lateral do ShotPut Pro.
+    Corpo da coluna "Concluído": agrupa os Posts por dia DA LOGAGEM (relógio do
+    sistema — ver _data_logagem) em blocos recolhíveis (<details> nativo, sem JS),
+    mais recentes no topo — exatamente como a barra lateral do ShotPut Pro.
     """
     if not cards:
         return "<p class='coluna-vazia'>—</p>"
     grupos = {}
     for c in cards:
-        dia = (c["data_inicio"] or c["data_fim"] or "")[:10]
+        dia = (_data_logagem(c) or "")[:10]
         grupos.setdefault(dia, []).append(c)
     # Dias em ordem decrescente; "sem data" (string vazia) vai para o fim
     dias_ord = sorted(grupos.keys(), key=lambda d: d or "0000-00-00", reverse=True)
@@ -2270,6 +2300,68 @@ def post_restaurar(formulario_id):
     if resultado.get("ok"):
         _mover_json_form(formulario_id, para_arquivo=False)
         logger.info(f"POST RESTAURAR | Ficha {formulario_id} restaurada | nome={resultado.get('nome')}")
+    return redirect("/")
+
+
+def _excluir_json_form(formulario_id):
+    """
+    Tombstone do JSON da ficha excluída: procura o JSON (na fila ou na subpasta de
+    cancelados) pelo db_formulario_id e o move para fila_forms/_arquivo_excluidos/.
+
+    Não APAGA o arquivo: o registro de verdade (a linha do banco) já saiu em
+    excluir_formulario; aqui só tiramos o JSON de qualquer lugar operacional e o
+    guardamos como lápide. JSON é metadado (não é mídia), mas a postura conservadora
+    do projeto é nunca destruir sem necessidade. Defensivo: falha só é logada.
+    """
+    try:
+        if not os.path.isdir(PASTA_FILA_FORMS):
+            return
+        arquivados = os.path.join(PASTA_FILA_FORMS, "_arquivo_cancelados")
+        excluidos = os.path.join(PASTA_FILA_FORMS, "_arquivo_excluidos")
+        # Procura nas duas origens prováveis: a fila viva e a pasta de cancelados.
+        for origem_dir in (PASTA_FILA_FORMS, arquivados):
+            if not os.path.isdir(origem_dir):
+                continue
+            for nome in os.listdir(origem_dir):
+                if not nome.endswith(".json"):
+                    continue
+                caminho = os.path.join(origem_dir, nome)
+                try:
+                    with open(caminho, "r", encoding="utf-8") as f:
+                        dados = json.load(f)
+                except (OSError, json.JSONDecodeError):
+                    continue
+                if dados.get("db_formulario_id") == formulario_id:
+                    os.makedirs(excluidos, exist_ok=True)
+                    os.rename(caminho, os.path.join(excluidos, nome))
+                    logger.info(f"POST | JSON da ficha excluída movido para lápide | {nome}")
+                    return
+    except Exception as erro:
+        logger.error(f"POST | Falha ao mover JSON da ficha excluída {formulario_id} | {erro}")
+
+
+@app.route("/post/<int:formulario_id>/excluir", methods=["POST"])
+def post_excluir(formulario_id):
+    """
+    Exclui DEFINITIVAMENTE um Post sem uso (hard delete): apaga a linha do banco
+    (cascata chips/textos/candidatos, desvincula os eventos do Log) e move o JSON
+    para a lápide. Irreversível — sobra só o registro no Log. Recusa Post com match
+    real. Acesso só na base (o portão barra remoto).
+    """
+    resultado = {"ok": False, "motivo": "banco_indisponivel"}
+    if BANCO_DISPONIVEL:
+        try:
+            conn = bd.obter_conexao()
+            resultado = bd.excluir_formulario(conn, formulario_id)
+            conn.close()
+        except Exception as erro:
+            logger.error(f"POST EXCLUIR | Erro | ficha {formulario_id} | {erro}")
+            resultado = {"ok": False, "motivo": f"erro_interno: {erro}"}
+    if resultado.get("ok"):
+        _excluir_json_form(formulario_id)
+        logger.info(f"POST EXCLUIR | Ficha {formulario_id} excluída | nome={resultado.get('nome')}")
+    else:
+        logger.warning(f"POST EXCLUIR | Não excluída | ficha {formulario_id} | motivo={resultado.get('motivo')}")
     return redirect("/")
 
 
@@ -5986,6 +6078,17 @@ PAINEL_CSS = """
                    padding:7px 10px; font-size:0.82em; margin-top:6px; }
 .controle-sistema { display:flex; gap:10px; flex-wrap:wrap; }
 .nota-command { color:#868e96; font-size:0.82em; margin-top:12px; line-height:1.5; }
+.conexao-botoes { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px; }
+.conexao.inativo { opacity:0.65; }
+.ajuda-sheets { background:#f0fbf6; border:1px solid #c6efdd; border-radius:6px;
+                padding:8px 10px; margin-bottom:8px; }
+.ajuda-passos { font-size:0.78em; color:#0b6b4a; margin-bottom:6px; line-height:1.4; }
+.ajuda-sa { display:flex; align-items:center; gap:6px; }
+.ajuda-sa code { flex:1; background:#fff; border:1px solid #c6efdd; border-radius:5px;
+                 padding:5px 8px; font-size:0.76em; color:#155; word-break:break-all; }
+.btn-copiar { background:#1D9E75; color:#fff; border:none; border-radius:5px;
+              padding:5px 10px; font-size:0.76em; cursor:pointer; white-space:nowrap; }
+.btn-copiar:hover { background:#178a65; }
 """
 
 
@@ -6087,47 +6190,118 @@ def _testar_conexao(chave):
     return False, "Conexão desconhecida."
 
 
+def _ajuda_sheets_html():
+    """Caixa de ajuda do Google Sheets: a conta de serviço pronta para copiar.
+
+    O operador precisa COMPARTILHAR a planilha nova (como Editor) com esta conta —
+    senão o exportador não consegue escrever. Deixar o e-mail copiável aqui, ao lado
+    da caixinha, evita ter de procurá-lo em outro lugar (pedido do idealizador).
+    """
+    sa = (os.environ.get("GMA_SHEETS_SA", "") or "").strip()
+    if not sa:
+        return ""
+    sa_esc = _esc(sa)
+    return (
+        "<div class='ajuda-sheets'>"
+        "<div class='ajuda-passos'>Planilha NOVA por projeto → "
+        "<b>Compartilhar</b> como <b>Editor</b> com esta conta → cole o link aqui:</div>"
+        "<div class='ajuda-sa'>"
+        f"<code id='sa-email'>{sa_esc}</code>"
+        f"<button type='button' class='btn btn-copiar' "
+        f"onclick=\"navigator.clipboard.writeText('{sa_esc}').then(function(){{"
+        "var b=event.target;var t=b.textContent;b.textContent='copiado ✓';"
+        "setTimeout(function(){b.textContent=t;},1500);})\">copiar</button>"
+        "</div></div>"
+    )
+
+
 def _conexoes_cockpit():
     """Monta a lista de conexões do projeto ativo para o cockpit."""
     _slug, cfg = painel_config.projeto_ativo()
     db = painel_config.caminho_db(cfg)
     destino = cfg.get("destino") or painel_config.DESTINO_PADRAO
+    estado = painel_config.carregar_estado()
 
     def sit(valor):
         return ("definida", "ok") if (valor or "").strip() else ("— (vazia)", "off")
 
-    senha_txt, senha_st = sit(os.environ.get("GMA_SENHA"))
-    tally_txt, tally_st = sit(os.environ.get("TALLY_WEBHOOK_SECRET"))
-    sid = os.environ.get("GMA_SHEETS_ID", "").strip()
+    # Google Sheets — ID por projeto (painel_estado) ou fallback no .env
+    sid = (cfg.get("sheets_id") or os.environ.get("GMA_SHEETS_ID", "")).strip()
+    sheets_ativo = cfg.get("sheets_ativo", True)
     sheets_txt = ("…" + sid[-8:]) if sid else "— (não configurado)"
-    link = os.environ.get("GMA_LINK_FICHA", "").strip()
-    tunel_txt = link if link else "auto (descobre o ngrok)"
-    host = os.environ.get("GMA_HOST", "127.0.0.1").strip() or "127.0.0.1"
-    porta = os.environ.get("GMA_PORT", "5050").strip() or "5050"
+    if not sheets_ativo:
+        sheets_status = "off"
+    elif sid:
+        sheets_status = "ok"
+    else:
+        sheets_status = "aviso"
+
+    # Túnel — link override por projeto (painel_estado) ou fallback no .env
+    tunel_link = (cfg.get("tunel_link") or os.environ.get("GMA_LINK_FICHA", "")).strip()
+    tunel_ativo = cfg.get("tunel_ativo", True)
+    tunel_url_real = tunel_link
+    if not tunel_link and tunel_ativo:
+        # Verifica ngrok ao vivo (timeout curto para não travar o carregamento)
+        try:
+            import urllib.request as _ur
+            with _ur.urlopen("http://127.0.0.1:4040/api/tunnels", timeout=2) as resp:
+                dados = json.loads(resp.read().decode())
+            for t in dados.get("tunnels", []):
+                url = t.get("public_url", "")
+                if url.startswith("https"):
+                    tunel_url_real = url + "/ficha"
+                    break
+        except Exception:
+            pass
+    if not tunel_ativo:
+        tunel_status, tunel_txt = "off", "desativado"
+    elif tunel_url_real:
+        tunel_status, tunel_txt = "ok", tunel_url_real
+    else:
+        tunel_status, tunel_txt = "aviso", "ngrok não encontrado — suba o túnel"
+
+    # Porta / host — estado global ou fallback no .env
+    host = (estado.get("host") or os.environ.get("GMA_HOST", "127.0.0.1")).strip() or "127.0.0.1"
+    porta = (estado.get("porta") or os.environ.get("GMA_PORT", "5050")).strip() or "5050"
+    host_rede = host not in ("127.0.0.1", "localhost")
+
+    senha_txt, senha_st = sit(os.environ.get("GMA_SENHA"))
 
     return [
         {"chave": "banco", "rot": "Banco do projeto", "val": db,
          "desc": "Onde ficam os dados deste projeto (fichas, cartões, planilha).",
-         "status": "ok" if os.path.isfile(db) else "aviso", "testavel": True},
+         "status": "ok" if os.path.isfile(db) else "aviso", "testavel": True,
+         "direcionar": True, "campo": db, "acao": "/painel/banco",
+         "placeholder": "Caminho do banco (ex.: projetos/meu_evento/gma.db)"},
         {"chave": "destino", "rot": "Pasta dos materiais", "val": destino,
          "desc": "Para onde o material é copiado e organizado (EVENTO/DATA/TIPO/NOME).",
          "status": "ok" if os.path.isdir(destino) else "aviso", "testavel": True,
-         "direcionar": True},
+         "direcionar": True, "campo": destino, "acao": "/painel/destino",
+         "placeholder": "Caminho da pasta de destino"},
         {"chave": "sheets", "rot": "Google Sheets", "val": sheets_txt,
-         "desc": "Espelho de entrega na nuvem (editores). Teste gera um token real.",
-         "status": "ok" if sid else "off", "testavel": True},
+         "desc": "Espelho de entrega na nuvem. ID salvo por projeto.",
+         "status": sheets_status, "testavel": bool(sid),
+         "direcionar": True, "campo": sid, "acao": "/painel/sheets-id",
+         "placeholder": "Cole o link (ou o ID) da planilha Google deste projeto",
+         "ajuda_html": _ajuda_sheets_html(),
+         "ativavel": True, "ativo": sheets_ativo, "acao_ativar": "/painel/sheets-ativo"},
         {"chave": "tunel", "rot": "Túnel / ficha remota", "val": tunel_txt,
-         "desc": "Link público da ficha (ngrok) para os celulares do set.",
-         "status": "ok" if link else "off", "testavel": True},
+         "desc": "Link público da ficha (ngrok). Vazio = detecta automaticamente.",
+         "status": tunel_status, "testavel": True,
+         "direcionar": True, "campo": tunel_link, "acao": "/painel/tunel-link",
+         "placeholder": "Link override (ex.: https://xyz.ngrok.io) — vazio = auto",
+         "ativavel": True, "ativo": tunel_ativo, "acao_ativar": "/painel/tunel-ativo"},
         {"chave": "senha", "rot": "Senha das telas", "val": senha_txt,
          "desc": "Portão para a internet. Vazia = uso local livre.",
          "status": senha_st, "testavel": False},
-        {"chave": "tally", "rot": "Tally (reserva)", "val": tally_txt,
-         "desc": "Formulário externo de reserva. Opcional.",
-         "status": tally_st, "testavel": False},
         {"chave": "porta", "rot": "Porta / host", "val": f"{host}:{porta}",
-         "desc": "Onde o painel escuta. 0.0.0.0 libera para a rede local.",
-         "status": "ok", "testavel": False},
+         "desc": "Onde o painel escuta. 0.0.0.0 = libera para a rede local (celulares no Wi-Fi).",
+         "status": "ok", "testavel": False,
+         "direcionar_host": True, "campo_host": host, "campo_porta": porta,
+         "acao": "/painel/host",
+         "ativavel": True, "ativo": host_rede,
+         "acao_ativar": "/painel/host-rede",
+         "label_ativar": "Liberar rede local", "label_desativar": "Só local"},
     ]
 
 
@@ -6190,30 +6364,88 @@ def _pagina_painel(aviso=None, erro=None, resultado_teste=None):
     # ── Conexões (cockpit) ───────────────────────────────────────────────────
     cards = []
     for c in _conexoes_cockpit():
+        chave = c["chave"]
+        c_status = c["status"]
+        c_rot = _esc(c["rot"])
+        c_val = _esc(c["val"])
+        c_desc = _esc(c["desc"])
+        c_ativo = c.get("ativo", True)
+
         res_html = ""
-        if resultado_teste and resultado_teste[0] == c["chave"]:
+        if resultado_teste and resultado_teste[0] == chave:
             _ch, ok, msg = resultado_teste
-            res_html = (f"<div class='resultado-teste'>{'✅' if ok else '⚠️'} {_esc(msg)}</div>")
+            icone = "✅" if ok else "⚠️"
+            res_html = f"<div class='resultado-teste'>{icone} {_esc(msg)}</div>"
+
+        # Botão Testar
         botao_testar = ""
-        if c["testavel"]:
+        if c.get("testavel") and c_ativo:
             botao_testar = (
-                f"<form method='POST' action='/painel/testar/{c['chave']}' style='margin:0'>"
-                f"<button class='btn btn-testar' type='submit'>Testar</button></form>"
+                "<form method='POST' action='/painel/testar/" + chave + "' style='margin:0'>"
+                "<button class='btn btn-testar' type='submit'>Testar</button></form>"
             )
-        direcionar = ""
+
+        # Botão Ativar / Desativar
+        ativar_form = ""
+        if c.get("ativavel"):
+            acao_ativar = c.get("acao_ativar", "")
+            if c_ativo:
+                label = c.get("label_desativar", "Desativar")
+                ativar_form = (
+                    f"<form method='POST' action='{acao_ativar}' style='margin:0'>"
+                    f"<input type='hidden' name='slug' value='{_esc(ativo_slug)}'>"
+                    "<input type='hidden' name='ativo' value='0'>"
+                    f"<button class='btn btn-secund' type='submit'>{label}</button></form>"
+                )
+            else:
+                label = c.get("label_ativar", "Ativar")
+                ativar_form = (
+                    f"<form method='POST' action='{acao_ativar}' style='margin:0'>"
+                    f"<input type='hidden' name='slug' value='{_esc(ativo_slug)}'>"
+                    "<input type='hidden' name='ativo' value='1'>"
+                    f"<button class='btn btn-trocar' type='submit'>{label}</button></form>"
+                )
+
+        botoes = ""
+        if botao_testar or ativar_form:
+            botoes = f"<div class='conexao-botoes'>{botao_testar}{ativar_form}</div>"
+
+        # Formulário de redirecionamento
+        redir_form = ""
         if c.get("direcionar"):
-            direcionar = (
-                "<form method='POST' action='/painel/destino' class='linha-form'>"
+            ph = _esc(c.get("placeholder", "Caminho ou endereço"))
+            val_campo = _esc(c.get("campo", ""))
+            acao = c.get("acao", "")
+            redir_form = (
+                f"<form method='POST' action='{acao}' class='linha-form'>"
                 f"<input type='hidden' name='slug' value='{_esc(ativo_slug)}'>"
-                f"<input type='text' name='destino' value='{_esc(c['val'])}'>"
-                "<button class='btn btn-secund' type='submit'>Direcionar</button></form>"
+                f"<input type='text' name='valor' value='{val_campo}' placeholder='{ph}'>"
+                "<button class='btn btn-secund' type='submit'>Redirecionar</button></form>"
             )
+        elif c.get("direcionar_host"):
+            acao = c.get("acao", "")
+            val_host = _esc(c.get("campo_host", ""))
+            val_porta = _esc(c.get("campo_porta", ""))
+            redir_form = (
+                f"<form method='POST' action='{acao}' class='linha-form'>"
+                f"<input type='hidden' name='slug' value='{_esc(ativo_slug)}'>"
+                f"<input type='text' name='host' value='{val_host}' "
+                "placeholder='host' style='max-width:140px'>"
+                f"<input type='text' name='porta' value='{val_porta}' "
+                "placeholder='porta' style='max-width:72px'>"
+                "<button class='btn btn-secund' type='submit'>Aplicar</button></form>"
+            )
+
+        # "inativo" só para conexões com ativável real (sheets, túnel), não para host
+        inativo_cls = " inativo" if (c.get("ativavel") and not c_ativo and "acao_ativar" in c and c["chave"] != "porta") else ""
         cards.append(
-            "<div class='conexao'>"
-            f"<div class='top'><span class='dot {c['status']}'></span><span class='rot'>{_esc(c['rot'])}</span></div>"
-            f"<div class='val'>{_esc(c['val'])}</div>"
-            f"<div class='desc'>{_esc(c['desc'])}</div>"
-            f"{botao_testar}{direcionar}{res_html}"
+            f"<div class='conexao{inativo_cls}'>"
+            f"<div class='top'><span class='dot {c_status}'></span>"
+            f"<span class='rot'>{c_rot}</span></div>"
+            f"<div class='val'>{c_val}</div>"
+            f"<div class='desc'>{c_desc}</div>"
+            f"{c.get('ajuda_html', '')}"
+            f"{botoes}{redir_form}{res_html}"
             "</div>"
         )
     partes.append(
@@ -6296,7 +6528,8 @@ def painel_novo():
 def painel_destino():
     """Direciona a pasta dos materiais do projeto ativo."""
     slug = (request.form.get("slug") or "").strip()
-    caminho = (request.form.get("destino") or "").strip()
+    # Aceita tanto 'valor' (novo padrão) quanto 'destino' (retrocompat)
+    caminho = (request.form.get("valor") or request.form.get("destino") or "").strip()
     try:
         painel_config.definir_destino(slug, caminho)
         logger.info(f"PAINEL | Destino de '{slug}' → {caminho}")
@@ -6304,6 +6537,112 @@ def painel_destino():
     except Exception as e:
         logger.warning(f"PAINEL | Falha ao direcionar destino: {e}")
         return _pagina_painel(erro=f"Não deu para direcionar a pasta: {e}")
+
+
+@app.route("/painel/banco", methods=["POST"])
+def painel_banco():
+    """Redireciona o caminho do banco do projeto ativo."""
+    slug = (request.form.get("slug") or "").strip()
+    valor = (request.form.get("valor") or "").strip()
+    try:
+        painel_config.definir_banco(slug, valor)
+        logger.info(f"PAINEL | Banco de '{slug}' → {valor}")
+        return _pagina_painel(aviso="Caminho do banco atualizado. Reinicie o sistema para aplicar.")
+    except Exception as e:
+        logger.warning(f"PAINEL | Falha ao redirecionar banco: {e}")
+        return _pagina_painel(erro=f"Não deu para atualizar o banco: {e}")
+
+
+@app.route("/painel/sheets-id", methods=["POST"])
+def painel_sheets_id():
+    """Define o ID da planilha Google do projeto ativo."""
+    slug = (request.form.get("slug") or "").strip()
+    valor = (request.form.get("valor") or "").strip()
+    try:
+        painel_config.definir_sheets(slug, valor)
+        logger.info(f"PAINEL | Sheets ID de '{slug}' atualizado")
+        return _pagina_painel(aviso="ID da planilha atualizado. Reinicie para aplicar ao exportador.")
+    except Exception as e:
+        logger.warning(f"PAINEL | Falha ao atualizar Sheets ID: {e}")
+        return _pagina_painel(erro=f"Não deu para atualizar o Sheets: {e}")
+
+
+@app.route("/painel/sheets-ativo", methods=["POST"])
+def painel_sheets_ativo():
+    """Ativa ou desativa a sincronização com o Google Sheets."""
+    slug = (request.form.get("slug") or "").strip()
+    ativo = request.form.get("ativo", "1") == "1"
+    try:
+        painel_config.definir_sheets_ativo(slug, ativo)
+        msg = "Google Sheets ativado." if ativo else "Google Sheets desativado (exportador pausado)."
+        logger.info(f"PAINEL | Sheets de '{slug}' → {'ativo' if ativo else 'inativo'}")
+        return _pagina_painel(aviso=msg)
+    except Exception as e:
+        logger.warning(f"PAINEL | Falha ao mudar estado Sheets: {e}")
+        return _pagina_painel(erro=f"Não deu para mudar o estado do Sheets: {e}")
+
+
+@app.route("/painel/tunel-link", methods=["POST"])
+def painel_tunel_link():
+    """Define o link override do túnel do projeto ativo."""
+    slug = (request.form.get("slug") or "").strip()
+    valor = (request.form.get("valor") or "").strip()
+    try:
+        painel_config.definir_tunel_link(slug, valor)
+        logger.info(f"PAINEL | Link do túnel de '{slug}' → {valor or '(auto)'}")
+        msg = (f"Link do túnel configurado." if valor
+               else "Link removido — o painel vai detectar o ngrok automaticamente.")
+        return _pagina_painel(aviso=msg)
+    except Exception as e:
+        logger.warning(f"PAINEL | Falha ao atualizar link do túnel: {e}")
+        return _pagina_painel(erro=f"Não deu para atualizar o túnel: {e}")
+
+
+@app.route("/painel/tunel-ativo", methods=["POST"])
+def painel_tunel_ativo():
+    """Ativa ou desativa o acesso remoto (ficha via túnel)."""
+    slug = (request.form.get("slug") or "").strip()
+    ativo = request.form.get("ativo", "1") == "1"
+    try:
+        painel_config.definir_tunel_ativo(slug, ativo)
+        msg = ("Ficha remota ativada — o QR voltará a aparecer." if ativo
+               else "Ficha remota desativada — só operador local acessa agora.")
+        logger.info(f"PAINEL | Túnel de '{slug}' → {'ativo' if ativo else 'inativo'}")
+        return _pagina_painel(aviso=msg)
+    except Exception as e:
+        logger.warning(f"PAINEL | Falha ao mudar estado do túnel: {e}")
+        return _pagina_painel(erro=f"Não deu para mudar o estado do túnel: {e}")
+
+
+@app.route("/painel/host", methods=["POST"])
+def painel_host():
+    """Define o host e porta do Flask (aplica no próximo reinício)."""
+    host = (request.form.get("host") or "127.0.0.1").strip()
+    porta = (request.form.get("porta") or "5050").strip()
+    try:
+        painel_config.definir_host_porta(host, porta)
+        logger.info(f"PAINEL | Host/porta → {host}:{porta}")
+        return _pagina_painel(aviso=f"Host configurado para {host}:{porta}. Reinicie o sistema para aplicar.")
+    except Exception as e:
+        logger.warning(f"PAINEL | Falha ao atualizar host/porta: {e}")
+        return _pagina_painel(erro=f"Não deu para atualizar o host: {e}")
+
+
+@app.route("/painel/host-rede", methods=["POST"])
+def painel_host_rede():
+    """Toggle rápido: libera para a rede local (0.0.0.0) ou volta ao local (127.0.0.1)."""
+    ativo = request.form.get("ativo", "1") == "1"
+    estado = painel_config.carregar_estado()
+    porta = (estado.get("porta") or os.environ.get("GMA_PORT", "5050")).strip() or "5050"
+    host = "0.0.0.0" if ativo else "127.0.0.1"
+    try:
+        painel_config.definir_host_porta(host, porta)
+        msg = ("Rede local liberada (0.0.0.0). Reinicie para aplicar — celulares no Wi-Fi vão conseguir acessar."
+               if ativo else "Voltou para acesso só local (127.0.0.1). Reinicie para aplicar.")
+        logger.info(f"PAINEL | Host-rede → {host}")
+        return _pagina_painel(aviso=msg)
+    except Exception as e:
+        return _pagina_painel(erro=f"Não deu para mudar o host: {e}")
 
 
 @app.route("/painel/testar/<chave>", methods=["POST"])

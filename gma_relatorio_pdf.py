@@ -212,6 +212,7 @@ def parse_shotputpro_log(caminho_log):
         "total_verificados": 0,
         "total_falhos":      0,
         "total_avisos":      0,
+        "total_proxies":     0,
         "tamanho_total":     0,
         "duracao":           "",
         "velocidade":        "",
@@ -261,6 +262,15 @@ def parse_shotputpro_log(caminho_log):
         critico_attr = buscar(arq, "critical", "Critical")
         critico = critico_attr.lower() != "no" if critico_attr else True
 
+        # Tipo honesto do arquivo (Fatia B): o copiador grava "kind" no .sppo
+        # (video/foto/audio/proxy/outro). Logs antigos sem o atributo caem no
+        # classificador por extensão (mesma resposta), então nada quebra.
+        kind = (buscar(arq, "kind", "Kind") or "").lower()
+        if not kind and (nome or src_path):
+            kind = classificar_arquivo(nome or os.path.basename(src_path or ""))
+        # Para proxy, o clipe principal a que ele pertence (pista por nome).
+        proxy_de = buscar(arq, "proxyOf", "ProxyOf")
+
         dados["arquivos"].append({
             "nome":         nome or "(sem nome)",
             "src_path":     src_path or "",
@@ -271,6 +281,8 @@ def parse_shotputpro_log(caminho_log):
             "checksum":     (chk_src[:16] + "...") if len(chk_src) > 16 else chk_src,
             "ok":           ok,
             "critico":      critico,
+            "tipo":         kind,
+            "proxy_de":     proxy_de,
         })
 
     # Resumo geral
@@ -282,6 +294,12 @@ def parse_shotputpro_log(caminho_log):
         dados["total_verificados"] = int(buscar(resumo, "verified", "Verified") or 0)
         dados["total_falhos"]      = int(buscar(resumo, "failed", "Failed", "errors") or 0)
         dados["total_avisos"]      = int(buscar(resumo, "systemWarnings", "warnings") or 0)
+        # Proxies copiados (não contam como vídeo). Atributo gravado pelo copiador;
+        # se faltar (log antigo), conta pelos arquivos marcados como proxy.
+        proxies_attr = buscar(resumo, "proxies", "Proxies")
+        dados["total_proxies"]     = (int(proxies_attr) if proxies_attr
+                                      else sum(1 for a in dados["arquivos"]
+                                               if str(a.get("tipo", "")).startswith("proxy")))
         dados["tamanho_total"]     = int(buscar(resumo, "totalSize", "size", "totalBytes") or 0)
         dados["duracao"]           = buscar(resumo, "duration", "Duration", "elapsed")
         dados["velocidade"]        = buscar(resumo, "speed", "Speed", "avgSpeed")
@@ -291,6 +309,8 @@ def parse_shotputpro_log(caminho_log):
         dados["total_verificados"] = sum(1 for a in dados["arquivos"] if a["ok"])
         dados["total_falhos"]      = sum(1 for a in dados["arquivos"] if not a["ok"] and a.get("critico", True))
         dados["total_avisos"]      = sum(1 for a in dados["arquivos"] if not a["ok"] and not a.get("critico", True))
+        dados["total_proxies"]     = sum(1 for a in dados["arquivos"]
+                                         if str(a.get("tipo", "")).startswith("proxy"))
         try:
             dados["tamanho_total"] = sum(int(a["tamanho"]) for a in dados["arquivos"]
                                          if str(a["tamanho"]).isdigit())

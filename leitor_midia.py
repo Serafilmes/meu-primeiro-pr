@@ -460,8 +460,12 @@ def processar_json(caminho_arquivo, nome_arquivo, dados, logger):
         lista_arquivos_para_avaliacao = resultado_analise.get(
             "_lista_arquivos_para_assinatura", []
         )
+        # PROXY entra junto com OUTRO aqui: um cartão que só tem proxies (sem o
+        # clipe principal) ainda guarda conteúdo de footage — não pode ser
+        # ignorado em silêncio; deve cair em "revisar".
         arquivos_outro = [
-            a for a in lista_arquivos_para_avaliacao if a.get("tipo") == "OUTRO"
+            a for a in lista_arquivos_para_avaliacao
+            if a.get("tipo") in ("OUTRO", "PROXY")
         ]
         maior_arquivo_outro    = max((a["tamanho"] for a in arquivos_outro), default=0)
         tamanho_total_outro    = sum(a["tamanho"] for a in arquivos_outro)

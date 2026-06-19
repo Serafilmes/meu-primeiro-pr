@@ -1,7 +1,7 @@
 # Contexto Atual — Sistema GMA
 ## Estado vivo do projeto (carregar em TODA sessão junto com `arquitetura_GMA.md`)
 
-> Última atualização: 2026-06-17 (sessão 35)
+> Última atualização: 2026-06-19 (sessão 39)
 > Para detalhes técnicos históricos, ver `historico_GMA.md` (não carregar por padrão).
 
 ---
@@ -12,7 +12,7 @@
 |---|---|---|
 | 1 | Check-in e identificação | ⚠️ Quase completa — Nova Ficha v2 ✅ + multi-seleção/data inteligente/"quem preencheu" (s33); falta mural dos câmeras, login do operador (2.3) e domínio fixo do túnel |
 | 2 | Transferência | ✅ Concluída e testada com cartão real |
-| 3 | Controle e segurança das informações | ✅ Quase completa — Kanban + Planilha + Molde; grupos editáveis (s33); Sheets dinâmico (s34); **exportador rodando em loop contínuo dentro do sistema completo (s35)** |
+| 3 | Controle e segurança das informações | ✅ Quase completa — Kanban + Planilha + Molde; grupos editáveis (s33); Sheets dinâmico (s34); exportador em loop (s35); **Sheets por projeto ligado no exportador (s39)** |
 | 4 | Auditoria + liberação do cartão | ✅ Concluída — ciclo integrado testado |
 | 5 | Plataforma profissional + multi-máquina | 🔧 Em construção — **Painel de Controle Fatia 1 ✅ (s37)**: cockpit no Flask (troca de projeto com reinício guiado, conexões com teste, ligar/encerrar) |
 | 6 | IA assíncrona | 📋 Futura |
@@ -21,6 +21,41 @@
 ---
 
 ## O que acabou de ser feito (sessões recentes)
+
+### ✅ Sessão 39 (TESTE ao vivo + BUILD #1 + #2 proxy A/B) — cópia real GoPro, Sheets por projeto, proxy na C2, redesenho C2/C4
+**Branch:** `s39-sheets-por-projeto`. **Sem commit.** Teste com cartão GoPro real (HERO7, 107 arq / 7,7 GB) no projeto **SP2B**.
+
+**🧪 O teste de cópia (ponta a ponta, com tropeços reais):**
+- **1ª cópia FALHOU** na auditoria: 2 arquivos (`GOPR9381.JPG/.GPR`) deram `[Errno 6] Device not configured` = **desconexão momentânea do cartão** (leitor/porta). O sistema agiu certo — reprovou e **não liberou o cartão**. Cartão íntegro (lia normal depois).
+- **Reset para MATCH** (a pedido): revertido cartão+Post ao estado `matched` — banco (`status`, limpa campos de transferência, apaga 106 linhas de `arquivos`), JSON da fila (`status=matched`, tira marcas de transferência), contador de volta a 001, **match preservado**. Backups: `gma.db.bak_reset_*`, `/tmp/porteiro_sp2b.bak.json`.
+- **2ª cópia OK** (porta nova ~4x mais rápida: **6min44s** vs ~30min): 106/106 checksums OK.
+- **Mas C4 travou em loop infinito** reprovando "108 vs 106": **2 `.DS_Store`** que o Finder criou na pasta (a ignore-list da auditoria cobre `.sppo`/`.pdf` mas não lixo do macOS). Removidos os `.DS_Store` → **ciclo fechou**: Parashoot check OK + erase OK → cartão **CONCLUIDO**.
+- **Lição estrutural (vira redesenho):** a "contagem de arquivos" tropeçou em 3 não-mídias diferentes numa noite — `.fseventsd` (sistema do cartão), `.DS_Store` (macOS), e o `.sppo`/`.pdf` (do próprio GMA). **Falta UMA regra única do que é "mídia real".**
+
+**✅ #1 PRONTO E VERIFICADO — Google Sheets por projeto (a ponta solta do s39):**
+- **Bug:** `exportador_sheets.py` lia só o `GMA_SHEETS_ID` **global do `.env`**; a planilha por-projeto (painel_estado `sheets_id`) só aparecia no painel, nunca no daemon → dados do SP2B caíam na **planilha global** ("outro caminho").
+- **Conserto:** novo `_resolver_sheet_alvo()` resolve a planilha do **projeto ativo dinamicamente**; `_abrir_planilha(sheet_id)` recebe o ID por parâmetro; `_credenciais_configuradas()` passou a checar só a autenticação. **Regra de isolamento:** projeto com planilha própria usa a dele; **laboratório** cai no global do `.env` (compat.); **projeto real sem planilha → PAUSA** (não vaza pro global) com log claro.
+- **SP2B estava sem `sheets_id`** (só rio2c/rock_in_rio tinham) → configurado (`1Z-lQ3...EsRK9Ydk`, diferente do rio2c). **Verificado:** `--teste` com `GMA_DB` do SP2B + `/usr/bin/python3` (o que tem gspread) escreveu o cartão na planilha certa.
+- **🔶 Falta aplicar no daemon vivo:** o exportador rodando (PID antigo) só adota o código novo após **Reiniciar pelo painel**; até lá segue escrevendo na global (ruído inofensivo).
+
+**✅ #2 PROXY — Fatia A ✅ (Leitor) + Fatia B ✅ (marca na C2). NÃO commitado.**
+- **Fatia A (Leitor, s39 antes):** `ler_cartao.EXTENSOES` ganhou `PROXY` (`.lrv`) ligado ao clipe via `proxy_do_clipe` (GoPro: `GL019385.LRV`→`GX019385.MP4`); `.gpr` (RAW) virou FOTO. Antes caíam em "OUTRO".
+- **🔄 VIRADA DE DESENHO (s39, com o idealizador):** a ideia original ("nunca aceitar = **pular** o proxy na cópia") foi **descartada** — pular deixaria o cartão com arquivos nunca verificados, e a C4 liberaria o **Parashoot embaralhar/apagar** material não copiado (fere o princípio nº 2) + bagunçaria a contagem. **Nova regra: SEMPRE copiar, mas AVISAR** (e marcar). A política de 3 modos no cadastro fica **pra depois** ("só o aviso, por enquanto"); se voltar, mora **no profissional** (decidido), não na marca.
+- **Fatia B construída (s39) — marca de proxy atravessa o pipeline:** `copiador.py` classifica cada arquivo por `ler_cartao` (fonte única), **sempre copia**, marca o proxy (`tipo=PROXY` + `proxy_de`=clipe), grava `kind`/`proxyOf` no **`.sppo`** + `proxies` no summary, conta `total_proxies` e **avisa no log**. `gma_relatorio_pdf.parse_shotputpro_log` lê a marca de volta (fallback por extensão) + `total_proxies`. `banco_dados`: colunas novas `tipo`/`proxy_de` em `arquivos` (migração não-destrutiva `migrar_schema_arquivos`) gravadas por `gravar_arquivos_do_log`. `transferencia.py` leva o aviso "N proxies copiados" pro JSON do material + log.
+- **"Não conta como vídeo" SIM; "não gera frames" NÃO — correção do idealizador (s39):** o proxy **NÃO** vira uma entrada de vídeo própria (não duplica a contagem nem a entrega). Mas **o proxy É a fonte preferida dos frames do clipe** — `extrator_frames.thumbnails_de_video` faz `fonte = lrv if lrv else original` ([extrator_frames.py:377](extrator_frames.py:377)): usa o `.LRV` (leve/compatível) pra **não sobrecarregar o destino** processando o arquivo pesado; **sem proxy, extrai do original**. Os frames pertencem ao clipe; o proxy é só a fonte. **A Fatia B não tocou nessa lógica** — ela já estava assim e continua certa.
+- **Testes:** `teste_proxy_c2.py` (novo) cobre copiador→.sppo→parser→banco — passou; `teste_copiador_politica.py` (integridade) sem regressão.
+- **Foto×frame:** provavelmente thumbnails (Sony) → **só estrutura**, sem heurística agora (segue adiado).
+- **🔶 Para ativar no sistema rodando:** Reiniciar pelo Painel (re-sobe os processos com o código novo).
+
+**🎯 Redesenho C2/C4 + benchmark (em desenho com o idealizador — registrar e construir depois):**
+- **C2:** copiar rápido (1 leitura do cartão — checksum *durante* a cópia, não em passada separada); verificar por **contagem+peso** com a **regra única do que é mídia**; **auto-curar** (recopiar só o que divergiu, usando o manifesto `.sppo`). Motivo: velocidade é crítica (hardware/servidor).
+- **C4 + frames:** **frames travam a liberação** do cartão (com opção de desligar); **10 frames/vídeo**; **foto não gera frame**. Origem×cópia da extração **automática pela velocidade da pasta destino** (destino lento → extrai do cartão); configurável numa aba **Reports**. (Frames já parcialmente na C4 — `auditoria.py` chama `extrator_frames.py`.)
+- **Benchmark de velocidade:** **sob demanda** (botões na Operação: cópia em andamento, pasta destino, cartão fora de cópia), **nunca automático no ciclo**; alimenta também a decisão automática dos frames.
+
+**📋 Considerações do teste (#3 ✅, #4 ✅ na s39; #5 pendente):**
+- **✅ #3 — EXCLUIR Post sem uso (hard delete) — construído (s39).** Recorte escolhido pelo idealizador: a peça que faltava era o **excluir definitivo** (cancelar/restaurar já existiam da s38). `banco_dados.excluir_formulario`: apaga a linha de `formularios` em cascata (chips/textos/`match_candidatos`), **desvincula os eventos do Log** (`eventos.formulario_id`→NULL, não apaga) + grava `post_excluido` com nome/id = "sobra só um relatório com logs". **Guarda:** recusa Post com **match real** (`ficha_em_uso`). Flask: rota `POST /post/<id>/excluir` + botão **"excluir"** na seção "Posts cancelados" (padrão cancela→exclui, igual aos profissionais) + `_excluir_json_form` move o JSON pra lápide `fila_forms/_arquivo_excluidos/`. Teste `teste_excluir_post.py` (A cascata+Log sobrevive · C guarda match · D inexistente) ✅. **Falta (fora do recorte):** "reverter ENTREGA" (desfazer cartão já matched — o reset-para-MATCH manual do teste) e a reorg que migra cancelar/cancelados pra aba "Nova Ficha".
+- **✅ #4 — Data errada (Concluído 01/01/2016) — corrigido (s39).** A coluna "Concluído" agrupava e exibia por `data_inicio` (mtime do arquivo mais antigo = **relógio zoado da GoPro 2016**). Novo helper `_data_logagem(cartao)` usa SEMPRE o relógio do sistema: `transferencia_timestamp_fim` → `transferencia_timestamp_inicio` → `criado_em`; **nunca** `data_inicio`/`data_fim` (que mentem com câmera desajustada — por isso `data_fim` do plano original não resolveria). Aplicado em `_bar_concluido` e `_coluna_concluido_corpo` ([flask_gma.py:1768](flask_gma.py:1768)).
+- **#5 — Nomes curtos:** nome completo só no cadastro; pasta/visualização/planilha usam forma curta — raiz do dia `FERNANDO_DUMITRIU`, cartão `DUMITRIU_001`. Colisão de sobrenome (Silva)→usa o 2º nome; 2º nome composto ("de Souza")→próximo sobrenome. Toca C2 (pasta)+tela+planilha.
 
 ### ✅ Sessão 38 (BUILD) — MATCH MANUAL (Camada 1) — o "último recurso" do operador
 **Arquivos:** `banco_dados.py`, `matcher.py`, `flask_gma.py`. **Sem commit.** Testado ponta a ponta em banco isolado (`/tmp`) + test client do Flask; laboratório e projetos intocados.

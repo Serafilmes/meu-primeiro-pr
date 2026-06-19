@@ -34,20 +34,47 @@ EXTENSOES = {
     "FOTO": {
         ".jpg", ".jpeg", ".png", ".tiff", ".tif", ".heic", ".heif",
         ".cr2", ".cr3", ".nef", ".arw", ".dng", ".raf", ".rw2", ".orf", ".raw",
+        ".gpr",  # GoPro RAW (a foto crua que acompanha o .jpg) — antes caía em OUTRO
     },
     "AUDIO": {
         ".wav", ".bwf", ".aif", ".aiff", ".mp3", ".flac", ".m4a",
+    },
+    # PROXY = cópia derivada de baixa resolução, GRAVADA junto do clipe principal
+    # pela própria câmera. NÃO é mídia primária: não conta como vídeo separado e
+    # não gera frames — o report usa sempre o original. Fica ligado ao clipe pelo
+    # número do nome (ver proxy_do_clipe).
+    #   .lrv = Low Resolution Video — o proxy que a GoPro grava ao lado do .mp4
+    "PROXY": {
+        ".lrv",
     },
 }
 
 
 def classificar_extensao(nome_arquivo):
-    """Retorna VIDEO, FOTO, AUDIO ou OUTRO conforme a extensão."""
+    """Retorna VIDEO, FOTO, AUDIO, PROXY ou OUTRO conforme a extensão."""
     _, ext = os.path.splitext(nome_arquivo.lower())
     for tipo, exts in EXTENSOES.items():
         if ext in exts:
             return tipo
     return "OUTRO"
+
+
+def proxy_do_clipe(nome_arquivo):
+    """
+    Dado um arquivo de PROXY, devolve o NOME do clipe principal a que ele
+    pertence — ou None se não for proxy ou se não souber a convenção da câmera.
+
+    Convenção GoPro: o proxy `GL019385.LRV` acompanha o vídeo `GX019385.MP4`
+    (mesma numeração, só muda o prefixo GL→GX). É uma pista por nome — quem é a
+    autoridade da identidade continua sendo o Matcher ([[identidade-cartao-camadas]]).
+    """
+    if classificar_extensao(nome_arquivo) != "PROXY":
+        return None
+    base, _ext = os.path.splitext(nome_arquivo)
+    # GoPro: GL<numero> → GX<numero>.MP4
+    if base.upper().startswith("GL") and len(base) > 2:
+        return "GX" + base[2:] + ".MP4"
+    return None
 
 
 # ── DEDUÇÃO DE MODELO DE CÂMERA POR PADRÃO DE NOME ────────────────────────────
