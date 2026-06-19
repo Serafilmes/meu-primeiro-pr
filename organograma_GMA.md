@@ -9,7 +9,7 @@
 > O sistema guarda o dado em um lugar só; as telas são jeitos diferentes de LER
 > esse mesmo dado. Nada diverge.
 >
-> Última atualização: 2026-06-18 (sessão 38 — BUILD: MATCH MANUAL (o "último recurso" do operador para cartão órfão), GATE DOS CARTÕES (blindagem em 3 camadas contra o "cartão-fantasma"), cancelar/descartar/restaurar Posts, Acompanhamento AO VIVO (poll de 1s). Antes: GRUPOS EDITÁVEIS de classificação (s33), Google Sheets real via impersonação (s32) + Sheets DINÂMICO (s34), Projeto-festival Rock in Rio + programação do dia (s36), PAINEL DE CONTROLE / cockpit no Flask — Camada 5 Fatia 1 (s37).)
+> Última atualização: 2026-06-19 (sessão 39 — TESTE de cópia real (GoPro 7,7GB) ponta a ponta no projeto SP2B; BUILD: Google Sheets POR PROJETO no exportador (#1), PROXY marcado na cópia (sempre copia + avisa — Fatias A/B), EXCLUIR Post definitivo (#3), DATA DE LOGAGEM pelo relógio do sistema (#4). Em desenho: redesenho C2/C4 com "regra única do que é mídia" + benchmark de velocidade. Antes: MATCH MANUAL + GATE DOS CARTÕES + Acompanhamento AO VIVO (s38), PAINEL DE CONTROLE / cockpit (s37), Rock in Rio + programação do dia (s36), Sheets real+dinâmico (s32/s34), grupos editáveis (s33).)
 
 ---
 
@@ -28,17 +28,24 @@ ANDAR                                       PROGRESSO
         └─ cartão SEM MÍDIA tratado em 2 níveis (ignora × chama operador)
         └─ Nova Ficha v2 COMPLETA ✅ (Fatias 1-5): cadastro de Profissionais +
            CÂMERA no cadastro; multi-seleção, data inteligente, "quem preencheu" (s33)
-        └─ NOVO (s38): MATCH MANUAL — operador resolve cartão órfão na mão
+        └─ s38: MATCH MANUAL — operador resolve cartão órfão na mão
            (escolhe 1 cartão + 1 Post → dispara a cópia). Cancelar/restaurar Posts.
+        └─ NOVO (s39): EXCLUIR Post definitivo (#3, guarda match real) · LEITOR
+           classifica PROXY (.LRV→clipe) e RAW (.GPR→foto)
         └─ falta: mural dos câmeras · login do operador (2.3) · domínio fixo do túnel
 2 · Transferência (copiar com segurança)    ████████████  PRONTO ✅
-        └─ NOVO (s38): pasta de destino configurável (GMA_DESTINO) + falha limpa
+        └─ s38: pasta de destino configurável (GMA_DESTINO) + falha limpa
            quando o volume some (acaba o "copiando eterno")
+        └─ NOVO (s39): PROXY atravessa o pipeline — SEMPRE copia + marca (tipo/proxy_de
+           no .sppo+banco) + AVISA; teste de cópia real GoPro 7,7GB OK (106/106)
+        └─ em desenho: redesenho C2/C4 (regra única do que é mídia + auto-cura + benchmark)
 3 · Banco de dados (guardar tudo)           ███████████░  QUASE ✅
         └─ Kanban + Planilha + Google Sheets REAL no ar (s32, via impersonação)
         └─ GRUPOS EDITÁVEIS (s33): 1 ponto de criação → chip na ficha + coluna na
            planilha; Sheets DINÂMICO espelha o molde (s34); montador compartilhado
-        └─ NOVO (s38): GATE DOS CARTÕES (blindagem 3 camadas contra cartão-fantasma)
+        └─ s38: GATE DOS CARTÕES (blindagem 3 camadas contra cartão-fantasma)
+        └─ NOVO (s39): Google Sheets POR PROJETO no exportador (#1) — cada projeto
+           escreve na SUA planilha; projeto real sem planilha PAUSA (não vaza pro global)
 4 · Auditoria + devolver o cartão           ████████████  PRONTO ✅
         └─ embaralha · ejeta · RESTAURA pelo Parashoot — testado com cartão real
 5 · Tela bonita + várias máquinas           ███░░░░░░░░░  EM CONSTRUÇÃO
@@ -48,6 +55,7 @@ ANDAR                                       PROGRESSO
         └─ falta: conexões por-projeto (Fatia 2) · login/usuário (Fatia 3) · .app
 6 · Inteligência artificial (opcional)      ░░░░░░░░░░░░  futuro
 7 · Marca e identidade visual               ░░░░░░░░░░░░  sem prazo (próximo foco)
+        └─ candidato forte a NOME do sistema: "6floor" (s39, a confirmar)
 ──────────────────────────────────────────────────────────────────
 ```
 
@@ -330,6 +338,28 @@ Nenhuma decisão foi à toa. Cada uma resolveu um problema que apareceu
               destino → AMARRAR A FICHA AO PROJETO é o #2 aprovado (Fatia 2, pausado)
            ✅ Terminologia "casamento" eliminada do projeto (.py) — termo único: "match"
            💾 Sem commit (S37+S38 pendentes na branch fatia5-sheets-multiprojeto)
+
+19/06  S39 🧪 TESTE de cópia real (GoPro HERO7, 107 arq / 7,7 GB) ponta a ponta no projeto SP2B
+              1ª cópia FALHOU na auditoria (cartão desconectou 1 instante → 2 arquivos com erro)
+              → o sistema agiu CERTO: reprovou e NÃO liberou o cartão. 2ª cópia OK (106/106)
+           🐛 C4 travou em loop "108 vs 106": 2 .DS_Store do Finder (ignore-list só cobria
+              .sppo/.pdf). Removidos → ciclo fechou (check OK + erase OK → CONCLUIDO)
+           🔶 LIÇÃO (vira redesenho): a contagem tropeçou em 3 não-mídias diferentes
+              (.fseventsd do cartão · .DS_Store do macOS · .sppo/.pdf do GMA) → falta UMA
+              REGRA ÚNICA do que é "mídia real". Redesenho C2/C4 + benchmark em desenho
+           🛠️ #1 BUILD: Google Sheets POR PROJETO no exportador — cada projeto na SUA planilha
+              (resolução dinâmica do alvo); projeto real sem planilha PAUSA (não vaza pro global)
+           🛠️ #2 BUILD PROXY (Fatias A+B): Leitor classifica .LRV (proxy→clipe) e .GPR (RAW→foto)
+              🔶 VIRADA: a ideia de "pular o proxy" foi DESCARTADA (pular fere o princípio nº2 —
+                 a C4 liberaria o Parashoot apagar material não copiado). Nova regra: SEMPRE
+                 copia + marca (tipo/proxy_de no .sppo+banco) + AVISA. Política de 3 modos adiada
+              🎞️ Proxy NÃO vira vídeo próprio (não duplica a entrega) MAS é a fonte preferida
+                 dos frames (leve/compatível — poupa o destino); sem proxy, extrai do original
+           🛠️ #3 BUILD: EXCLUIR Post definitivo (hard delete + cascade; desvincula o Log em vez
+              de apagar; guarda recusa Post com match real). Cancelar/restaurar já eram da s38
+           🛠️ #4 BUILD: DATA DE LOGAGEM pelo relógio do SISTEMA (a GoPro com relógio de 2016
+              mostrava "Concluído 01/01/2016") — usa timestamp da transferência, nunca o mtime
+           💾 Commitado (branch s39-sheets-por-projeto): #1, proxy A/B, #3, #4
 ```
 
 ---
@@ -358,8 +388,14 @@ Em ordem de impacto:
    Fatia 2). PAUSADO a pedido do idealizador (vai confirmar/delegar aos agentes).
 2. 🗂️ **Reorganizar o ciclo de vida do Post na "Nova Ficha"** — a divisão de abas foi definida
    na s38: Operação = só o MATCH; Nova Ficha = editar/cancelar/restaurar/EXCLUIR Post.
-   O "cancelar" + "Posts cancelados" que entraram na Operação migram p/ a Nova Ficha; falta
-   construir o `excluir` (hard delete + cascade + guard de match real).
+   O `excluir` (hard delete + cascade + guard de match real) já foi CONSTRUÍDO (s39 ✅); falta a
+   REORG: migrar o "cancelar" + "Posts cancelados" da Operação p/ a Nova Ficha, agrupando por status.
+   ⏭️ falta também: "reverter ENTREGA" (desfazer cartão já matched — hoje só pelo reset manual do teste).
+2b. 🧱 **Redesenho C2/C4 + "regra única do que é mídia"** (em desenho com o idealizador) — o teste
+   da s39 tropeçou em 3 não-mídias diferentes (.fseventsd · .DS_Store · .sppo/.pdf). Definir UMA
+   regra do que conta como "mídia real" e usá-la na contagem da C2 E da C4. Junto: C2 copia rápido
+   (checksum durante a cópia) + auto-cura (recopia só o que divergiu) + benchmark de velocidade sob
+   demanda; frames travam a liberação (com opção de desligar), origem×cópia da extração por velocidade.
 3. 🎨 **Marca / identidade visual (andar 7)** — sem prazo de data + o relatório PDF de hoje
    ficou abaixo do esperado. Definir logo, paleta, tipografia e grid ANTES de refazer o PDF.
 4. 📄 **PDF Overview** — refazer o gerador no estilo dashboard + folha de contato
@@ -383,7 +419,8 @@ Em ordem de impacto:
 >
 > Pendências menores guardadas: bug do "0 arquivos no banco" (S7); consistência do banco
 > quando dois cartões têm o mesmo nome de volume ("Untitled"); loop automático da auditoria.py
-> ainda não exercitado em produção; renomear `produtora`→`nome` no Google Forms externo.
+> ainda não exercitado em produção; renomear `produtora`→`nome` no Google Forms externo;
+> ⚠️ exportador/Flask rodando adotam o código novo da s39 só após **Reiniciar pelo Painel**.
 
 ---
 
@@ -549,6 +586,8 @@ vitrine espelhada, nunca o operacional.
                     └───────────┬───────────┘
                                 ▼
         pré-check (contagem+tamanho) → Parashoot check (arquivo a arquivo)
+        ⚠️ s39: a contagem precisa de UMA regra única do que é "mídia real" (ignorar
+           .fseventsd do cartão · .DS_Store do macOS · .sppo/.pdf do GMA) — em redesenho
                                 │
                                 ▼
         Parashoot erase → embaralha + ejeta → status CONCLUÍDO
@@ -558,6 +597,8 @@ vitrine espelhada, nunca o operacional.
 
    Na transferência:
    copiador.py (MOTOR) → cópia + checksum MD5 + gera .sppo
+        └─ NOVO (s39): classifica cada arquivo (PROXY .LRV / RAW .GPR via ler_cartao),
+           SEMPRE copia, marca proxy (tipo/proxy_de no .sppo+banco) e AVISA no log
         │
         ▼
    extrator_frames.py → 10 frames por vídeo + manifesto.json

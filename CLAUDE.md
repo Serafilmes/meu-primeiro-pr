@@ -12,9 +12,13 @@ sentido. Você mantém a visão geral; os subagentes cuidam dos detalhes de cada
 
 ## Primeiro passo de toda sessão
 
-Leia SEMPRE estes dois arquivos antes de qualquer coisa:
+Leia SEMPRE estes três arquivos antes de qualquer coisa:
 1. `contexto_atual_GMA.md` — estado atual, próximos passos, decisões recentes
 2. `arquitetura_GMA.md` — princípios, camadas, fluxo, estrutura técnica
+3. `organograma_GMA.md` — o mapa vivo (visão de cima: 7 andares, fluxo, linha do tempo)
+
+Esses três são também o **pacote de análise externa**: quem for analisar o projeto de fora
+lê os três juntos (estado + engenharia + mapa visual). Mantê-los em dia é prioridade.
 
 Só carregue `historico_GMA.md` se precisar consultar o raciocínio
 de uma sessão específica (ex: "por que a câmera saiu da ficha?").
@@ -71,7 +75,11 @@ arquitetura, planejamento e conversa com o idealizador, conduza você mesmo.
 - Antes de codar, proponha um plano curto e espere confirmação.
 - Depois de cada entrega, diga exatamente como testar (o comando a rodar).
 - Não faça mudanças grandes sem avisar. Trabalhe em passos pequenos e verificáveis.
-- **Ao fim de cada sessão:** atualize `contexto_atual_GMA.md` com o que foi feito, decisões tomadas e próximo passo.
+- **Ao fim de cada sessão:** atualize SEMPRE os dois mapas, juntos, para não dessincronizarem:
+  1. `contexto_atual_GMA.md` — o que foi feito, decisões tomadas e próximo passo (detalhe).
+  2. `organograma_GMA.md` — o mapa vivo (cabeçalho/data, progresso dos andares, linha do tempo,
+     "o que pede atenção agora"). É o que a análise externa lê — não deixe atrasar.
+  Se uma decisão mexeu na arquitetura, atualize também `arquitetura_GMA.md`.
 
 ## Limites de segurança no desenvolvimento
 
