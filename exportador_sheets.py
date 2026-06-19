@@ -36,6 +36,7 @@ import socket
 from datetime import datetime
 
 import banco_dados
+import painel_config
 
 # ── CONSTANTES ─────────────────────────────────────────────────────────────────
 
@@ -116,12 +117,9 @@ def _credenciais_configuradas():
       (B) Chave de conta de serviço (clássico):
           GOOGLE_CREDENTIALS_JSON = caminho do arquivo JSON da conta de serviço.
 
-    Em ambos os modos, GMA_SHEETS_ID é obrigatório.
+    A planilha-alvo NÃO é checada aqui — ela é resolvida por projeto em
+    _resolver_sheet_alvo() (isolamento: cada projeto tem a sua).
     """
-    sheet_id = os.environ.get("GMA_SHEETS_ID", "").strip()
-    if not sheet_id:
-        return False, "GMA_SHEETS_ID não definido no .env"
-
     # Modo A — impersonação
     sa = os.environ.get("GMA_SHEETS_SA", "").strip()
     if sa:
@@ -187,13 +185,58 @@ def _extrair_id_planilha(valor):
     return valor
 
 
-def _abrir_planilha():
+def _resolver_sheet_alvo():
     """
-    Abre a planilha. Usa impersonação (GMA_SHEETS_SA) quando configurada — sem
-    chave; senão cai para a chave de conta de serviço (GOOGLE_CREDENTIALS_JSON).
+    Resolve a planilha-alvo do projeto ATIVO, relendo a cada sincronização
+    (dinâmico — mudar o ID no painel passa a valer no próximo ciclo).
+
+    Regra de ISOLAMENTO por projeto (cada projeto tem a sua planilha):
+      - projeto com sheets_id próprio   → usa ele;
+      - projeto com sheets_ativo=False  → pausa;
+      - projeto SEM planilha própria:
+          • laboratório → cai no GMA_SHEETS_ID global do .env (compat. legado);
+          • projeto real → NÃO usa o global, para não misturar os dados de um
+            projeto na planilha de outro. Pausa pedindo configuração no painel.
+
+    Retorna (sheet_id: str, motivo_para_pular: str|None).
+    Quando motivo_para_pular != None, a sincronização deve ser pulada.
+    """
+    try:
+        slug, cfg = painel_config.projeto_ativo()
+    except Exception:
+        # Sem painel (uso avulso/teste): usa o global do .env, se houver.
+        sid = os.environ.get("GMA_SHEETS_ID", "").strip()
+        return (sid, None) if sid else ("", "GMA_SHEETS_ID não definido (.env).")
+
+    if not cfg.get("sheets_ativo", True):
+        return "", f"Google Sheets desativado no painel para o projeto '{slug}'."
+
+    sid = (cfg.get("sheets_id") or "").strip()
+    if sid:
+        return sid, None
+
+    # Projeto sem planilha própria configurada.
+    if slug == painel_config.LAB_SLUG:
+        sid = os.environ.get("GMA_SHEETS_ID", "").strip()
+        if sid:
+            return sid, None
+        return "", "Laboratório sem planilha: configure no painel ou defina GMA_SHEETS_ID no .env."
+
+    return "", (
+        f"Projeto '{slug}' sem planilha própria — sincronização pausada. "
+        f"Configure a planilha deste projeto no painel (não uso a planilha global "
+        f"para não misturar dados entre projetos)."
+    )
+
+
+def _abrir_planilha(sheet_id):
+    """
+    Abre a planilha de ID `sheet_id`. Usa impersonação (GMA_SHEETS_SA) quando
+    configurada — sem chave; senão cai para a chave de conta de serviço
+    (GOOGLE_CREDENTIALS_JSON).
     """
     import gspread
-    sheet_id = _extrair_id_planilha(os.environ["GMA_SHEETS_ID"])
+    sheet_id = _extrair_id_planilha(sheet_id)
     sa = os.environ.get("GMA_SHEETS_SA", "").strip()
 
     if sa:
@@ -226,6 +269,11 @@ def sincronizar(conn):
         log.warning(f"Exportação não configurada: {erro}")
         return False
 
+    sheet_id, motivo_pular = _resolver_sheet_alvo()
+    if motivo_pular:
+        log.info(f"Sincronização pulada: {motivo_pular}")
+        return False
+
     if not _tem_internet():
         log.info("Sem internet — sincronização adiada.")
         return False
@@ -238,7 +286,7 @@ def sincronizar(conn):
         n_cols = len(cabecalho)
         conteudo = [cabecalho] + linhas
 
-        planilha = _abrir_planilha()
+        planilha = _abrir_planilha(sheet_id)
 
         # Garante que a aba 'GMA' existe (cria se não existir)
         try:
@@ -338,6 +386,12 @@ if __name__ == "__main__":
             print("  GMA_SHEETS_ID=cole_aqui_o_id_da_planilha")
             sys.exit(1)
 
+        sheet_id, motivo_pular = _resolver_sheet_alvo()
+        if motivo_pular:
+            print(f"SEM PLANILHA: {motivo_pular}")
+            sys.exit(1)
+        print(f"Planilha-alvo do projeto ativo: …{sheet_id[-8:]}")
+
         print("Verificando internet...")
         if not _tem_internet():
             print("Sem conexão com a internet. Tente novamente quando conectado.")
@@ -349,7 +403,6 @@ if __name__ == "__main__":
         conn.close()
 
         if sucesso:
-            sheet_id = os.environ.get("GMA_SHEETS_ID", "")
             print("OK — planilha atualizada.")
             print(f"URL: https://docs.google.com/spreadsheets/d/{sheet_id}")
         else:
