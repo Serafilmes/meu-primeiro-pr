@@ -397,17 +397,21 @@ Em ordem de impacto:
    Operação = só o MATCH; Nova Ficha = centro de controle dos Posts (grupos recolhíveis por status +
    editar/cancelar/restaurar/excluir). ⏭️ falta só: "reverter ENTREGA" (desfazer cartão já matched —
    hoje só pelo reset manual do teste) e garantir que TODAS as ações gravem no Log + rename "ficha"→"Post".
-2b. 🧱 **Redesenho C2/C4 + "régua única do que é mídia"** (desenho fechado s40 — PRÓXIMO BUILD) — o teste
-   da s39 tropeçou em 3 não-mídias diferentes (.fseventsd · .DS_Store · .sppo/.pdf). UMA função
-   compartilhada que responde "este arquivo conta como material?", usada na contagem da C2 E da C4
-   (origem e destino batem). Desconhecido = copia + marca "revisar" (princípio nº 2). É a FUNDAÇÃO:
-   depois, C2 copia rápido (checksum durante a cópia) + auto-cura (recopia só o que divergiu) +
+2b. ✅ **Régua única do que é mídia (s40 — CONSTRUÍDA, PR #10 mergeado)** — `ler_cartao.eh_nao_midia`/
+   `eh_pasta_ignorada`, usada pela C2 (copiar) E pela C4 (auditar) → origem e destino contam igual;
+   fecha o "108 vs 106" da s39. Desconhecido = copia + marca "revisar" (princípio nº 2). É a FUNDAÇÃO:
+   FALTA por cima — C2 copia rápido (checksum durante a cópia) + auto-cura (recopia só o divergente) +
    benchmark sob demanda; frames travam a liberação (com opção de desligar).
-2c. 📁 **Entrada por PASTA SATÉLITE (desenho fechado s40, arco próprio)** — material que NÃO vem por
-   cartão (fotógrafo foi embora; PGM/feed): ficha pergunta "Cartão físico?"; satélite → o sistema cria
-   `recebidos/<post>/` alimentada por Drive/Dropbox; gatilho do operador (depois estabilidade ajustável
-   e aviso remoto); cópia idêntica (a régua faz cartão=satélite); C4 audita mas NÃO roda Parashoot.
-   Cuidado: Drive/Dropbox "arquivo na nuvem" exige modo "disponível offline". Ver [[pasta-satelite-recebidos]].
+2c. 📁 **Entrada por PASTA SATÉLITE (s40, arco próprio — 1ª fatia construída)** — material que NÃO vem por
+   cartão (fotógrafo foi embora; PGM/feed). ✅ **Caixa "Pasta de recebidos" no Painel** (config + Testar
+   com detecção do Drive "só na nuvem"; branch `s40-caixa-recebidos`). FALTA: ficha pergunta "Cartão
+   físico?" → sistema cria `recebidos/<post>/` alimentada por Drive/Dropbox → gatilho do operador
+   (depois estabilidade ajustável e aviso remoto) → cópia idêntica (a régua faz cartão=satélite) →
+   C4 audita mas NÃO roda Parashoot. Ver [[pasta-satelite-recebidos]].
+2d. 🔌 **Túnel/ngrok como 7º processo do maestro (s40, a fazer)** — hoje "ativo" é só intenção; nada sobe
+   o ngrok (levantado à mão por `./ngrok_gma.sh`) → bolinha amarela. O maestro (já supervisor) deve subir
+   o ngrok opcionalmente quando "ativo" + online (falha graciosa offline; câmeras usam a rede local).
+   Manual só o setup 1x (instalar + authtoken) + domínio fixo opcional. Sem IA.
 3. 🎨 **Marca / identidade visual (andar 7)** — sem prazo de data + o relatório PDF de hoje
    ficou abaixo do esperado. Definir logo, paleta, tipografia e grid ANTES de refazer o PDF.
 4. 📄 **PDF Overview** — refazer o gerador no estilo dashboard + folha de contato

@@ -154,6 +154,78 @@ def pasta_ao_lado_do_banco(nome_sub, criar=True):
     return caminho
 
 
+def caminho_recebidos(config):
+    """
+    Resolve a pasta-raiz de RECEBIDOS de um projeto — onde cai o material que
+    NÃO vem por cartão físico (entregue por link/Drive/Dropbox). Cada Post de
+    origem satélite ganha uma subpasta aqui (fluxo da Camada 1, a construir).
+
+    Override do painel (campo 'recebidos') tem prioridade; vazio = padrão ao lado
+    do banco do projeto (projetos/<slug>/recebidos; no laboratório, GMA/recebidos).
+    """
+    valor = (config.get("recebidos") or "").strip()
+    if valor:
+        return valor if os.path.isabs(valor) else os.path.join(RAIZ_GMA, valor)
+    base = os.path.dirname(caminho_db(config))
+    return os.path.join(base, "recebidos")
+
+
+def checar_recebidos(caminho):
+    """
+    O "Testar" da caixa de recebidos: confere que a pasta existe, é gravável e
+    que os arquivos estão DE FATO baixados (não são só atalhos de nuvem).
+
+    A armadilha do Drive/Dropbox: um arquivo "só na nuvem" aparece na pasta mas o
+    conteúdo ainda não desceu — copiar antes pegaria arquivo vazio. Heurística
+    mecânica (sem IA): um placeholder reporta tamanho > 0 mas 0 blocos no disco.
+    Usa a RÉGUA ÚNICA (ler_cartao) para olhar só o material e ignorar o lixo.
+
+    Retorna (ok: bool, mensagem: str).
+    """
+    import ler_cartao  # régua única do que é "material"
+
+    if not os.path.isdir(caminho):
+        return False, (f"A pasta de recebidos ainda não existe: {caminho}. "
+                       f"Aponte para a pasta sincronizada (Drive/Dropbox) ou crie-a.")
+    try:
+        teste = os.path.join(caminho, ".gma_teste_escrita")
+        with open(teste, "w") as f:
+            f.write("ok")
+        os.remove(teste)
+    except OSError as e:
+        return False, f"A pasta existe mas não dá para gravar nela: {e}"
+
+    so_na_nuvem = []
+    baixados = 0
+    for raiz, dirs, arqs in os.walk(caminho):
+        dirs[:] = [d for d in dirs if not ler_cartao.eh_pasta_ignorada(d)]
+        for nome in arqs:
+            if ler_cartao.eh_nao_midia(nome):
+                continue
+            try:
+                st = os.stat(os.path.join(raiz, nome))
+            except OSError:
+                continue
+            # st_blocks == 0 com tamanho > 0 = placeholder de nuvem (não baixado).
+            if st.st_size > 0 and getattr(st, "st_blocks", 1) == 0:
+                so_na_nuvem.append(nome)
+            else:
+                baixados += 1
+            if len(so_na_nuvem) + baixados >= 80:  # amostra suficiente
+                break
+        if len(so_na_nuvem) + baixados >= 80:
+            break
+
+    if so_na_nuvem:
+        return False, (
+            f"Pasta acessível, mas {len(so_na_nuvem)} arquivo(s) parecem estar SÓ NA "
+            f"NUVEM (atalhos não baixados) — ex.: {so_na_nuvem[0]}. Ative 'disponível "
+            f"offline' no Drive/Dropbox, senão a cópia pegaria arquivo vazio.")
+    if baixados == 0:
+        return True, f"Pasta acessível e gravável (vazia por enquanto)."
+    return True, f"Pasta acessível, gravável e com {baixados} arquivo(s) baixado(s) localmente."
+
+
 def aplicar_ao_ambiente(os_environ, forcar=False):
     """
     Exporta as variáveis do projeto ativo para o ambiente recebido.
@@ -206,6 +278,15 @@ def definir_destino(slug, caminho):
     if slug not in estado["projetos"]:
         raise ValueError(f"Projeto desconhecido: {slug}")
     estado["projetos"][slug]["destino"] = caminho.strip()
+    salvar_estado(estado)
+
+
+def definir_recebidos(slug, caminho):
+    """Define a pasta-raiz de recebidos (satélite) de um projeto. Vazio = padrão."""
+    estado = carregar_estado()
+    if slug not in estado["projetos"]:
+        raise ValueError(f"Projeto desconhecido: {slug}")
+    estado["projetos"][slug]["recebidos"] = caminho.strip()
     salvar_estado(estado)
 
 
