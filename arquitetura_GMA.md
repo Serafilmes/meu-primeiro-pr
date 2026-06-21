@@ -118,6 +118,8 @@ Processos: `transferencia.py` · `copiador.py` · `extrator_frames.py` · `gma_r
 - **Política mídia vs. sistema:** falha em arquivo de sistema = AVISO (não zera transferência); falha em footage = CRÍTICO (zera)
 - **extrator_frames.py:** 10 frames por vídeo (5%–95%, divisão uniforme); usa `.LRV`/`.THM` da GoPro como proxy; grava `manifesto.json` + miniaturas em `_GMA_frames/`; idempotente
 
+**🧱 Redesenho em desenho (s40) — RÉGUA ÚNICA do que é mídia + origem satélite:** hoje "o que é mídia" está em 3 listas que não conversam (`copiador.py`, `auditoria.py`, `ler_cartao.py`) — na s39 a auditoria travou contando um `.DS_Store` que o Finder criou no destino. A régua única = **uma só função compartilhada** ("este arquivo conta como material?") usada pela C2 (copiar) E pela C4 (auditar), que conhece os 3 baldes de não-mídia (lixo do SO · sistema do cartão · arquivos do próprio GMA + lixo de download da satélite) e bate igual na origem e no destino; desconhecido = copia + marca "revisar". É a fundação para C2 copiar rápido (checksum durante a cópia) + auto-curar + benchmark. Como o `copiador.py` copia "a partir de um caminho", a régua desacopla "de onde vem" × "o que é" → habilita a **entrada por pasta satélite** (material que não vem por cartão: ficha pergunta "Cartão físico?", o sistema cria `recebidos/<post>/` alimentada por Drive/Dropbox, gatilho do operador→estabilidade→aviso remoto, C4 audita mas não roda Parashoot). Detalhes em `contexto_atual_GMA.md` (s40) e memória `pasta-satelite-recebidos`.
+
 ### Camada 3 — Controle e segurança das informações ⚠️
 Processo: `banco_dados.py` · `exportador_sheets.py` · Flask (telas `/kanban` e `/planilha`)
 
