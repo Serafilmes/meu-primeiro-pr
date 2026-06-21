@@ -18,7 +18,10 @@ Uso:
     python3 /Users/serafa/GMA/inicializar_gma.py
 """
 
+import fcntl
+import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -98,6 +101,14 @@ RAIZ_GMA = "/Users/serafa/GMA"
 # Arquivo sentinela: quando existe, o Porteiro processa eventos
 SENTINELA = os.path.join(RAIZ_GMA, ".gma_ativo")
 
+# Trava de instância única do maestro. Um lock de arquivo (flock) garante UM
+# ÚNICO maestro por vez: se o "Iniciar" for acionado duas vezes, o segundo não
+# consegue o lock e sai na hora (sem prompt, sem pendurar). O flock se solta
+# sozinho quando o processo morre — então um maestro que caiu não deixa a trava
+# presa (não precisa limpar PID velho).
+TRAVA_MAESTRO = os.path.join(RAIZ_GMA, ".gma_maestro.lock")
+_trava_handle = None  # mantém o arquivo aberto pela vida do processo (segura o lock)
+
 # Sinais do Painel de Controle (Camada 5). O Flask cria estes arquivos quando o
 # operador clica em "Trocar projeto" / "Reiniciar" / "Encerrar". O maestro vigia
 # o laço de espera e age:
@@ -149,6 +160,47 @@ def log(prefixo_chave, mensagem):
     """
     prefixo = PREFIXOS.get(prefixo_chave, f"[{prefixo_chave.upper()}]")
     print(f"{prefixo} {agora()} | {mensagem}", flush=True)
+
+
+def adquirir_trava_maestro():
+    """
+    Garante UM ÚNICO maestro: tenta travar (flock) o arquivo .gma_maestro.lock.
+
+    Se outro maestro já segura o lock, NÃO inicia um segundo — é o que evita o
+    "maestro duplicado" que aparecia quando o 'Iniciar' era acionado duas vezes
+    (o segundo, antes, ficava pendurado no prompt de confirmação).
+
+    O flock é POR PROCESSO e se solta automaticamente quando o processo morre —
+    então um maestro que caiu não deixa a trava presa.
+
+    Retorna True se conseguiu a trava (pode iniciar), False se já há outro maestro.
+    """
+    global _trava_handle
+    try:
+        _trava_handle = open(TRAVA_MAESTRO, "w")
+        fcntl.flock(_trava_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return False  # outro maestro já segura a trava
+    try:
+        _trava_handle.seek(0)
+        _trava_handle.truncate()
+        _trava_handle.write(str(os.getpid()))
+        _trava_handle.flush()
+    except OSError:
+        pass  # gravar o PID é só informativo; o que vale é o flock
+    return True
+
+
+def liberar_trava_maestro():
+    """Solta a trava do maestro (também sai sozinha quando o processo morre)."""
+    global _trava_handle
+    if _trava_handle is not None:
+        try:
+            fcntl.flock(_trava_handle.fileno(), fcntl.LOCK_UN)
+            _trava_handle.close()
+        except OSError:
+            pass
+        _trava_handle = None
 
 
 def criar_sentinela():
@@ -394,11 +446,109 @@ def encerrar_processo(processo, nome_legivel, timeout=5):
 
 # ── PONTO DE ENTRADA ──────────────────────────────────────────────────────────
 
+def iniciar_ngrok():
+    """
+    Sobe o ngrok como processo OPCIONAL do maestro — o túnel sobe junto com o
+    sistema, sem terminal separado. Só age quando faz sentido:
+      - o projeto ativo está com a ficha remota LIGADA (tunel_ativo), E
+      - NÃO há link fixo/override (modo automático — caso do plano gratuito), E
+      - o ngrok está instalado, E
+      - ainda não há um ngrok no ar.
+
+    Verifica DE VERDADE: espera o túnel aparecer na API local (127.0.0.1:4040).
+    Se não subir (falta authtoken ou internet), AVISA e segue — o sistema todo
+    continua de pé (offline-first: o túnel é sempre opcional; as câmeras ainda
+    alcançam a ficha pela rede local). O Flask detecta a URL sozinho, então o QR
+    aparece quando o túnel sobe.
+
+    Retorna o Popen do ngrok, ou None se não subiu / não se aplica.
+    """
+    # 1) A ficha remota está ligada neste projeto?
+    try:
+        _slug, cfg = painel_config.projeto_ativo()
+    except Exception:
+        cfg = {}
+    if not cfg.get("tunel_ativo", True):
+        log("sistema", "Tunel: ficha remota desativada no Painel — ngrok nao iniciado.")
+        return None
+
+    # 2) Link fixo/override? Então o túnel é gerido por você (domínio fixo/manual).
+    if (cfg.get("tunel_link") or os.environ.get("GMA_LINK_FICHA", "")).strip():
+        log("sistema", "Tunel: link fixo configurado — ngrok nao e gerido pelo maestro.")
+        return None
+
+    # 3) ngrok instalado?
+    if not shutil.which("ngrok"):
+        log("sistema", "Tunel: ngrok nao instalado — ficha so na rede local "
+                       "(brew install ngrok/ngrok/ngrok).")
+        return None
+
+    # 4) Já há um ngrok no ar (ex.: subido à mão)? Não sobe outro (evita conflito no 4040).
+    if _tunel_no_ar():
+        log("sistema", "Tunel: ja ha um ngrok no ar — o maestro nao sobe outro.")
+        return None
+
+    # Sobe o ngrok apontando para a porta do Flask.
+    estado = painel_config.carregar_estado()
+    porta = (estado.get("porta") or os.environ.get("GMA_PORT", "5050") or "5050").strip() or "5050"
+    try:
+        proc = subprocess.Popen(
+            ["ngrok", "http", str(porta), "--log=stderr"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, cwd=RAIZ_GMA,
+        )
+    except Exception as erro:
+        log("sistema", f"Tunel: falha ao iniciar o ngrok ({erro}). Sistema segue sem tunel.")
+        return None
+
+    # Verifica: o túnel aparece na API local em até ~6s?
+    url = None
+    for _ in range(12):
+        time.sleep(0.5)
+        if proc.poll() is not None:
+            break  # o ngrok já morreu (provável authtoken/credencial)
+        url = _tunel_url()
+        if url:
+            break
+
+    if url:
+        log("sistema", f"Tunel ATIVO: {url} (ficha remota e QR sobem sozinhos)")
+        return proc
+
+    # Não subiu — encerra o que ficou e avisa, sem derrubar o sistema.
+    log("sistema", "Tunel: o ngrok nao estabeleceu o tunel. Confira o authtoken "
+                   "(ngrok config add-authtoken <token>) e a internet. Sistema segue sem tunel.")
+    try:
+        proc.terminate()
+    except Exception:
+        pass
+    return None
+
+
+def _tunel_url():
+    """URL HTTPS pública do ngrok agora (via API local 127.0.0.1:4040), ou None."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:4040/api/tunnels", timeout=1) as r:
+            dados = json.loads(r.read().decode())
+        for t in dados.get("tunnels", []):
+            if t.get("public_url", "").startswith("https"):
+                return t["public_url"]
+    except Exception:
+        pass
+    return None
+
+
+def _tunel_no_ar():
+    """True se já existe um túnel ngrok HTTPS ativo na API local."""
+    return _tunel_url() is not None
+
+
 def subir_todos():
     """
     Sobe os seis processos do GMA na ordem certa e devolve o dicionário deles.
     A ordem importa: Porteiro (detecta cartões) → Leitor (analisa) →
     Flask (interface) → Transferência (copia) → Auditoria → Sheets.
+    O túnel (ngrok) sobe por último, opcional, se a ficha remota estiver ligada.
     """
     processos = {}
     processos["Porteiro"]        = iniciar_processo(SCRIPT_PORTEIRO,      "porteiro",      "Porteiro")
@@ -411,11 +561,16 @@ def subir_todos():
     iniciados = sum(1 for p in processos.values() if p is not None)
     print()
     log("sistema", f"{iniciados} de {len(processos)} processos iniciados com sucesso.")
+
+    # Túnel opcional (ngrok) — sobe junto se a ficha remota estiver ligada.
+    # Falha graciosa: se não subir, o sistema continua (a ficha segue na rede local).
+    processos["Ngrok"] = iniciar_ngrok()
     return processos
 
 
 def descer_todos(processos):
     """Encerra os processos filhos na ordem inversa da inicialização."""
+    encerrar_processo(processos.get("Ngrok"),           "Tunel (ngrok)")
     encerrar_processo(processos.get("Sheets"),          "Exportador Sheets")
     encerrar_processo(processos.get("Auditoria"),       "Auditoria")
     encerrar_processo(processos.get("Transferencia"),   "Transferencia")
@@ -445,6 +600,17 @@ def main():
        (.gma_reiniciar → reinicia no projeto escolhido; .gma_encerrar → encerra).
     5. Ao receber Ctrl+C ou o sinal de encerrar: encerra tudo de forma limpa.
     """
+
+    # ── Trava de instância única (ANTES de tudo) ─────────────────────────────
+    # Um clique a mais no "Iniciar" não pode subir um segundo maestro. Se já há
+    # um GMA rodando, este aqui para na hora — sem prompt, sem pendurar.
+    if not adquirir_trava_maestro():
+        print()
+        print("  Ja existe um GMA rodando (um so maestro por vez).")
+        print("  Abra o painel em http://127.0.0.1:5050 — ou use 'Encerrar GMA'")
+        print("  antes de iniciar de novo.")
+        print()
+        sys.exit(0)
 
     print()
     print("=" * 60)
@@ -514,6 +680,7 @@ def main():
                 log("sistema", "Sinal de ENCERRAR recebido pelo painel. Encerrando...")
                 descer_todos(processos)
                 remover_sentinela()
+                liberar_trava_maestro()
                 print()
                 log("sistema", "Sistema GMA encerrado pelo painel.")
                 print()
@@ -545,6 +712,7 @@ def main():
         log("sistema", "Encerrando sistema...")
         descer_todos(processos)
         remover_sentinela()
+        liberar_trava_maestro()
         print()
         log("sistema", "Sistema GMA encerrado com seguranca.")
         print()

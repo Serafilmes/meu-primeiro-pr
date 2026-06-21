@@ -17,6 +17,7 @@ gma.db.bak_*
 .gma_ativo
 .gma_reiniciar
 .gma_encerrar
+.gma_maestro.lock
 
 # Arquivos do macOS
 .DS_Store
