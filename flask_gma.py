@@ -6326,6 +6326,11 @@ def _testar_conexao(chave):
         except subprocess.TimeoutExpired:
             return False, "Tempo esgotado ao falar com o gcloud."
 
+    if chave == "recebidos":
+        _slug, cfg = painel_config.projeto_ativo()
+        caminho = painel_config.caminho_recebidos(cfg)
+        return painel_config.checar_recebidos(caminho)
+
     if chave == "tunel":
         try:
             import urllib.request
@@ -6419,6 +6424,12 @@ def _conexoes_cockpit():
 
     senha_txt, senha_st = sit(os.environ.get("GMA_SENHA"))
 
+    # Pasta de recebidos (satélite) — material que NÃO vem por cartão físico.
+    recebidos_dir = painel_config.caminho_recebidos(cfg)
+    recebidos_override = (cfg.get("recebidos") or "").strip()
+    recebidos_txt = recebidos_dir if recebidos_override else f"{recebidos_dir}  (padrão)"
+    recebidos_status = "ok" if os.path.isdir(recebidos_dir) else "aviso"
+
     return [
         {"chave": "banco", "rot": "Banco do projeto", "val": db,
          "desc": "Onde ficam os dados deste projeto (fichas, cartões, planilha).",
@@ -6430,6 +6441,12 @@ def _conexoes_cockpit():
          "status": "ok" if os.path.isdir(destino) else "aviso", "testavel": True,
          "direcionar": True, "campo": destino, "acao": "/painel/destino",
          "placeholder": "Caminho da pasta de destino"},
+        {"chave": "recebidos", "rot": "Pasta de recebidos", "val": recebidos_txt,
+         "desc": "Entrada do material que NÃO vem por cartão (entregue por link/Drive/Dropbox). "
+                 "Cada Post de origem satélite ganha uma subpasta aqui.",
+         "status": recebidos_status, "testavel": True,
+         "direcionar": True, "campo": recebidos_override, "acao": "/painel/recebidos",
+         "placeholder": "Pasta sincronizada (ex.: ~/Library/CloudStorage/...) — vazio = padrão do projeto"},
         {"chave": "sheets", "rot": "Google Sheets", "val": sheets_txt,
          "desc": "Espelho de entrega na nuvem. ID salvo por projeto.",
          "status": sheets_status, "testavel": bool(sid),
@@ -6689,6 +6706,23 @@ def painel_destino():
     except Exception as e:
         logger.warning(f"PAINEL | Falha ao direcionar destino: {e}")
         return _pagina_painel(erro=f"Não deu para direcionar a pasta: {e}")
+
+
+@app.route("/painel/recebidos", methods=["POST"])
+def painel_recebidos():
+    """Direciona a pasta-raiz de recebidos (material que não vem por cartão)."""
+    slug = (request.form.get("slug") or "").strip()
+    caminho = (request.form.get("valor") or "").strip()
+    try:
+        painel_config.definir_recebidos(slug, caminho)
+        logger.info(f"PAINEL | Recebidos de '{slug}' → {caminho or '(padrão)'}")
+        msg = ("Pasta de recebidos atualizada. Reinicie o sistema para aplicar."
+               if caminho else
+               "Override removido — usando a pasta padrão do projeto. Reinicie para aplicar.")
+        return _pagina_painel(aviso=msg)
+    except Exception as e:
+        logger.warning(f"PAINEL | Falha ao direcionar recebidos: {e}")
+        return _pagina_painel(erro=f"Não deu para direcionar a pasta de recebidos: {e}")
 
 
 @app.route("/painel/banco", methods=["POST"])
