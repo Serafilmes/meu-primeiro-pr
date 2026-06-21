@@ -399,6 +399,67 @@ def _reprovar(cartao_id, numero_cartao, motivo, conn, dados=None):
     )
 
 
+# ── APROVAÇÃO DE MATERIAL RECEBIDO (sem Parashoot) ────────────────────────────
+
+def _aprovar_recebido(cartao_id, numero_cartao, volume,
+                      total_destino, tamanho_destino,
+                      total_esperado, tamanho_esperado,
+                      conn):
+    """
+    Marca um material recebido (pasta satélite) como 'concluido' sem acionar
+    o Parashoot.
+
+    Chamada SOMENTE quando origem_material == 'recebido'. A auditoria estrutural
+    (contagem + tamanho) já foi feita em auditar_cartao() antes desta chamada —
+    esta função só registra a aprovação e marca o status.
+
+    Não há cartão físico a embaralhar/ejetar: chamar o Parashoot para material
+    recebido seria um erro grave (o Parashoot operaria sobre o disco errado ou
+    falharia sem um volume de cartão presente).
+
+    Retorna True (material aprovado e marcado concluido).
+    """
+    print(
+        f"[AUDITORIA]     {numero_cartao} — material RECEBIDO (pasta satélite): "
+        f"Parashoot ignorado — sem cartão físico a ejetar.",
+        flush=True,
+    )
+    log.info(
+        f"Cartão {cartao_id} ({numero_cartao}) — recebido/satélite: "
+        f"pré-check OK, marcando concluido sem Parashoot."
+    )
+
+    banco_dados.atualizar_cartao(conn, cartao_id, {"status": "concluido"})
+
+    banco_dados.registrar_evento(
+        conn,
+        tipo="auditoria_recebido_concluida",
+        descricao=(
+            f"Auditoria de material recebido concluída — {numero_cartao} | "
+            f"Parashoot ignorado (sem cartão físico) | "
+            f"{total_destino} arq / {tamanho_destino:,} bytes"
+        ),
+        cartao_id=cartao_id,
+        dados={
+            "motivo_sem_parashoot":    "origem_material=recebido — pasta satélite, sem cartão físico",
+            "total_arquivos_destino":  total_destino,
+            "total_arquivos_esperado": total_esperado,
+            "tamanho_destino_bytes":   tamanho_destino,
+            "tamanho_esperado_bytes":  tamanho_esperado,
+            "volume":                  volume,
+        },
+    )
+
+    print(
+        f"[AUDITORIA]     {numero_cartao} — CONCLUIDO (recebido): "
+        f"auditoria estrutural OK, Parashoot não acionado.",
+        flush=True,
+    )
+    log.info(f"Cartão {cartao_id} ({numero_cartao}) — CONCLUIDO (recebido).")
+
+    return True
+
+
 # ── AUDITORIA PRINCIPAL DE UM CARTÃO ──────────────────────────────────────────
 
 def auditar_cartao(cartao, conn):
@@ -420,6 +481,14 @@ def auditar_cartao(cartao, conn):
     total_esperado   = cartao["total_arquivos_transferidos"] or 0
     tamanho_esperado = cartao["tamanho_transferido_bytes"] or 0
     volume           = cartao["volume"] or "?"
+
+    # Lê a origem: "cartao" (fluxo normal) ou "recebido" (pasta satélite).
+    # Cartões antigos (coluna ausente) são tratados como "cartao" por segurança.
+    try:
+        origem_material = cartao["origem_material"] or "cartao"
+    except (IndexError, KeyError):
+        origem_material = "cartao"
+    e_material_recebido = (origem_material == "recebido")
 
     print(f"[AUDITORIA]     Auditando {numero_cartao}...", flush=True)
     log.info(
@@ -479,6 +548,23 @@ def auditar_cartao(cartao, conn):
         f"(contagem + tamanho dentro da tolerância)",
         flush=True,
     )
+
+    # ── RAMIFICAÇÃO: material recebido (pasta satélite) ────────────────────────
+    # Quando a origem for "recebido", NÃO há cartão físico a embaralhar/ejetar.
+    # Chamamos o Parashoot neste caso seria um erro grave. O ciclo é:
+    #   1. Pasta de destino existe?       (etapa 1 — já feito)
+    #   2. Contagem + tamanho OK?         (etapa 2 — já feito)
+    #   3. → Marca concluido + registra evento explicando o desvio. FIM.
+    #
+    # A pasta de origem em RECEBIDOS já foi marcada "_COPIADO" pela C2.
+    # A C4 NÃO toca na pasta de origem — só lê o destino (auditoria independente).
+    if e_material_recebido:
+        return _aprovar_recebido(
+            cartao_id, numero_cartao, volume,
+            total_destino, tamanho_destino,
+            total_esperado, tamanho_esperado,
+            conn,
+        )
 
     # ── ETAPA 3: Descobrir o mountpoint do cartão ──────────────────────────────
     # O campo `volume` do banco contém o nome do volume (ex: "EOS_DIGITAL").
@@ -731,7 +817,8 @@ def loop_auditoria():
 
             cursor = conn.execute("""
                 SELECT id, numero_cartao, destino_pasta, volume,
-                       total_arquivos_transferidos, tamanho_transferido_bytes
+                       total_arquivos_transferidos, tamanho_transferido_bytes,
+                       origem_material
                 FROM cartoes
                 WHERE status = 'transferencia_ok'
                 ORDER BY id

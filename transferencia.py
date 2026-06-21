@@ -871,6 +871,240 @@ def _marcar_falha(caminho_json_material, motivo):
         logger.error(f"BANCO | Falha ao sincronizar status de falha (segue) | {_err_bd}")
 
 
+# ── CÓPIA DE MATERIAL RECEBIDO (Fatia 4 — arco pasta satélite) ───────────────
+#
+# Executa o ciclo completo de transferência para material que NÃO veio por cartão
+# físico. Chamada pelo Flask na rota POST /post/<id>/copiar-recebido (botão
+# "Copiar agora" nos Posts satélite).
+#
+# Difere do fluxo normal (processar_material) em dois pontos:
+#   1. Não há JSON na fila_material — o Post do banco é a fonte de verdade.
+#   2. Após cópia OK, renomeia a pasta de origem (_COPIADO) em vez de esperar o
+#      Parashoot (material recebido = sem cartão físico = sem Parashoot).
+
+
+def copiar_material_recebido(formulario_id):
+    """
+    Ciclo completo de cópia para material de origem 'recebido' (pasta satélite).
+
+    Etapas:
+      1. Valida o Post no banco (origem=recebido, pronto=1, sem match/cópia prévia).
+      2. Cria o cartão virtual no banco e faz o match automático com o Post.
+      3. Monta o destino (mesma estrutura de um cartão normal via montar_caminho_destino).
+      4. Anuncia início da cópia no banco (status 'copiando').
+      5. Executa copiador.py (bloqueante — MD5 por arquivo + log .sppo).
+      6. Valida integridade (tripla verificação).
+      7. Gera PDF.
+      8. Grava resultado final no banco.
+      9. Renomeia pasta de origem para <slug>_COPIADO (marca, não apaga).
+
+    Parâmetros:
+      formulario_id — ID do Post no banco (inteiro)
+
+    Retorna:
+      {"ok": True,  "destino": <caminho>, "numero_cartao": <NOME_NNN>,
+       "total_arquivos": N, "caminho_pasta_copiada": <caminho_renomeado>}
+      {"ok": False, "motivo": <string>}
+    """
+    logger = configurar_logger()
+    logger.info(f"RECEBIDO | Iniciando cópia para Post ID={formulario_id}")
+
+    # ── Passo 1-2: valida e registra no banco ────────────────────────────────
+    try:
+        import banco_dados as _bd
+        conn = _bd.inicializar_banco()
+    except Exception as _err:
+        return {"ok": False, "motivo": f"falha_ao_abrir_banco: {_err}"}
+
+    try:
+        # Busca o Post completo para montar o destino
+        row_post = conn.execute(
+            """SELECT id, nome, tipo_material, data_gravacao, camera,
+                      origem_material, recebido_pronto
+               FROM formularios WHERE id = ?""",
+            (formulario_id,)
+        ).fetchone()
+
+        if row_post is None:
+            conn.close()
+            return {"ok": False, "motivo": "post_inexistente"}
+
+        # Resolve o caminho da pasta de origem (slug = NOME_SANITIZADO_id)
+        _slug = f"{_bd._sanitizar_nome_pasta(row_post['nome'] or 'desconhecido')}_{formulario_id}"
+        import painel_config as _pc
+        _slug_ativo, _cfg_ativo = _pc.projeto_ativo()
+        _base_recebidos = _pc.caminho_recebidos(_cfg_ativo)
+        caminho_origem = os.path.join(_base_recebidos, _slug)
+
+        # registrar_cartao_recebido faz todas as validações (existe, pronto, sem match, etc.)
+        resultado_reg = _bd.registrar_cartao_recebido(
+            conn,
+            formulario_id=formulario_id,
+            caminho_pasta=caminho_origem,
+            nome_profissional=row_post["nome"],
+            tipo_material=row_post["tipo_material"],
+            data_gravacao=row_post["data_gravacao"],
+        )
+
+        if not resultado_reg["ok"]:
+            conn.close()
+            logger.info(f"RECEBIDO | Recusado | Post {formulario_id} | {resultado_reg['motivo']}")
+            return resultado_reg
+
+        cartao_id = resultado_reg["cartao_id"]
+        nome_profissional = resultado_reg["nome"]
+
+    except Exception as _err:
+        conn.close()
+        logger.error(f"RECEBIDO | Erro ao registrar no banco | {_err}")
+        return {"ok": False, "motivo": f"erro_banco: {_err}"}
+
+    # ── Passo 3: monta o destino (mesma estrutura de um cartão normal) ───────
+    # Reutiliza montar_caminho_destino passando dicionários no mesmo formato
+    # que o fluxo normal usa.
+    dados_material_fake = {
+        "data_inicio": row_post["data_gravacao"],
+        "total_arquivos": resultado_reg["total_arquivos"],
+    }
+    dados_form_fake = {
+        "nome":          row_post["nome"],
+        "tipo_material": row_post["tipo_material"],
+        "data_gravacao": row_post["data_gravacao"],
+        "camera":        row_post["camera"],
+    }
+
+    try:
+        caminho_destino = montar_caminho_destino(dados_material_fake, dados_form_fake)
+    except Exception as _err:
+        conn.close()
+        return {"ok": False, "motivo": f"erro_montar_destino: {_err}"}
+
+    if caminho_destino is None:
+        conn.close()
+        return {"ok": False, "motivo": "destino_invalido"}
+
+    if not criar_pasta_destino(caminho_destino):
+        conn.close()
+        return {"ok": False, "motivo": f"falha_ao_criar_pasta: {caminho_destino}"}
+
+    nome_job = os.path.basename(caminho_destino)  # ex: PARDAL_001
+
+    # ── Passo 4: anuncia início da cópia no banco ────────────────────────────
+    timestamp_inicio = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    try:
+        _bd.atualizar_cartao(conn, cartao_id, {
+            "status":       "copiando",
+            "destino_pasta": caminho_destino,
+            "transferencia_timestamp_inicio": timestamp_inicio,
+        })
+    except Exception as _err:
+        logger.warning(f"RECEBIDO | Falha ao anunciar início no banco (segue) | {_err}")
+
+    conn.close()  # fecha antes da cópia bloqueante; reabre depois
+    logger.info(f"RECEBIDO | Copiando {caminho_origem} → {caminho_destino}")
+
+    # ── Passo 5: executa a cópia (bloqueante) ────────────────────────────────
+    resultado_copia = copiador.copiar(
+        caminho_origem=caminho_origem,
+        caminho_destino=caminho_destino,
+        nome_job=nome_job,
+    )
+
+    caminho_log_xml = resultado_copia.get("caminho_log")
+    if not caminho_log_xml:
+        _gravar_falha_recebido(cartao_id, "Copiador não gerou arquivo de log")
+        return {"ok": False, "motivo": "sem_log_do_copiador"}
+
+    total_proxies = resultado_copia.get("total_proxies", 0)
+
+    # ── Passo 6: valida integridade ──────────────────────────────────────────
+    resultado_validacao = validar_transferencia(caminho_log_xml, dados_material_fake)
+
+    # ── Passo 7: gera PDF ────────────────────────────────────────────────────
+    caminho_pdf = None
+    if resultado_validacao.get("dados_log"):
+        caminho_pdf = gerar_relatorio_pdf(
+            caminho_log_xml,
+            resultado_validacao["dados_log"],
+            dados_match=dados_form_fake,
+        )
+
+    # ── Passo 8: grava resultado final no banco ───────────────────────────────
+    timestamp_conclusao = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    transferencia_ok = resultado_validacao.get("ok", False)
+
+    try:
+        conn2 = _bd.inicializar_banco()
+        _bd.atualizar_cartao(conn2, cartao_id, {
+            "status": "transferencia_ok" if transferencia_ok else "transferencia_falhou",
+            "numero_cartao": nome_job,
+            "transferencia_timestamp_fim": timestamp_conclusao,
+            "total_arquivos_transferidos": resultado_validacao.get("total_arquivos", 0),
+            "total_falhos":  resultado_validacao.get("total_falhos", 0),
+            "tamanho_transferido_bytes": resultado_validacao.get("tamanho_bytes", 0),
+            "transferencia_relatorio_pdf": caminho_pdf,
+        })
+        if resultado_validacao.get("dados_log"):
+            qtd = _bd.gravar_arquivos_do_log(conn2, cartao_id, resultado_validacao["dados_log"])
+            logger.info(f"RECEBIDO | {qtd} arquivo(s) gravado(s) na tabela arquivos")
+        conn2.close()
+    except Exception as _err:
+        logger.error(f"RECEBIDO | Falha ao gravar resultado no banco (segue) | {_err}")
+
+    if not transferencia_ok:
+        logger.error(f"RECEBIDO | Transferência falhou | Post {formulario_id}")
+        return {
+            "ok":     False,
+            "motivo": "transferencia_falhou",
+            "alertas": resultado_validacao.get("alertas", []),
+        }
+
+    # ── Passo 9: renomeia pasta de origem (_COPIADO) ─────────────────────────
+    caminho_pasta_copiada = caminho_origem
+    try:
+        conn3 = _bd.inicializar_banco()
+        novo_caminho, erro_rename = _bd.marcar_cartao_recebido_copiado(
+            conn3, cartao_id, caminho_origem
+        )
+        conn3.close()
+        if novo_caminho:
+            caminho_pasta_copiada = novo_caminho
+            logger.info(f"RECEBIDO | Pasta marcada como copiada: {novo_caminho}")
+        else:
+            logger.warning(f"RECEBIDO | Renomear falhou (não crítico): {erro_rename}")
+    except Exception as _err:
+        logger.warning(f"RECEBIDO | Erro ao renomear pasta (não crítico): {_err}")
+
+    logger.info(
+        f"RECEBIDO | Concluído com sucesso | Post {formulario_id} | "
+        f"Cartão {nome_job} | Destino: {caminho_destino}"
+    )
+
+    return {
+        "ok":                  True,
+        "destino":             caminho_destino,
+        "numero_cartao":       nome_job,
+        "total_arquivos":      resultado_validacao.get("total_arquivos", 0),
+        "caminho_pasta_copiada": caminho_pasta_copiada,
+        "caminho_pdf":         caminho_pdf,
+    }
+
+
+def _gravar_falha_recebido(cartao_id, motivo):
+    """
+    Função auxiliar: marca o cartão virtual de recebido como transferencia_falhou.
+    Espelha o _marcar_falha() do fluxo normal, mas opera diretamente no banco
+    (sem JSON de material — o recebido não usa fila_material/).
+    """
+    try:
+        import banco_dados as _bd
+        conn = _bd.inicializar_banco()
+        _bd.atualizar_cartao(conn, cartao_id, {"status": "transferencia_falhou"})
+        conn.close()
+    except Exception:
+        pass  # defensivo — o chamador já lida com o erro principal
+
+
 # ── VERIFICAÇÃO DO SENTINELA ──────────────────────────────────────────────────
 
 def sentinela_ativo():

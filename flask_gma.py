@@ -839,13 +839,30 @@ def painel():
         "match_selecao_incompleta": "Escolha 1 cartão (esquerda) e 1 ficha (direita) antes de fazer o match.",
         "match_ficha_invalida":     "A ficha escolhida não foi encontrada. Atualize o painel.",
         "nome_vazio":               "Nome do profissional não recebido.",
+        # Avisos da Fatia 4 — arco RECEBIDOS (cópia de material satélite)
+        "nao_e_recebido":       "Este Post não é de origem 'recebido'. Use o fluxo normal de cartão.",
+        "nao_esta_pronto":      "O material ainda não foi marcado como recebido. Clique em 'Material recebido — pronto para copiar' primeiro.",
+        "pasta_vazia":          "A pasta de recebidos está vazia. Aguarde o material chegar e tente novamente.",
+        "pasta_inexistente":    "A pasta de recebidos deste Post não foi encontrada. Verifique o caminho configurado.",
+        "ja_tem_match":         "Este Post já foi copiado (ou está em andamento). Não é possível copiar novamente.",
+        "destino_invalido":     "Não foi possível montar o caminho de destino. Verifique a data do Post.",
+        "transferencia_falhou": "A cópia terminou mas o checksum falhou. Verifique os logs do sistema.",
+        "banco_indisponivel":   "O banco de dados não está disponível. Tente reiniciar o sistema.",
+        "post_inexistente":     "Post não encontrado no banco de dados.",
+        "erro_interno":         "Ocorreu um erro interno. Verifique os logs do sistema.",
     }
     bloco_feedback = ""
     if _msg_ok:
+        # Mensagem amigável para a cópia de recebidos (ok=copia_recebido_ok_NOME_NNN)
+        if _msg_ok.startswith("copia_recebido_ok_"):
+            _numero_cartao = _msg_ok[len("copia_recebido_ok_"):]
+            _texto_ok = f"Material copiado com sucesso — cartão {_esc(_numero_cartao)}"
+        else:
+            _texto_ok = _esc(_msg_ok)
         bloco_feedback = (
             "<div style='background:#e8f5e9;border:1px solid #4caf50;color:#2e7d32;"
             "border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:0.92em'>"
-            f"✓ {_esc(_msg_ok)}</div>"
+            f"✓ {_texto_ok}</div>"
         )
     elif _msg_aviso:
         _texto = _avisos_legiveis.get(_msg_aviso, _msg_aviso)
@@ -2395,6 +2412,77 @@ def post_recebido_pronto(formulario_id):
                     else f"/?aviso={resultado.get('motivo', 'erro')}#{formulario_id}")
 
 
+@app.route("/post/<int:formulario_id>/copiar-recebido", methods=["POST"])
+def post_copiar_recebido(formulario_id):
+    """
+    Fatia 4 — dispara a cópia real do material de um Post satélite.
+
+    Pré-requisito: o Post deve ter origem_material='recebido' e recebido_pronto=1
+    (o botão "📥 Material recebido — pronto para copiar" já foi clicado).
+    A pasta RECEBIDOS/<NOME_id>/ deve existir e ter arquivos.
+
+    Ações ao clicar:
+      1. Chama transferencia.copiar_material_recebido() que faz o ciclo completo:
+         registro do cartão virtual → match automático → copiador.py (MD5) →
+         validação → PDF → resultado no banco.
+      2. Em caso de sucesso: pasta de origem renomeada para <slug>_COPIADO.
+      3. Redireciona com banner ?ok= ou ?aviso= conforme o resultado.
+
+    Esta rota bloqueia até a cópia terminar. Para arquivos grandes, o Flask pode
+    parecer travado — é esperado (o motor de cópia é síncrono e garante a integridade
+    antes de retornar). Em uma próxima fatia, isso pode ser delegado a um thread/fila.
+    """
+    logger.info(f"COPIAR RECEBIDO | Botão acionado | Post {formulario_id}")
+
+    # Guarda defensiva: banco deve estar disponível
+    if not BANCO_DISPONIVEL:
+        logger.error(f"COPIAR RECEBIDO | Banco indisponível | Post {formulario_id}")
+        return redirect(f"/?aviso=banco_indisponivel#{formulario_id}")
+
+    # Verifica rapidamente se o Post existe e está pronto ANTES de importar
+    # transferencia (que pode ser pesado) — resposta rápida em caso de erro simples.
+    try:
+        conn_check = bd.obter_conexao()
+        row_check = conn_check.execute(
+            "SELECT id, nome, origem_material, recebido_pronto, status "
+            "FROM formularios WHERE id = ?",
+            (formulario_id,)
+        ).fetchone()
+        conn_check.close()
+    except Exception as erro:
+        logger.error(f"COPIAR RECEBIDO | Erro ao verificar Post | {erro}")
+        return redirect(f"/?aviso=erro_interno#{formulario_id}")
+
+    if row_check is None:
+        return redirect(f"/?aviso=post_inexistente#{formulario_id}")
+    if (row_check["origem_material"] or "cartao") != "recebido":
+        return redirect(f"/?aviso=nao_e_recebido#{formulario_id}")
+    if not row_check["recebido_pronto"]:
+        return redirect(f"/?aviso=nao_esta_pronto#{formulario_id}")
+
+    # Dispara a cópia (bloqueante até a cópia terminar)
+    try:
+        import transferencia as _transf
+        resultado = _transf.copiar_material_recebido(formulario_id)
+    except Exception as erro:
+        logger.error(f"COPIAR RECEBIDO | Exceção inesperada | Post {formulario_id} | {erro}")
+        return redirect(f"/?aviso=erro_interno#{formulario_id}")
+
+    if resultado.get("ok"):
+        numero = resultado.get("numero_cartao", "")
+        logger.info(
+            f"COPIAR RECEBIDO | Concluído | Post {formulario_id} | "
+            f"Cartão {numero} | Destino: {resultado.get('destino')}"
+        )
+        return redirect(f"/?ok=copia_recebido_ok_{numero}#{formulario_id}")
+    else:
+        motivo = resultado.get("motivo", "erro_desconhecido")
+        logger.warning(
+            f"COPIAR RECEBIDO | Falhou | Post {formulario_id} | Motivo: {motivo}"
+        )
+        return redirect(f"/?aviso={motivo}#{formulario_id}")
+
+
 def _celula_planilha(col, linha, chips, textos=None):
     """
     Renderiza o valor de uma célula da planilha em HTML.
@@ -3700,13 +3788,41 @@ def _linha_post_html(f):
             f"salvar</button></form>"
         )
 
-        # Botão de gatilho: só aparece se ainda não foi marcado como pronto (Peça 3).
-        # NOTA: este botão SÓ MARCA — a cópia real (copiador.py) é a próxima fatia (C2).
+        # Status do Post: se já tem match, a cópia já foi (ou está sendo) processada.
+        ja_com_match = (status == "matched" or status == "transferencia_ok"
+                        or status == "transferencia_falhou" or status == "concluido"
+                        or status == "copiando")
+
+        # Peça 3 — gatilho: só aparece se ainda não foi marcado como pronto.
+        # NOTA: este botão SÓ MARCA — a cópia real é o botão "Copiar agora" (Fatia 4, C2).
         if ja_pronto:
-            btn_gatilho = (
-                f"<span style='font-size:0.8em;color:#2e7d32;font-weight:600'>"
-                f"✅ Material pronto para cópia</span>"
-            )
+            if ja_com_match:
+                # Já tem match/cópia — mostra o status em vez do botão de cópia
+                status_label = {
+                    "copiando":             "Copiando…",
+                    "transferencia_ok":     "Cópia concluída",
+                    "transferencia_falhou": "Cópia falhou — verificar",
+                    "concluido":            "Concluído",
+                }.get(status, "Com match — aguardando")
+                btn_gatilho = (
+                    f"<span style='font-size:0.8em;color:#2e7d32;font-weight:600'>"
+                    f"✅ {status_label}</span>"
+                )
+            else:
+                # Pronto mas sem match ainda: mostra "pronto" + botão "Copiar agora" (Fatia 4)
+                btn_gatilho = (
+                    f"<span style='font-size:0.8em;color:#2e7d32;font-weight:600'>"
+                    f"✅ Material pronto</span> "
+                    f"<form action='/post/{fid}/copiar-recebido' method='post' "
+                    f"style='margin:4px 0 0 0;display:inline' "
+                    f"onsubmit=\"return confirm('Iniciar a cópia agora? O processo pode "
+                    f"demorar alguns minutos para arquivos grandes.');\">"
+                    f"<button type='submit' "
+                    f"style='font-size:0.82em;padding:3px 12px;background:#0d6efd;"
+                    f"color:#fff;border:none;border-radius:4px;cursor:pointer;"
+                    f"font-weight:600'>"
+                    f"Copiar agora</button></form>"
+                )
         else:
             btn_gatilho = (
                 f"<form action='/post/{fid}/recebido-pronto' method='post' "

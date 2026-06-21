@@ -201,6 +201,14 @@ def inicializar_banco():
                 -- (ex: "veio com 2 dias", "produtora pediu prioridade")
                 observacoes                     TEXT,
 
+                -- ── Origem do material (Fatia 4 — arco recebidos, Camada 2) ─
+                -- "cartao"   — fluxo normal (cartão detectado pelo Porteiro).
+                -- "recebido" — pasta satélite (material via Drive/Dropbox etc.).
+                -- A Camada 4 lê esta coluna: quando "recebido", FAZ a auditoria
+                -- normal (contagem + tamanho), mas NÃO chama o Parashoot
+                -- (não há cartão físico a embaralhar/ejetar).
+                origem_material                 TEXT NOT NULL DEFAULT 'cartao',
+
                 -- ── Timestamps de controle ──────────────────────────────────
                 -- Criado: quando o registro entrou no banco
                 criado_em                       TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
@@ -643,6 +651,11 @@ def inicializar_banco():
     # `arquivos` (detecção de proxy da Camada 2 — #2 Fatia B). Marca o proxy
     # (ex.: .LRV) ligado ao clipe principal para ele não contar como vídeo.
     migrar_schema_arquivos(conn)
+
+    # Migração incremental (Fatia 4 — arco recebidos, Camada 2): acrescenta a
+    # coluna `origem_material` à tabela `cartoes`. A C4 lê esta coluna para saber
+    # se NÃO deve acionar o Parashoot (material recebido = sem cartão físico).
+    migrar_schema_cartoes(conn)
 
     return conn
 
@@ -4084,6 +4097,219 @@ def marcar_recebido_pronto(conn, formulario_id):
     )
 
     return {"ok": True}
+
+
+# ── ARCO PASTA SATÉLITE — FUNÇÕES DA CAMADA 2 (Fatia 4) ──────────────────────
+#
+# Estas funções dão suporte à cópia de material que NÃO vem por cartão físico
+# (material "recebido" — pasta satélite alimentada por Drive/Dropbox).
+#
+# A marca de origem='recebido' na tabela `cartoes` é o sinalizador que a Camada 4
+# lê para NÃO acionar o Parashoot (não há cartão físico a embaralhar).
+
+
+def migrar_schema_cartoes(conn):
+    """
+    Adiciona a coluna `origem_material` à tabela `cartoes` em bancos já existentes.
+
+    Esta coluna é a MARCA que a Camada 4 usa para saber se o material veio de um
+    cartão físico ("cartao") ou de uma pasta satélite ("recebido"). Quando for
+    "recebido", a Camada 4 faz a auditoria normalmente mas NÃO chama o Parashoot
+    (não há cartão físico a embaralhar/ejetar).
+
+    Valores possíveis:
+      "cartao"   — fluxo normal (cartão de memória detectado pelo Porteiro)
+      "recebido" — pasta satélite (material enviado por Drive/Dropbox etc.)
+
+    Bancos novos já recebem a coluna com DEFAULT 'cartao' no DDL de
+    inicializar_banco() — mas esta migração garante compatibilidade com bancos antigos.
+    Seguro chamar várias vezes (não duplica colunas).
+    """
+    colunas_existentes = {row[1] for row in conn.execute("PRAGMA table_info(cartoes)")}
+    if "origem_material" not in colunas_existentes:
+        conn.execute(
+            "ALTER TABLE cartoes ADD COLUMN origem_material TEXT NOT NULL DEFAULT 'cartao'"
+        )
+        conn.commit()
+
+
+def registrar_cartao_recebido(conn, formulario_id, caminho_pasta, nome_profissional,
+                               tipo_material, data_gravacao):
+    """
+    Cria um registro "virtual" na tabela `cartoes` para material recebido (pasta
+    satélite), já vinculado ao Post por um match automático (sem score do Matcher —
+    a pasta nasceu amarrada ao Post pelo id no nome do slug).
+
+    Este cartão virtual recebe `origem_material='recebido'` — a marca que a Camada 4
+    lerá para saber que NÃO deve acionar o Parashoot.
+
+    Valida antes de gravar:
+      - O Post existe, é do tipo 'recebido' e tem recebido_pronto=1.
+      - O Post ainda NÃO tem match (evita duplicar a cópia).
+      - A pasta de origem existe e tem pelo menos 1 arquivo.
+
+    Retorna:
+      {"ok": True,  "cartao_id": <id>, "formulario_id": <id>, "nome": <NOME>}
+      {"ok": False, "motivo": <string>}
+    """
+    # ── 1. Valida o Post ───────────────────────────────────────────────────────
+    row = conn.execute(
+        """SELECT id, nome, origem_material, recebido_pronto, status
+           FROM formularios WHERE id = ?""",
+        (formulario_id,)
+    ).fetchone()
+
+    if row is None:
+        return {"ok": False, "motivo": "post_inexistente"}
+    if row["origem_material"] != "recebido":
+        return {"ok": False, "motivo": "nao_e_recebido"}
+    if not row["recebido_pronto"]:
+        return {"ok": False, "motivo": "nao_esta_pronto"}
+
+    nome = (row["nome"] or "").strip().upper()
+
+    # ── 2. Verifica se já tem match (idempotência: não duplica) ───────────────
+    match_existente = conn.execute(
+        "SELECT id FROM matches WHERE formulario_id = ?", (formulario_id,)
+    ).fetchone()
+    if match_existente:
+        return {"ok": False, "motivo": "ja_tem_match"}
+
+    # ── 3. Valida a pasta de origem ────────────────────────────────────────────
+    if not os.path.isdir(caminho_pasta):
+        return {"ok": False, "motivo": f"pasta_inexistente: {caminho_pasta}"}
+
+    # Conta arquivos de mídia usando a régua única (ignora lixo de SO / nuvem)
+    try:
+        import ler_cartao as _lc
+        tem_regua = True
+    except ImportError:
+        tem_regua = False
+
+    total_arquivos = 0
+    for _raiz, _dirs, _arqs in os.walk(caminho_pasta):
+        if tem_regua:
+            _dirs[:] = [d for d in _dirs if not _lc.eh_pasta_ignorada(d)]
+        for _a in _arqs:
+            if tem_regua and _lc.eh_nao_midia(_a):
+                continue
+            total_arquivos += 1
+
+    if total_arquivos == 0:
+        return {"ok": False, "motivo": "pasta_vazia"}
+
+    # ── 4. Cria o registro virtual na tabela cartoes ──────────────────────────
+    # O "volume" é o slug da pasta (ex: DANIEL_PARDAL_11) — identificador único
+    # dentro do projeto para este material recebido.
+    volume_virtual = os.path.basename(caminho_pasta)
+    data_formatada = (data_gravacao or datetime.now().strftime("%Y-%m-%d"))[:10]
+    tipo_norm = (tipo_material or "MATERIAL").upper().strip()
+
+    timestamp_agora = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+
+    cursor = conn.execute(
+        """
+        INSERT INTO cartoes
+            (volume, caminho_origem, tipo_material, data_inicio, data_fim,
+             total_arquivos_detectados, status, origem_material,
+             criado_em, atualizado_em)
+        VALUES (?, ?, ?, ?, ?, ?, 'aguardando_match', 'recebido', ?, ?)
+        """,
+        (volume_virtual, caminho_pasta, tipo_norm, data_formatada, data_formatada,
+         total_arquivos, timestamp_agora, timestamp_agora)
+    )
+    conn.commit()
+    cartao_id = cursor.lastrowid
+
+    registrar_evento(
+        conn,
+        tipo="cartao_recebido_criado",
+        descricao=(
+            f"Cartão virtual criado para material recebido | "
+            f"Post ID={formulario_id} | Nome: {nome} | "
+            f"Pasta: {caminho_pasta} | Arquivos: {total_arquivos}"
+        ),
+        cartao_id=cartao_id,
+        formulario_id=formulario_id,
+        dados={"volume": volume_virtual, "caminho": caminho_pasta,
+               "total_arquivos": total_arquivos, "origem_material": "recebido"},
+    )
+
+    # ── 5. Cria o match automático entre o cartão virtual e o Post ─────────────
+    # Score 0, critério = "recebido_automatico" — sem pontuação do Matcher, pois
+    # a pasta já nasceu amarrada ao Post pelo id no nome do slug.
+    gravar_match(
+        conn,
+        cartao_id=cartao_id,
+        formulario_id=formulario_id,
+        score=0,
+        criterios_lista=["recebido_automatico — pasta já amarrada ao Post pelo id"],
+        confirmado=1,
+    )
+
+    registrar_evento(
+        conn,
+        tipo="match_recebido_automatico",
+        descricao=(
+            f"Match automático para material recebido | "
+            f"Cartão virtual: {cartao_id} ↔ Post: {formulario_id} ({nome})"
+        ),
+        cartao_id=cartao_id,
+        formulario_id=formulario_id,
+        dados={"nome": nome, "volume": volume_virtual},
+    )
+
+    return {
+        "ok":           True,
+        "cartao_id":    cartao_id,
+        "formulario_id": formulario_id,
+        "nome":         nome,
+        "total_arquivos": total_arquivos,
+    }
+
+
+def marcar_cartao_recebido_copiado(conn, cartao_id, caminho_pasta_origem):
+    """
+    Após cópia + checksum OK de material recebido: renomeia a pasta de origem
+    acrescentando o sufixo '_COPIADO' — marca ASCII-safe e idempotente de que
+    este material já foi transferido. NUNCA apaga a mídia (princípio nº 2).
+
+    Idempotência: se a pasta já termina em '_COPIADO', não faz nada.
+
+    Retorna (novo_caminho, None) em caso de sucesso, ou (None, mensagem_erro).
+    """
+    if caminho_pasta_origem.endswith("_COPIADO"):
+        # Já foi marcada — idempotente
+        return caminho_pasta_origem, None
+
+    novo_caminho = caminho_pasta_origem + "_COPIADO"
+
+    try:
+        os.rename(caminho_pasta_origem, novo_caminho)
+    except OSError as erro:
+        mensagem = f"Não foi possível renomear a pasta de recebidos: {erro}"
+        registrar_evento(
+            conn,
+            tipo="recebidos_renomear_falhou",
+            descricao=mensagem,
+            cartao_id=cartao_id,
+            dados={"caminho_original": caminho_pasta_origem,
+                   "caminho_destino": novo_caminho, "erro": str(erro)},
+        )
+        return None, mensagem
+
+    registrar_evento(
+        conn,
+        tipo="recebidos_pasta_marcada_copiada",
+        descricao=(
+            f"Pasta de recebidos marcada como copiada | "
+            f"Cartão: {cartao_id} | {novo_caminho}"
+        ),
+        cartao_id=cartao_id,
+        dados={"caminho_original": caminho_pasta_origem, "novo_caminho": novo_caminho},
+    )
+
+    return novo_caminho, None
 
 
 # ── PONTO DE ENTRADA (INICIALIZAÇÃO DIRETA) ───────────────────────────────────
