@@ -543,6 +543,60 @@ def _tunel_no_ar():
     return _tunel_url() is not None
 
 
+def _porta_do_flask():
+    """A porta em que o Flask escuta — mesma lógica usada no resto do sistema."""
+    try:
+        estado = painel_config.carregar_estado()
+    except Exception:
+        estado = {}
+    return (estado.get("porta") or os.environ.get("GMA_PORT", "5050") or "5050").strip() or "5050"
+
+
+def porta_livre(porta):
+    """
+    True se dá para escutar na porta AGORA (ninguém vivo a está segurando).
+    Usa SO_REUSEADDR para espelhar como o Flask (Werkzeug) realmente faz o bind:
+    assim só dá False quando há um processo de fato escutando — não por um
+    socket em TIME_WAIT, que o Flask conseguiria reusar.
+    """
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        s.bind(("127.0.0.1", int(porta)))
+        return True
+    except OSError:
+        return False
+    except Exception:
+        return True  # na dúvida, não travamos a subida
+    finally:
+        s.close()
+
+
+def esperar_porta_livre(porta, timeout=20):
+    """Espera a porta liberar (poll de 0,5s até `timeout` s). True se liberou."""
+    fim = time.time() + timeout
+    while time.time() < fim:
+        if porta_livre(porta):
+            return True
+        time.sleep(0.5)
+    return porta_livre(porta)
+
+
+def _flask_no_ar(processo, porta, espera=3.0):
+    """Confere se o Flask subiu de verdade: processo vivo E já escutando na porta."""
+    if processo is None:
+        return False
+    fim = time.time() + espera
+    while time.time() < fim:
+        if processo.poll() is not None:
+            return False                 # morreu (provável "Address already in use")
+        if not porta_livre(porta):
+            return True                  # alguém está escutando = o Flask subiu
+        time.sleep(0.3)
+    return processo.poll() is None       # vivo mas ainda ligando — damos por no ar
+
+
 def subir_todos():
     """
     Sobe os seis processos do GMA na ordem certa e devolve o dicionário deles.
@@ -553,7 +607,28 @@ def subir_todos():
     processos = {}
     processos["Porteiro"]        = iniciar_processo(SCRIPT_PORTEIRO,      "porteiro",      "Porteiro")
     processos["Leitor de Midia"] = iniciar_processo(SCRIPT_LEITOR,        "leitor",        "Leitor de Midia")
-    processos["Flask"]           = iniciar_processo(SCRIPT_FLASK,         "flask",         "Flask")
+
+    # O Flask é o processo CRÍTICO — é ele que serve o painel/ficha. Numa troca
+    # de projeto, o Flask anterior pode levar um instante para soltar a porta;
+    # se subimos o novo cedo demais, ele morre com "Address already in use" e
+    # o operador fica sem tela (foi o bug do teste s41). Por isso: (1) esperamos
+    # a porta liberar de verdade antes de subir; (2) se mesmo assim não subir,
+    # tentamos uma segunda vez. As outras camadas não disputam porta.
+    porta = _porta_do_flask()
+    if not esperar_porta_livre(porta, timeout=20):
+        log("sistema", f"AVISO: porta {porta} ainda ocupada apos espera — subindo o Flask assim mesmo.")
+    processos["Flask"] = iniciar_processo(SCRIPT_FLASK, "flask", "Flask")
+    if not _flask_no_ar(processos["Flask"], porta):
+        log("sistema", "Flask nao subiu (porta ocupada?). Aguardando a porta e tentando de novo...")
+        encerrar_processo(processos["Flask"], "Flask")
+        esperar_porta_livre(porta, timeout=15)
+        processos["Flask"] = iniciar_processo(SCRIPT_FLASK, "flask", "Flask")
+        if _flask_no_ar(processos["Flask"], porta):
+            log("sistema", "Flask subiu na segunda tentativa.")
+        else:
+            log("sistema", "AVISO: Flask ainda nao subiu — o painel pode ficar indisponivel. "
+                           "Use Encerrar GMA + Iniciar GMA se a tela nao responder.")
+
     processos["Transferencia"]   = iniciar_processo(SCRIPT_TRANSFERENCIA, "transferencia", "Transferencia")
     processos["Auditoria"]       = iniciar_processo(SCRIPT_AUDITORIA,     "auditoria",     "Auditoria")
     processos["Sheets"]          = iniciar_processo(SCRIPT_SHEETS,        "sheets",        "Exportador Sheets")
@@ -699,7 +774,18 @@ def main():
                 os.remove(SINAL_REINICIAR)
                 print()
                 log("sistema", "Sinal de REINICIAR recebido pelo painel. Reiniciando...")
-                descer_todos(processos)
+
+                # ── BLINDAGEM: a troca de projeto NUNCA pode derrubar o maestro ──
+                # Se uma etapa falhar (projeto com caminho ruim, porta presa etc.),
+                # registramos o aviso e SEGUIMOS DE PÉ — o operador continua podendo
+                # escolher outro projeto pelo painel. Antes, uma exceção aqui matava
+                # o maestro e deixava o Flask órfão vivo: a tela respondia mas dizia
+                # "o maestro não está rodando". É também o 1º tijolo do modelo de
+                # 2 níveis (o "saguão" do nível 1 não cai quando o projeto troca).
+                try:
+                    descer_todos(processos)
+                except Exception as erro:
+                    log("sistema", f"AVISO: falha ao descer os processos ({erro}).")
 
                 # Re-aplica o projeto ativo FORÇANDO (a escolha do operador vence).
                 try:
@@ -710,8 +796,16 @@ def main():
                     log("sistema", f"AVISO: falha ao reaplicar o projeto ({erro}).")
 
                 time.sleep(2)  # respiro para as portas/arquivos liberarem
-                processos = subir_todos()
-                log("sistema", "Sistema GMA reiniciado.")
+
+                try:
+                    processos = subir_todos()
+                    log("sistema", "Sistema GMA reiniciado.")
+                except Exception as erro:
+                    # A subida falhou — o maestro NÃO morre. Sem isto, sobraria um
+                    # Flask órfão e o painel acusaria "maestro não está rodando".
+                    processos = {}
+                    log("sistema", f"ERRO ao subir o projeto ({erro}). O maestro segue "
+                                   f"de pé — escolha outro projeto no painel ou tente de novo.")
                 print()
 
     except KeyboardInterrupt:

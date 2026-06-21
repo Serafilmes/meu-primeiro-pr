@@ -1,7 +1,7 @@
 # Contexto Atual — Sistema GMA
 ## Estado vivo do projeto (carregar em TODA sessão junto com `arquitetura_GMA.md`)
 
-> Última atualização: 2026-06-21 (sessão 40)
+> Última atualização: 2026-06-21 (sessão 42)
 > Para detalhes técnicos históricos, ver `historico_GMA.md` (não carregar por padrão).
 
 ---
@@ -10,17 +10,54 @@
 
 | Camada | Nome | Status |
 |---|---|---|
-| 1 | Check-in e identificação | ⚠️ Quase completa — Nova Ficha v2 ✅ (s33); **match manual** (s38); **nomes curtos editáveis** (#5) + **centro de controle dos Posts** na Nova Ficha (grupos por status + cancelar/restaurar/excluir; Operação só com o MATCH) (s39); falta mural dos câmeras, login do operador (2.3) e domínio fixo do túnel |
+| 1 | Check-in e identificação | ⚠️ Quase completa — Nova Ficha v2 ✅ (s33); **match manual** (s38); **nomes curtos editáveis** (#5) + **centro de controle dos Posts** na Nova Ficha (s39); **pergunta de ORIGEM no Post** ("Como o material chega?" — porta do arco recebidos) (s41); falta mural dos câmeras, login do operador (2.3) e domínio fixo do túnel |
 | 2 | Transferência | ✅ Concluída e testada com cartão real; **régua única do que é "mídia real"** compartilhada com a C4 (s40) |
 | 3 | Controle e segurança das informações | ✅ Quase completa — Kanban + Planilha + Molde; grupos editáveis (s33); Sheets dinâmico (s34); exportador em loop (s35); **Sheets por projeto ligado no exportador (s39)** |
 | 4 | Auditoria + liberação do cartão | ✅ Concluída — ciclo integrado testado |
-| 5 | Plataforma profissional + multi-máquina | 🔧 Em construção — **Painel de Controle Fatia 1 ✅ (s37)**: cockpit no Flask; **s40:** caixa de **Pasta de recebidos** (satélite), **trava de instância única** do maestro e **ngrok automático** (o túnel sobe junto com o sistema) |
+| 5 | Plataforma profissional + multi-máquina | 🔧 Em construção — **Painel Fatia 1 ✅ (s37)**; **s40:** Pasta de recebidos, trava de instância e ngrok automático; **s42:** **SAGUÃO DE 2 NÍVEIS construído ✅** (`saguao.py` — térreo na 5055 que nunca cai; entrar/voltar sobe/desce a sessão do projeto sem reinício; substitui o reinício-na-troca da s41) ([[saguao-dois-niveis]]) |
 | 6 | IA assíncrona | 📋 Futura |
 | 7 | Marca e design | 📋 Planejada — foco desejado, **sem prazo de data** (s33) |
 
 ---
 
 ## O que acabou de ser feito (sessões recentes)
+
+### ✅ Sessão 42 (BUILD) — SAGUÃO DE 2 NÍVEIS (Camada 5) — o térreo que nunca cai
+**Arquivos:** `saguao.py` (NOVO), `flask_gma.py`, `Iniciar GMA.command`, `Encerrar GMA.command`, `.gitignore`. **Sem commit.** Testado ponta a ponta (subir/descer sessão real na 5050, trava única, SIGTERM). Laboratório intocado. Memória [[saguao-dois-niveis]].
+> **Decisão do idealizador:** construir o saguão e **abandonar** o trabalho de "maestro robusto" da s41 (reinício-na-troca) — o saguão substitui aquele mecanismo inteiro. As mudanças sem commit da s41 em `inicializar_gma.py`/`flask_gma.py` (espera-da-porta, blindagem, auto-recarregamento) **não foram apagadas**; só deixaram de ser o caminho — decidir depois se descarta.
+
+- **O problema que resolve:** o maestro (`inicializar_gma.py`) subia os 6 processos JÁ dentro de um projeto, e a tela do Painel era servida pelo **Flask do próprio projeto** (5050). Trocar de projeto = derrubar tudo e subir de novo; se falhava, a tela morria ("maestro não está rodando" da s41).
+- **O desenho (2 níveis):** **Nível 1 = SAGUÃO** (`saguao.py`, NOVO) = servidorzinho PRÓPRIO em **porta fixa 5055** (separada da 5050), que **nunca cai**; mostra a lista de projetos + "criar novo" + qual roda agora. **Nível 2 = SESSÃO DO PROJETO** = ao **Entrar**, o saguão sobe os processos daquele projeto (reusa `inicializar_gma.subir_todos`/`descer_todos`/sentinela). **Trocar = "Voltar ao saguão"** desce SÓ a sessão e volta ao térreo (que continuou de pé) — sem reinício frágil, sem tela morta.
+- **Tecnologia:** o saguão usa o `http.server` da biblioteca padrão (NÃO um 2º Flask) — precisa ser à prova de balas. Reusa o motor de processos do `inicializar_gma.py` (importado sem efeito colateral: o `main()` de lá só roda quando ELE é o programa principal). Nada novo a instalar. Sem IA.
+- **3 fatias construídas e verificadas:**
+  1. **Saguão serve a tela na 5055** + lista os 4 projetos do `painel_config` (rotas GET `/`, POST `/entrar`/`/sair`/`/criar`).
+  2. **Ciclo de sessão:** `entrar_no_projeto(slug)` (define ativo + `aplicar_ao_ambiente(forcar=True)` + `criar_sentinela` + `subir_todos`; um projeto por vez, troca desce o anterior); `voltar_ao_saguao()` (`descer_todos` + `remover_sentinela`). `_trava_sessao` (threading.Lock) serializa as ações. **Verificado:** Entrar laboratório → Flask 5050 sobe → Voltar → 5050 cai (000), saguão segue 200, nada vazou.
+  3. **Integração:** **trava de instância única** própria (`.gma_saguao.lock` via `flock` — 2º "Iniciar" sai na hora); **abre o navegador** quando ligado pelo atalho (tty); **"Iniciar GMA.command"** → `saguao.py`; **Painel do projeto** ganhou **"⬅ Voltar ao saguão"** no topo (aponta pra 5055) e o antigo **"Trocar para este"** (dependia do reinício frágil) saiu — a lista de projetos no Painel virou só informativa; criar projeto continua.
+  - **🐛 DESLIGAR — bug pego no teste do idealizador + conserto:** ao desligar pelo Painel, o Flask dizia "o maestro não está rodando" (procurava o `inicializar_gma.py`, que não roda mais). Os **3 caminhos de desligar** foram refeitos e **TODOS passam por SIGTERM** (o único 100% confiável — `servidor.shutdown()` direto da thread se mostrou intermitente): **(a)** botão "⏻ Desligar o GMA" no Painel → escreve o sinal `.gma_encerrar`; **(b)** botão "⏻ Desligar o GMA" no próprio saguão → `os.kill(self, SIGTERM)`; **(c)** atalho "Encerrar GMA.command" → `pkill -TERM saguao.py`. O saguão tem um **vigia** (thread) do `.gma_encerrar` que, ao ver o arquivo, manda SIGTERM pra si; o handler para o `serve_forever` e o `finally` desce a sessão. Lição: **um processo FILHO (Flask) mandar sinal/pkill no PAI (saguão) não é confiável no macOS** → por isso o Flask escreve um ARQUIVO de sinal e o pai (que vigia) se desliga. **Testado:** caminho (a) 4×, (b) e (c) — sessão inteira desce limpa (Flask+porteiro+leitor+transf+auditoria+sheets+ngrok), nada vaza.
+- **🔶 Para usar:** dois cliques em **Iniciar GMA** → saguão abre no navegador → **Entrar** num projeto (cai na 5050) → no Painel, **⬅ Voltar ao saguão** troca de projeto → **Encerrar GMA** desliga tudo.
+- **🔶 FALTA (próximas fatias do saguão):** **estado "subindo…"** na tela do saguão enquanto a sessão sobe (hoje o POST `/entrar` bloqueia alguns segundos até o Flask responder, depois redireciona — funciona, mas sem feedback visual durante a espera); **mostrar o ngrok/erros da sessão** no saguão; **wizard de projeto novo** (hoje cria a pasta+banco, sem assistente); e **limpar de vez** o mecanismo antigo de reinício (`.gma_reiniciar`, laço do `main()` do maestro, rotas `/painel/trocar`+`/painel/reiniciar`) quando o saguão estiver rodado no dia a dia.
+
+### ✅ Sessão 41 (2 FATIAS do arco RECEBIDOS + MAESTRO robusto) — caçando o bug "maestro não está rodando"
+**Arquivos:** `flask_gma.py`, `inicializar_gma.py`, `banco_dados.py` + testes em /tmp (`teste_origem_material.py`, `teste_recebidos_fatia23.py`). **SEM commit.** Laboratório intocado. Delegado à `checkin-gma` (fatias) + feito direto (maestro). Memórias [[pasta-satelite-recebidos]], [[saguao-dois-niveis]].
+
+**📁 Arco RECEBIDOS avança (Camada 1) — fatias 1 e 2-3 das 5:**
+- **Fatia 1 — pergunta de ORIGEM no Post:** "Como o material chega?" (rádio Cartão físico [padrão] / Pasta recebida), **logo abaixo do "Tipo de material"** (decisão refinada na hora: NÃO no fim da ficha — é pergunta estrutural que comanda o fluxo, como o tipo). Campo `origem_material` (`cartao`/`recebido`), coluna no banco (migração não-destrutiva), retrocompatível (Post antigo = `cartao`), editar preserva.
+- **Fatia 2-3 — pasta local + link + gatilho:**
+  - **Pasta local:** ao salvar Post `recebido`, cria `<caminho_recebidos>/<NOME_id>/` (usa `painel_config.caminho_recebidos()`). `banco_dados.criar_pasta_recebidos_post`. Falha de disco vira evento no Log e **NÃO quebra o salvamento do Post**.
+  - **Link por Post (decisão DIREÇÃO A + 1 pasta/link por Post):** coluna `link_recebidos`; o operador cola o link à mão (na Nova Ficha, linha verde por Post satélite); no **acesso EXTERNO** (profissional remoto) a ficha mostra "Envie seu material para: <link>" (ou aviso neutro se vazio). `definir_link_recebidos` + rota `/post/<id>/link-recebidos`. A criação automática na nuvem (API Drive/Dropbox) fica pra fatia futura.
+  - **Gatilho do operador (SÓ MARCA):** coluna `recebido_pronto`; botão "📥 Material recebido — pronto para copiar" nos Posts satélite (Nova Ficha). `marcar_recebido_pronto` + rota `/post/<id>/recebido-pronto`. **NÃO chama o copiador** — comentário explícito de que a ligação com a C2 é a próxima fatia.
+- **FALTA do arco:** Fatia 4 (C2 olha `recebido_pronto=1` e copia de `recebidos/<post>/` — `copiador` já é agnóstico de origem; `transferencia-gma`); Fatia 5 (C4 audita SEM Parashoot); e (futuro) subpasta+link na nuvem automáticos.
+
+**🛡️ MAESTRO robusto (achado caçando o bug "maestro não está rodando"):**
+- **O sintoma:** ao **trocar de projeto**, a tela passou a dizer "O maestro não está rodando" (ou ficava sem tela). O `pgrep` achava o maestro normalmente — discrepância real entre o que o terminal via e o que o Flask via.
+- **A CAUSA RAIZ (descoberta no diagnóstico ao vivo):** na troca, o maestro mata o Flask e tenta subir o novo ~2s depois, mas a **porta 5050 ainda não tinha liberado** → o Flask novo morria com **"Address already in use"** → ficava SEM Flask (5 processos + ngrok, faltando o Flask) → tela morta; a página velha no navegador seguia mostrando "maestro não rodando". NÃO era o projeto rio2c/rock_in_rio — era a porta.
+- **3 consertos (em `inicializar_gma.py` e `flask_gma.py`):**
+  1. **BLINDAGEM** (bloco do `SINAL_REINICIAR`, ~linha 698): descer/reaplicar/subir cada um em try/except; se `subir_todos` falhar, `processos={}` e o maestro **SEGUE de pé** (antes uma exceção matava o maestro e deixava Flask órfão = "maestro não rodando" verdadeiro). **Validado ao vivo** (o maestro sobreviveu à troca que falhava).
+  2. **ESPERA DA PORTA** (em `subir_todos`): novos `porta_livre`/`esperar_porta_livre`/`_flask_no_ar` — antes de subir o Flask, espera a 5050 liberar de verdade (até 20s) e, se mesmo assim não subir, **tenta de novo**. O Flask é o processo crítico (serve a tela). **Validado ao vivo:** depois disso a troca subiu o Flask completo (6 processos + ngrok).
+  3. **AUTO-RECARREGAMENTO do painel** (`_pagina_painel(recarregar=True)` nas rotas `/painel/trocar` e `/painel/reiniciar`): a tela de "Trocando…" espera o Flask **cair e voltar** (poll com `fetch`) e **recarrega sozinha** → fim da página enganosa.
+- **🔶 RUMO APROVADO — SAGUÃO DE 2 NÍVEIS:** ideia do idealizador que **substitui** esse mecanismo de reinício-na-troca. Nível 1 = saguão (escolhe/cria projeto, NUNCA cai) × nível 2 = sessão do projeto; trocar = volta ao saguão SEM reiniciar o maestro. Peça-chave: o saguão precisa do **próprio servidorzinho em porta fixa** pra servir a tela quando nenhum projeto roda. A blindagem + espera-da-porta de hoje são o **1º tijolo**. **Decisão do idealizador: parar de remendar o fluxo antigo** e construir o saguão em **sessão dedicada** (`plataforma-gma`). Ver [[saguao-dois-niveis]].
+- **🔶 Decisões registradas (link):** direção **A** (o sistema oferece o link, não a pessoa fornece) + **1 pasta/link por Post** (cada Post = subpasta própria, material separado = contagem/C4 limpas).
+- **🔶 Estado ao fim da sessão:** sistema **de pé e funcionando** (maestro + Flask na 5050) com os consertos da porta no maestro vivo; o auto-recarregamento entra no ar num próximo reinício do Flask. **Para ativar tudo no sistema rodando:** Encerrar GMA + Iniciar GMA (carrega o Flask novo). **Sem commit** — avaliar mergear o maestro robusto (blindagem + espera-da-porta valem mesmo com o saguão a caminho).
 
 ### ✅ Sessão 40 (ALINHAMENTO + 4 BUILDS) — RÉGUA ÚNICA (C2+C4) · caixa de RECEBIDOS · TRAVA do maestro · NGROK automático
 **Desenho registrado + 4 entregas, TUDO mergeado no `main`** (PR #10 régua · #11 recebidos · #12 maestro). Memória [[pasta-satelite-recebidos]], [[git-nao-deixar-disco-em-branch-surpresa]].

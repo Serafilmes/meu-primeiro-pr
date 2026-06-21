@@ -166,9 +166,11 @@ Fluxo **totalmente automático:**
 
 **Parashoot CLI:** `/Applications/ParaShoot.app/Contents/MacOS/cli/parashoot`. Saída em **JSON Lines (NDJSON)**. `check` sucesso → `{"status":"check_complete",...}`. `erase` → `erase_start` + `erase_complete`. Erro no stderr → `{"status":"error",...}`. O fake-format é **reversível** (inverte 2 MB do MBR; footage intacto).
 
-### Camada 5 — Interface + multi-máquina `[Planejamento]`
-- pywebview (janela nativa) + SSE (tempo real sem recarregar)
-- 2º monitor: Mural dos Câmeras (read-only, QR fixo)
+### Camada 5 — Plataforma + multi-máquina `[Em construção]`
+- **🏛️ SAGUÃO DE 2 NÍVEIS ✅ (s42) — `saguao.py`:** o modelo de acesso da plataforma. **Nível 1 = saguão** = um servidorzinho próprio (`http.server` da stdlib, NÃO um 2º Flask) numa **porta fixa só dele (5055)**, que **nunca cai**; mostra a lista de projetos + criar novo. **Nível 2 = sessão do projeto** = ao Entrar, o saguão sobe os processos daquele projeto (Flask na 5050 + porteiro/leitor/etc., reusando `inicializar_gma.subir_todos`/`descer_todos`). **Trocar = "Voltar ao saguão"** desce só a sessão e volta ao térreo — sem reinício, sem tela morta. Trava de instância única (`.gma_saguao.lock`), encerramento limpo por SIGTERM, atalhos "Iniciar/Encerrar GMA" repontados. **Substituiu** o reinício-na-troca frágil (o "maestro robusto" da s41 foi abandonado). O `inicializar_gma.py` segue como **motor de processos** (subir/descer/ngrok/sentinela), agora orquestrado pelo saguão.
+- **Painel de Controle (cockpit) ✅ (s37):** aba no Flask do projeto — conexões com "Testar", criar projeto, "⬅ Voltar ao saguão". Por-projeto isolado.
+- pywebview (janela nativa) + SSE (tempo real sem recarregar) `[futuro]`
+- 2º monitor: Mural dos Câmeras (read-only, QR fixo) `[futuro]`
 - Configuração externa por evento (`evento.toml` + `.env`)
 - Porta de despacho para IA da C6 (enfileira, nunca expõe mídia bruta)
 - Agente `plataforma-gma` criado em `.claude/agents/`
@@ -188,7 +190,8 @@ Fluxo **totalmente automático:**
 
 ```
 /Users/serafa/GMA/
-├── inicializar_gma.py       ← PONTO DE ENTRADA (sobe todos os processos)
+├── saguao.py                ← [C5] SAGUÃO (nível 1): térreo na porta 5055, nunca cai; sobe/desce a sessão do projeto
+├── inicializar_gma.py       ← MOTOR DE PROCESSOS (subir/descer/ngrok/sentinela), orquestrado pelo saguão
 ├── encerrar_gma.py          ← encerramento de emergência
 ├── porteiro.py              ← [C1] detecta cartões/volumes
 ├── leitor_midia.py          ← [C1] analisa conteúdo

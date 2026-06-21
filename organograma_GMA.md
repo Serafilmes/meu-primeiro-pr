@@ -9,7 +9,7 @@
 > O sistema guarda o dado em um lugar só; as telas são jeitos diferentes de LER
 > esse mesmo dado. Nada diverge.
 >
-> Última atualização: 2026-06-21 (sessão 40 — 4 BUILDS mergeados no main: RÉGUA ÚNICA do que é mídia (função compartilhada C2+C4, fecha o "108 vs 106" da s39) · caixa de PASTA DE RECEBIDOS no Painel (1ª fatia do arco satélite: config + Testar com detecção do Drive "só na nuvem") · TRAVA de instância única do maestro (flock — clicar Iniciar 2x não duplica) · NGROK AUTOMÁTICO (o maestro sobe o túnel junto com o sistema, validado ao vivo). Arco satélite desenhado (memória pasta-satelite-recebidos); lição de git gravada (não deixar o disco num branch-surpresa). — anterior s39: TESTE de cópia real (GoPro 7,7GB) ponta a ponta no projeto SP2B; BUILD: Google Sheets POR PROJETO no exportador (#1), PROXY marcado na cópia (sempre copia + avisa — Fatias A/B), EXCLUIR Post definitivo (#3), DATA DE LOGAGEM pelo relógio do sistema (#4), NOMES CURTOS editáveis (#5: nome_raiz/nome_curto, pasta+cartão+planilha, ASCII), CENTRO DE CONTROLE DOS POSTS na Nova Ficha (grupos recolhíveis por status + cancelar/restaurar/excluir; Operação ficou só com o MATCH). Em desenho: redesenho C2/C4 com "regra única do que é mídia" + benchmark de velocidade. Antes: MATCH MANUAL + GATE DOS CARTÕES + Acompanhamento AO VIVO (s38), PAINEL DE CONTROLE / cockpit (s37), Rock in Rio + programação do dia (s36), Sheets real+dinâmico (s32/s34), grupos editáveis (s33).)
+> Última atualização: 2026-06-21 (sessão 42 — SAGUÃO DE 2 NÍVEIS construído (Camada 5): novo `saguao.py` = o "térreo" do sistema, um servidorzinho próprio na porta fixa 5055 que NUNCA cai. Mostra a lista de projetos; **Entrar** sobe a sessão daquele projeto (Flask na 5050 + processos, reusando o motor do maestro); **Voltar ao saguão** desce SÓ a sessão e volta ao térreo (que continuou de pé) — fim do reinício frágil na troca de projeto. Trava de instância única própria (.gma_saguao.lock), encerramento limpo por SIGTERM, abre o navegador sozinho. Atalhos "Iniciar/Encerrar GMA" repontados pro saguão; Painel do projeto ganhou "⬅ Voltar ao saguão". Decisão: ABANDONAR o "maestro robusto" da s41 (o saguão o substitui); as mudanças sem commit da s41 não foram apagadas, só deixaram de ser o caminho. Testado ponta a ponta (subir/descer sessão real, trava, SIGTERM). Sem commit. — anterior s41 — ARCO RECEBIDOS avança + MAESTRO robusto: pergunta de ORIGEM no Post ("Como o material chega?" Cartão físico × Pasta recebida) · PASTA LOCAL por Post + LINK por Post (acesso externo) + GATILHO do operador ("pronto para copiar", só marca) · BLINDAGEM do maestro (troca de projeto não derruba mais o sistema) · ESPERA DA PORTA 5050 na subida do Flask (corrige o "sem tela" na troca: o Flask não subia porque a porta não tinha liberado) · AUTO-RECARREGAMENTO do painel (fim da página enganosa "maestro não rodando"). DECISÕES: link direção A (sistema oferece) + 1 pasta/link por Post; modelo SAGUÃO DE 2 NÍVEIS aprovado como rumo da C5 (substitui o reinício-na-troca; a blindagem de hoje é o 1º tijolo). Sem commit. — anterior s40 — 4 BUILDS mergeados no main: RÉGUA ÚNICA do que é mídia (função compartilhada C2+C4, fecha o "108 vs 106" da s39) · caixa de PASTA DE RECEBIDOS no Painel (1ª fatia do arco satélite: config + Testar com detecção do Drive "só na nuvem") · TRAVA de instância única do maestro (flock — clicar Iniciar 2x não duplica) · NGROK AUTOMÁTICO (o maestro sobe o túnel junto com o sistema, validado ao vivo). Arco satélite desenhado (memória pasta-satelite-recebidos); lição de git gravada (não deixar o disco num branch-surpresa). — anterior s39: TESTE de cópia real (GoPro 7,7GB) ponta a ponta no projeto SP2B; BUILD: Google Sheets POR PROJETO no exportador (#1), PROXY marcado na cópia (sempre copia + avisa — Fatias A/B), EXCLUIR Post definitivo (#3), DATA DE LOGAGEM pelo relógio do sistema (#4), NOMES CURTOS editáveis (#5: nome_raiz/nome_curto, pasta+cartão+planilha, ASCII), CENTRO DE CONTROLE DOS POSTS na Nova Ficha (grupos recolhíveis por status + cancelar/restaurar/excluir; Operação ficou só com o MATCH). Em desenho: redesenho C2/C4 com "regra única do que é mídia" + benchmark de velocidade. Antes: MATCH MANUAL + GATE DOS CARTÕES + Acompanhamento AO VIVO (s38), PAINEL DE CONTROLE / cockpit (s37), Rock in Rio + programação do dia (s36), Sheets real+dinâmico (s32/s34), grupos editáveis (s33).)
 
 ---
 
@@ -34,6 +34,8 @@ ANDAR                                       PROGRESSO
            classifica PROXY (.LRV→clipe) e RAW (.GPR→foto) · NOMES CURTOS editáveis (#5)
         └─ NOVO (s39): CENTRO DE CONTROLE DOS POSTS na Nova Ficha — grupos recolhíveis
            por status + editar/cancelar/restaurar/excluir; Operação ficou só com o MATCH
+        └─ NOVO (s41): pergunta de ORIGEM no Post ("Como o material chega?" Cartão físico ×
+           Pasta recebida) — porta de entrada do arco RECEBIDOS (satélite)
         └─ falta: mural dos câmeras · login do operador (2.3) · domínio fixo do túnel
 2 · Transferência (copiar com segurança)    ████████████  PRONTO ✅
         └─ s38: pasta de destino configurável (GMA_DESTINO) + falha limpa
@@ -57,7 +59,12 @@ ANDAR                                       PROGRESSO
         └─ projeto-festival Rock in Rio + programação do dia (s36); por-projeto isolado
         └─ NOVO (s40): caixa de PASTA DE RECEBIDOS (satélite) · TRAVA de instância única do
            maestro · NGROK AUTOMÁTICO (o túnel sobe junto com o sistema)
-        └─ falta: conexões por-projeto (Fatia 2) · login/usuário (Fatia 3) · .app
+        └─ NOVO (s42): SAGUÃO DE 2 NÍVEIS CONSTRUÍDO ✅ (saguao.py) — térreo na porta 5055 que
+           NUNCA cai; Entrar sobe a sessão do projeto (Flask 5050 + processos), Voltar ao saguão
+           desce só ela. Fim do reinício frágil na troca. Atalhos repontados; "⬅ Voltar ao saguão"
+           no Painel; trava única + SIGTERM limpo. (s41 "maestro robusto" ABANDONADO — o saguão o substitui)
+        └─ falta: conexões por-projeto (Fatia 2) · login/usuário (Fatia 3) · .app · feedback "subindo…"
+           no saguão + limpar de vez o mecanismo antigo de reinício
 6 · Inteligência artificial (opcional)      ░░░░░░░░░░░░  futuro
 7 · Marca e identidade visual               ░░░░░░░░░░░░  sem prazo (próximo foco)
         └─ candidato forte a NOME do sistema: "6floor" (s39, a confirmar)
@@ -386,6 +393,40 @@ Nenhuma decisão foi à toa. Cada uma resolveu um problema que apareceu
            🧹 LIÇÃO de git: não deixar o disco num branch-surpresa enquanto ele roda ao vivo
               (a caixa "sumiu" da tela por isso) → tudo consolidado no main ao fim (memória)
            💾 PRs #10/#11/#12 mergeados no main; disco no main, working tree limpo
+
+21/06  S41 📁 BUILD arco RECEBIDOS avança 2 fatias (Camada 1):
+              • Fatia 1: pergunta de ORIGEM no Post ("Como o material chega?" Cartão físico ×
+                Pasta recebida), logo abaixo do Tipo de material. Campo origem_material; padrão Cartão
+              • Fatia 2-3: ao salvar Post satélite cria recebidos/<post>/ local (não quebra o Post se
+                o caminho falhar) · LINK por Post (operador cola; aparece no acesso EXTERNO) · GATILHO
+                do operador "pronto para copiar" (só MARCA — cópia C2 é a próxima fatia)
+           🔶 DECISÕES do link: direção A (o SISTEMA oferece o link) + 1 pasta/link POR POST
+           🛡️ BUILD MAESTRO robusto (achado caçando o bug "maestro não está rodando"):
+              • BLINDAGEM: troca de projeto não derruba mais o maestro (cada etapa em try/except;
+                se a subida falha, processos={} e o maestro SEGUE de pé)
+              • ESPERA DA PORTA: a CAUSA RAIZ — na troca o Flask não subia ("Address already in use"
+                porque a 5050 não tinha liberado) → agora o maestro espera a porta liberar + 2ª tentativa
+              • AUTO-RECARREGAMENTO do painel: a tela de "Trocando…" espera o Flask cair e voltar e
+                recarrega sozinha → fim da página enganosa que parecia dizer "maestro não rodando"
+           🔶 RUMO APROVADO: SAGUÃO DE 2 NÍVEIS (nível 1 escolhe/cria projeto e nunca cai × nível 2
+              sessão do projeto; trocar = volta ao saguão sem reiniciar). Substitui o reinício-na-troca;
+              a blindagem de hoje é o 1º tijolo. Próxima sessão dedicada (plataforma-gma). Ver memória
+           💾 Sem commit (mudanças em flask_gma.py + inicializar_gma.py + banco_dados.py; testes em /tmp)
+
+21/06  S42 🏛️ BUILD SAGUÃO DE 2 NÍVEIS (Camada 5) — o "térreo" que nunca cai
+           🔶 Decisão: construir o saguão e ABANDONAR o "maestro robusto" da s41 (o saguão substitui
+              aquele mecanismo de reinício-na-troca inteiro). As mudanças sem commit da s41 não foram
+              apagadas, só deixaram de ser o caminho.
+           🆕 saguao.py (NOVO) = servidorzinho próprio na PORTA FIXA 5055 (http.server, não um 2º Flask),
+              que NUNCA cai. Lista os projetos + criar novo + qual roda agora.
+           ▲ ENTRAR sobe a sessão do projeto (Flask 5050 + porteiro/leitor/etc., reusando
+              inicializar_gma.subir_todos); ▼ VOLTAR AO SAGUÃO desce só a sessão — o térreo segue de pé
+           🔒 Trava única própria (.gma_saguao.lock) · encerramento limpo por SIGTERM (desce a sessão junto)
+              · abre o navegador sozinho (tty) · atalhos Iniciar/Encerrar repontados pro saguão
+           🖥️ Painel do projeto ganhou "⬅ Voltar ao saguão"; "Trocar para este" (reinício frágil) saiu
+           🧪 Testado ponta a ponta: Entrar laboratório → Flask 5050 sobe → Voltar → 5050 cai, saguão
+              segue 200, nada vazou; trava recusa o 2º; SIGTERM desce tudo limpo
+           💾 Sem commit
 ```
 
 ---
@@ -421,12 +462,21 @@ Em ordem de impacto:
    fecha o "108 vs 106" da s39. Desconhecido = copia + marca "revisar" (princípio nº 2). É a FUNDAÇÃO:
    FALTA por cima — C2 copia rápido (checksum durante a cópia) + auto-cura (recopia só o divergente) +
    benchmark sob demanda; frames travam a liberação (com opção de desligar).
-2c. 📁 **Entrada por PASTA SATÉLITE (s40, arco próprio — 1ª fatia CONSTRUÍDA, mergeada)** — material que NÃO
-   vem por cartão (fotógrafo foi embora; PGM/feed). ✅ **Caixa "Pasta de recebidos" no Painel** (config +
-   Testar com detecção do Drive "só na nuvem"; PR #11). FALTA: ficha pergunta "Cartão físico?" → sistema
-   cria `recebidos/<post>/` alimentada por Drive/Dropbox → gatilho do operador (depois estabilidade
-   ajustável e aviso remoto) → cópia idêntica (a régua faz cartão=satélite) → C4 audita mas NÃO roda
-   Parashoot. Ver [[pasta-satelite-recebidos]].
+2c. 📁 **Entrada por PASTA SATÉLITE (arco próprio — 3 fatias CONSTRUÍDAS)** — material que NÃO
+   vem por cartão (fotógrafo foi embora; PGM/feed). ✅ Caixa "Pasta de recebidos" no Painel (s40, PR #11).
+   ✅ **s41:** pergunta de ORIGEM no Post ("Como o material chega?") · pasta `recebidos/<post>/` local ao
+   salvar Post satélite · LINK por Post (acesso externo) · GATILHO do operador "pronto para copiar" (só marca).
+   🔶 Link decidido: direção A (o sistema oferece) + 1 pasta/link por Post. **FALTA: a CÓPIA (C2)** — ensinar
+   a transferência a olhar Posts com `recebido_pronto=1` e copiar de `recebidos/<post>/` (copiador já é
+   agnóstico de origem); depois **C4 audita mas NÃO roda Parashoot**; e (futuro) criar a subpasta na nuvem +
+   link automático (API Drive/Dropbox). Ver [[pasta-satelite-recebidos]].
+2e. ✅ **SAGUÃO DE 2 NÍVEIS (s42 — CONSTRUÍDO)** — `saguao.py` é o térreo na porta fixa 5055 que NUNCA
+   cai; **Entrar** sobe a sessão do projeto (Flask 5050 + processos), **Voltar ao saguão** desce só ela.
+   Substituiu o frágil reinício-na-troca (s41 "maestro robusto" abandonado). Trava única + SIGTERM limpo +
+   atalhos repontados + "⬅ Voltar ao saguão" no Painel. ⏭️ FALTA por cima: feedback "subindo…" no saguão
+   durante a subida; mostrar ngrok/erros da sessão; wizard de projeto novo; e **limpar de vez** o mecanismo
+   antigo de reinício (`.gma_reiniciar`, laço do `main()` do maestro, rotas `/painel/trocar`+`/reiniciar`).
+   Ver [[saguao-dois-niveis]].
 2d. ✅ **Maestro robusto (s40 — CONSTRUÍDO, PR #12)** — (a) **TRAVA de instância única** (`flock` em
    `.gma_maestro.lock`): clicar "Iniciar" 2x não duplica mais o maestro (o 2º sai na hora). (b) **NGROK
    AUTOMÁTICO**: o maestro sobe o túnel como 7º processo opcional quando "ativo" + online (verifica no

@@ -6497,6 +6497,16 @@ def _maestro_rodando():
         return False
 
 
+def _saguao_rodando():
+    """True se o saguao.py (o térreo, nível 1) está no ar — quem comanda hoje."""
+    try:
+        r = subprocess.run(["pgrep", "-f", "saguao.py"],
+                           capture_output=True, text=True, timeout=5)
+        return r.returncode == 0 and r.stdout.strip() != ""
+    except Exception:
+        return False
+
+
 def _inicializar_banco_projeto(slug):
     """Cria o schema do banco vazio de um projeto recém-criado (subprocess isolado)."""
     estado = painel_config.carregar_estado()
@@ -6706,8 +6716,14 @@ def _conexoes_cockpit():
     ]
 
 
-def _pagina_painel(aviso=None, erro=None, resultado_teste=None):
-    """Renderiza o cockpit do Painel de Controle."""
+def _pagina_painel(aviso=None, erro=None, resultado_teste=None, recarregar=False):
+    """
+    Renderiza o cockpit do Painel de Controle.
+    recarregar=True injeta um auto-recarregamento: depois de uma troca/reinício,
+    o Flask sai do ar por alguns segundos; o script espera o servidor CAIR e
+    VOLTAR e só então recarrega a tela com o estado novo — assim o operador
+    nunca fica olhando a página velha (que parecia dizer "maestro não rodando").
+    """
     if not PAINEL_DISPONIVEL:
         return _pagina("Painel de Controle", "painel",
                        "<div class='painel-secao'>Painel indisponível (painel_config.py não carregou).</div>",
@@ -6716,6 +6732,7 @@ def _pagina_painel(aviso=None, erro=None, resultado_teste=None):
     estado = painel_config.carregar_estado()
     ativo_slug = estado["projeto_ativo"]
     ativo_cfg = estado["projetos"][ativo_slug]
+    porta_saguao = os.environ.get("GMA_PORTA_SAGUAO", "5055")
 
     partes = []
 
@@ -6724,6 +6741,21 @@ def _pagina_painel(aviso=None, erro=None, resultado_teste=None):
         partes.append(f"<div class='aviso-painel ok'>{_esc(aviso)}</div>")
     if erro:
         partes.append(f"<div class='aviso-painel erro'>{_esc(erro)}</div>")
+
+    # ── Voltar ao saguão (térreo do sistema) ─────────────────────────────────
+    # Trocar de projeto agora se faz pelo SAGUÃO: ele desce só esta sessão e
+    # mostra a lista de projetos, sem reiniciar o sistema. O saguão fica sempre
+    # de pé na porta dele (5055), separado deste Flask do projeto.
+    partes.append(
+        "<div class='painel-secao' style='display:flex;align-items:center;"
+        "justify-content:space-between;gap:14px;flex-wrap:wrap'>"
+        "<div><b>Você está dentro de um projeto.</b>"
+        "<div class='sub'>Para trocar de projeto, volte ao saguão — o sistema não "
+        "reinicia, só desce esta sessão.</div></div>"
+        f"<a class='btn btn-secund' href='http://127.0.0.1:{_esc(porta_saguao)}/'>"
+        "⬅ Voltar ao saguão</a>"
+        "</div>"
+    )
 
     # ── Projeto ativo ────────────────────────────────────────────────────────
     partes.append(
@@ -6738,11 +6770,8 @@ def _pagina_painel(aviso=None, erro=None, resultado_teste=None):
     itens = []
     for slug, cfg in estado["projetos"].items():
         eh_ativo = (slug == ativo_slug)
-        tag = "<span class='tag-ativo'>ATIVO</span>" if eh_ativo else (
-            f"<form method='POST' action='/painel/trocar' style='margin:0'>"
-            f"<input type='hidden' name='slug' value='{_esc(slug)}'>"
-            f"<button class='btn btn-trocar' type='submit'>Trocar para este</button></form>"
-        )
+        # Trocar de projeto é pelo SAGUÃO agora — aqui a lista é só informativa.
+        tag = "<span class='tag-ativo'>ATIVO</span>" if eh_ativo else ""
         itens.append(
             f"<div class='proj-item {'ativo' if eh_ativo else ''}'>"
             f"<div class='info'><b>{_esc(cfg.get('nome', slug))}</b><br>"
@@ -6751,14 +6780,15 @@ def _pagina_painel(aviso=None, erro=None, resultado_teste=None):
         )
     partes.append(
         "<div class='painel-secao'><h2>Projetos</h2>"
-        "<div class='sub'>Trocar de projeto reinicia o sistema já apontado para o projeto escolhido "
-        "(o isolamento é total: cada projeto tem seu banco, sua pasta e sua planilha).</div>"
+        "<div class='sub'>Para <b>trocar</b> de projeto, use “⬅ Voltar ao saguão” no topo — "
+        "lá você escolhe em qual entrar (o isolamento é total: cada projeto tem seu banco, "
+        "sua pasta e sua planilha).</div>"
         f"<div class='proj-lista'>{''.join(itens)}</div>"
         "<form method='POST' action='/painel/novo' class='linha-form'>"
         "<input type='text' name='nome' placeholder='Nome do projeto novo (ex.: The Town 2026)'>"
         "<button class='btn btn-secund' type='submit'>+ Criar projeto</button></form>"
         "<div class='sub' style='margin-top:8px'>Criar um projeto faz a pasta isolada dele e prepara o banco vazio. "
-        "Depois você troca para ele e configura as conexões aqui no cockpit.</div>"
+        "Depois, volte ao saguão e entre nele para configurar as conexões aqui no cockpit.</div>"
         "</div>"
     )
 
@@ -6857,22 +6887,25 @@ def _pagina_painel(aviso=None, erro=None, resultado_teste=None):
     )
 
     # ── Controle do sistema ──────────────────────────────────────────────────
-    maestro = _maestro_rodando()
-    estado_maestro = (
-        "<span class='dot ok'></span> O sistema está sob o maestro (reiniciar/encerrar funcionam por aqui)."
-        if maestro else
-        "<span class='dot aviso'></span> O maestro não está rodando — para ligar o sistema completo, "
+    # No modelo de 2 níveis, quem comanda é o SAGUÃO (saguao.py). Encerrar daqui
+    # encerra o saguão, que desce esta sessão sozinho. Trocar de projeto é pelo
+    # "⬅ Voltar ao saguão" (lá em cima) — por isso não há mais "Reiniciar" aqui.
+    sob_saguao = _saguao_rodando()
+    estado_sis = (
+        "<span class='dot ok'></span> O GMA está sob o saguão (o térreo, na porta "
+        f"{_esc(porta_saguao)}). Encerrar por aqui desliga tudo."
+        if sob_saguao else
+        "<span class='dot aviso'></span> O saguão não está no ar — para ligar o sistema, "
         "use o atalho <b>Iniciar GMA</b> na pasta do projeto."
     )
     partes.append(
         "<div class='painel-secao'><h2>Controle do sistema</h2>"
-        f"<div class='sub'>{estado_maestro}</div>"
+        f"<div class='sub'>{estado_sis}</div>"
         "<div class='controle-sistema'>"
-        "<form method='POST' action='/painel/reiniciar' style='margin:0'>"
-        "<button class='btn btn-secund' type='submit'>↻ Reiniciar sistema</button></form>"
+        f"<a class='btn btn-secund' href='http://127.0.0.1:{_esc(porta_saguao)}/'>⬅ Voltar ao saguão</a>"
         "<form method='POST' action='/painel/encerrar' style='margin:0' "
-        "onsubmit=\"return confirm('Encerrar todo o sistema GMA agora?');\">"
-        "<button class='btn btn-perigo' type='submit'>⏻ Encerrar sistema</button></form>"
+        "onsubmit=\"return confirm('Desligar todo o GMA agora?');\">"
+        "<button class='btn btn-perigo' type='submit'>⏻ Desligar o GMA</button></form>"
         "</div>"
         "<div class='nota-command'>Para <b>ligar</b> o sistema sem depender do terminal, dê dois cliques em "
         "<b>“Iniciar GMA.command”</b> dentro da pasta GMA. Para <b>desligar</b>, use o botão acima ou "
@@ -6880,8 +6913,31 @@ def _pagina_painel(aviso=None, erro=None, resultado_teste=None):
         "</div>"
     )
 
+    script_recarregar = ""
+    if recarregar:
+        # Espera o servidor CAIR (reinício em curso) e VOLTAR, então recarrega.
+        # Só recarrega após o ciclo cair→voltar — nunca antes da hora.
+        script_recarregar = """
+<script>
+(function(){
+  var n = 0, MAX = 90, caiu = false;
+  function ping(){ return fetch(window.location.href, {credentials:'same-origin', cache:'no-store'}); }
+  function ciclo(){
+    n++;
+    ping().then(function(){
+      if (caiu) { window.location.reload(); return; }   // caiu e voltou → recarrega
+      if (n < MAX) setTimeout(ciclo, 800);              // ainda no ar (reinício não começou)
+    }).catch(function(){
+      caiu = true;                                       // servidor fora do ar = reiniciando
+      if (n < MAX) setTimeout(ciclo, 800);
+    });
+  }
+  setTimeout(ciclo, 1200);
+})();
+</script>"""
+
     return _pagina("Painel de Controle", "painel", "".join(partes),
-                   head_extra=f"<style>{PAINEL_CSS}</style>")
+                   head_extra=f"<style>{PAINEL_CSS}</style>{script_recarregar}")
 
 
 @app.route("/painel", methods=["GET"])
@@ -6899,12 +6955,13 @@ def painel_trocar():
         _painel_criar_sinal(".gma_reiniciar")
         logger.info(f"PAINEL | Projeto ativo trocado para '{slug}' + reinício solicitado")
         if _maestro_rodando():
-            aviso = ("Trocando de projeto… o sistema vai reiniciar no projeto escolhido. "
-                     "Recarregue esta página em alguns segundos.")
+            aviso = ("Trocando de projeto… o sistema está reiniciando no projeto escolhido. "
+                     "Esta tela recarrega sozinha em alguns segundos.")
+            return _pagina_painel(aviso=aviso, recarregar=True)
         else:
             aviso = ("Projeto escolhido salvo. O maestro não está rodando — ligue o sistema "
                      "com “Iniciar GMA” para subir já no projeto novo.")
-        return _pagina_painel(aviso=aviso)
+            return _pagina_painel(aviso=aviso)
     except Exception as e:
         logger.warning(f"PAINEL | Falha ao trocar de projeto: {e}")
         return _pagina_painel(erro=f"Não deu para trocar de projeto: {e}")
@@ -7077,21 +7134,29 @@ def painel_reiniciar():
     _painel_criar_sinal(".gma_reiniciar")
     logger.info("PAINEL | Reinício solicitado")
     if _maestro_rodando():
-        aviso = "Reiniciando o sistema… recarregue esta página em alguns segundos."
+        aviso = "Reiniciando o sistema… esta tela recarrega sozinha em alguns segundos."
+        return _pagina_painel(aviso=aviso, recarregar=True)
     else:
         aviso = "O maestro não está rodando — não há o que reiniciar. Use “Iniciar GMA” para ligar."
-    return _pagina_painel(aviso=aviso)
+        return _pagina_painel(aviso=aviso)
 
 
 @app.route("/painel/encerrar", methods=["POST"])
 def painel_encerrar():
-    """Encerra o sistema inteiro (o maestro derruba todos os processos)."""
+    """
+    Desliga o GMA inteiro. No modelo de 2 níveis, isso = encerrar o SAGUÃO
+    (saguao.py): ao receber o SIGTERM, ele desce esta sessão (Flask + processos)
+    e se desliga de forma limpa — o mesmo caminho do atalho "Encerrar GMA".
+    """
+    logger.info("PAINEL | Desligamento do GMA solicitado")
+    # Escreve o sinal de encerrar SEMPRE — quem comanda (o SAGUÃO de hoje ou o
+    # maestro antigo) vigia este arquivo e se desliga, descendo esta sessão junto.
+    # Como esta tela só existe DENTRO de uma sessão, há sempre um supervisor para
+    # consumir o sinal; se sobrar, é limpo no próximo arranque. Usamos arquivo de
+    # propósito: um filho (Flask) mandar sinal no processo pai não é confiável.
     _painel_criar_sinal(".gma_encerrar")
-    logger.info("PAINEL | Encerramento solicitado")
-    if _maestro_rodando():
-        aviso = "Encerrando o sistema… em instantes esta página deixa de responder. Pode fechar a janela."
-    else:
-        aviso = "O maestro não está rodando. Para encerrar processos soltos, use “Encerrar GMA.command”."
+    aviso = ("Desligando o GMA… o sistema está descendo esta sessão e se desligando. "
+             "Em instantes esta página deixa de responder — pode fechar a janela.")
     return _pagina_painel(aviso=aviso)
 
 
