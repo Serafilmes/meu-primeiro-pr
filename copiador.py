@@ -49,9 +49,9 @@ ARQUIVO_LOG = os.path.join(RAIZ_GMA, "logs", "copiador.log")
 # 1 MB é um bom equilíbrio para arquivos de vídeo (tipicamente 1–128 GB).
 TAMANHO_BLOCO_MD5 = 1024 * 1024  # 1 MB
 
-# Arquivos que devem ser ignorados durante a cópia
-# .DS_Store e Thumbs.db são metadados do SO, não fazem parte do material.
-ARQUIVOS_IGNORADOS = {".DS_Store", "Thumbs.db", "desktop.ini"}
+# O QUE NÃO É MATERIAL (lixo do SO/cartão/GMA + download) é decidido pela RÉGUA
+# ÚNICA em ler_cartao.eh_pasta_ignorada / eh_nao_midia — a MESMA que a auditoria
+# (C4) usa, para a contagem da origem e a do destino baterem sempre.
 
 # ── POLÍTICA DE INTEGRIDADE: arquivos CRÍTICOS vs. de SISTEMA ──────────────────
 #
@@ -211,22 +211,19 @@ def listar_arquivos_origem(caminho_origem):
     arquivos_encontrados = []
 
     for raiz, subpastas, arquivos in os.walk(caminho_origem):
-        # Remove subpastas ocultas da varredura (ex: .Spotlight-V100, .Trashes)
-        # A modificação in-place da lista subpastas instrui os.walk a não entrar nelas.
+        # Poda as pastas que a régua única manda ignorar (ocultas como
+        # .Spotlight-V100/.Trashes, lixo __MACOSX, pastas do GMA _GMA_frames).
+        # A modificação in-place instrui o os.walk a não entrar nelas.
         subpastas[:] = [
             s for s in subpastas
-            if not s.startswith(".")
+            if not ler_cartao.eh_pasta_ignorada(s)
         ]
 
         for nome_arquivo in arquivos:
-            # Pula arquivos ignorados (lista de nomes exatos)
-            if nome_arquivo in ARQUIVOS_IGNORADOS:
-                logger.debug(f"Ignorado: {nome_arquivo}")
-                continue
-
-            # Pula arquivos ocultos (nome começa com ponto)
-            if nome_arquivo.startswith("."):
-                logger.debug(f"Ignorado (oculto): {nome_arquivo}")
+            # Régua única: pula tudo que não é material (lixo do SO/cartão/GMA
+            # e download incompleto). Footage desconhecido nunca cai aqui.
+            if ler_cartao.eh_nao_midia(nome_arquivo):
+                logger.debug(f"Ignorado (não-mídia): {nome_arquivo}")
                 continue
 
             caminho_completo = os.path.join(raiz, nome_arquivo)

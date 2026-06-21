@@ -77,6 +77,86 @@ def proxy_do_clipe(nome_arquivo):
     return None
 
 
+# ── RÉGUA ÚNICA: o que é "material" × não-mídia a ignorar ─────────────────────
+#
+# Fonte ÚNICA usada pela Camada 2 (copiar) E pela Camada 4 (auditar), para que a
+# contagem bata SEMPRE na origem e no destino. Antes cada uma tinha sua lista e
+# elas divergiam — na sessão 39 a auditoria travou contando um `.DS_Store` que o
+# Finder criou no destino depois da cópia (108 vs 106 esperados).
+#
+# São TRÊS baldes de não-mídia + o lixo de download da pasta satélite:
+#   1) lixo do sistema operacional  (.DS_Store · Thumbs.db · desktop.ini)
+#   2) sistema do cartão            (.fseventsd · .Spotlight-V100 · .Trashes …)
+#   3) arquivos do próprio GMA      (.sppo · _relatorio.pdf · _manifesto.json · _GMA_frames/)
+#   +) lixo de download da satélite (.part · .crdownload … e a pasta __MACOSX)
+#
+# CONSERVADORA por princípio (nº 2 — segurança dos arquivos): só o que está
+# explicitamente listado aqui é ignorado. Footage de extensão desconhecida NUNCA
+# cai aqui — é copiado e contado como material (e crítico para a integridade).
+
+# Balde 3 — gravados pelo PRÓPRIO GMA no destino (não vêm do cartão).
+EXTENSOES_GMA = {".sppo"}
+SUFIXOS_GMA   = ("_relatorio.pdf", "_manifesto.json")
+PASTAS_GMA    = {"_gma_frames"}  # comparado em minúsculas
+
+# Balde 1 — lixo do SO que NÃO começa com ponto (os ocultos são pegos à parte).
+NOMES_LIXO_SO = {"thumbs.db", "desktop.ini"}
+
+# Lixo de download (pasta satélite alimentada por Drive/Dropbox/navegador):
+# arquivos PARCIAIS/temporários — copiá-los seria copiar material incompleto.
+EXTENSOES_TEMP = {".part", ".crdownload", ".download", ".partial", ".tmp"}
+
+# Pastas que NÃO começam com ponto mas são lixo conhecido.
+PASTAS_LIXO = {"__macosx"}
+
+
+def eh_pasta_ignorada(nome_pasta):
+    """
+    True se a PASTA não deve ser percorrida (nem copiada, nem auditada).
+
+    Cobre: pastas ocultas (`.fseventsd`, `.Spotlight-V100`, `.Trashes`…),
+    lixo conhecido (`__MACOSX`) e as pastas do próprio GMA (`_GMA_frames`).
+    Usada para podar a varredura (`os.walk`) na C2 e na C4 — assim a contagem
+    da origem e a do destino batem.
+    """
+    if nome_pasta.startswith("."):
+        return True
+    nome_lower = nome_pasta.lower()
+    return nome_lower in PASTAS_LIXO or nome_lower in PASTAS_GMA
+
+
+def eh_nao_midia(nome_arquivo):
+    """
+    Régua única: True se o arquivo NÃO conta como material — não deve ser
+    copiado (C2) nem contado (C4). Cobre os 3 baldes de não-mídia + o lixo de
+    download da pasta satélite.
+
+    Conservadora: footage de extensão desconhecida NUNCA cai aqui (volta False),
+    logo é sempre copiado e contado (princípio nº 2 — nunca pular material).
+
+    Parâmetro:
+      nome_arquivo — nome ou caminho do arquivo (só o nome final importa).
+    """
+    nome = os.path.basename(nome_arquivo)
+    # Ocultos: .DS_Store, ._AppleDouble, e arquivos soltos de sistema do cartão.
+    if nome.startswith("."):
+        return True
+    nome_lower = nome.lower()
+    # Balde 1 — lixo do SO que não começa com ponto.
+    if nome_lower in NOMES_LIXO_SO:
+        return True
+    _, ext = os.path.splitext(nome_lower)
+    # Balde 3 — arquivos do próprio GMA.
+    if ext in EXTENSOES_GMA:
+        return True
+    if nome_lower.endswith(SUFIXOS_GMA):
+        return True
+    # Lixo de download incompleto/temporário (satélite).
+    if ext in EXTENSOES_TEMP:
+        return True
+    return False
+
+
 # ── DEDUÇÃO DE MODELO DE CÂMERA POR PADRÃO DE NOME ────────────────────────────
 
 # Cada entrada: (texto a procurar no nome do arquivo, modelo/câmera provável)

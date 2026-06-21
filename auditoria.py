@@ -42,6 +42,7 @@ import time
 from datetime import datetime
 
 import banco_dados
+import ler_cartao  # RÉGUA ÚNICA do que é "material" (compartilhada com a C2)
 
 # ── CONSTANTES ─────────────────────────────────────────────────────────────────
 
@@ -54,12 +55,11 @@ INTERVALO_POLLING = 10
 # Diferença de até 0,5% é considerada ok (pode variar por arredondamento do FS).
 TOLERANCIA_TAMANHO = 0.005
 
-# Extensões e sufixos adicionados pelo GMA ao destino — ignorar na contagem.
-# O GMA nomeia seus arquivos com o padrão: <cartao>_<datetime>_relatorio.pdf
-# e <cartao>_<datetime>_manifesto.json — filtrados por sufixo.
-EXTENSOES_GMA = {".sppo"}
-SUFIXOS_GMA   = {"_relatorio.pdf", "_manifesto.json"}
-PASTAS_GMA    = {"_GMA_frames"}
+# O que NÃO conta na auditoria (lixo do SO/cartão, arquivos do próprio GMA e
+# download incompleto) é decidido pela RÉGUA ÚNICA em ler_cartao.eh_nao_midia /
+# eh_pasta_ignorada — a MESMA que o copiador (C2) usa ao contar o que copiou.
+# Antes esta lista vivia só aqui e não conhecia o `.DS_Store` que o Finder cria
+# no destino → contava 108 vs 106 e travava o ciclo (sessão 39).
 
 # Caminho do CLI do Parashoot.
 # Se o binário não existir (máquina de dev sem Parashoot instalado), a auditoria
@@ -89,34 +89,15 @@ log = logging.getLogger(__name__)
 
 # ── ANÁLISE DO DESTINO (pré-check GMA) ────────────────────────────────────────
 
-def _eh_arquivo_gma(nome_arquivo):
-    """
-    Retorna True se o arquivo foi adicionado pelo GMA (não copiado do cartão).
-    Esses arquivos não devem entrar na contagem da auditoria.
-
-    Padrões GMA:
-      - <job>_<datetime>.sppo            → extensão .sppo
-      - <job>_<datetime>_relatorio.pdf   → sufixo _relatorio.pdf
-      - <job>_<datetime>_manifesto.json  → sufixo _manifesto.json
-    """
-    nome = os.path.basename(nome_arquivo)
-    nome_lower = nome.lower()
-    _, ext = os.path.splitext(nome_lower)
-
-    if ext in EXTENSOES_GMA:
-        return True
-
-    for sufixo in SUFIXOS_GMA:
-        if nome_lower.endswith(sufixo):
-            return True
-
-    return False
-
-
 def _auditar_destino(destino_pasta):
     """
     Percorre a pasta de destino, contando arquivos e somando tamanho total.
-    Ignora os arquivos adicionados pelo GMA (relatório, .sppo, frames, manifesto).
+
+    Conta SÓ o material: a RÉGUA ÚNICA (ler_cartao) descarta o lixo do SO/cartão
+    (.DS_Store, ocultos), os arquivos do próprio GMA (.sppo, relatório, manifesto,
+    _GMA_frames/) e o download incompleto (.part…) — exatamente o mesmo conjunto
+    que o copiador (C2) descartou ao contar o que copiou. Assim a contagem do
+    destino bate com a `total_arquivos_transferidos` gravada pela C2.
 
     Retorna (total_arquivos: int, total_bytes: int).
     """
@@ -127,11 +108,11 @@ def _auditar_destino(destino_pasta):
         return 0, 0
 
     for raiz, dirs, arquivos in os.walk(destino_pasta):
-        # Poda as pastas adicionadas pelo GMA para não percorrê-las
-        dirs[:] = [d for d in dirs if d not in PASTAS_GMA]
+        # Poda as pastas que a régua manda ignorar (ocultas, __MACOSX, _GMA_frames).
+        dirs[:] = [d for d in dirs if not ler_cartao.eh_pasta_ignorada(d)]
 
         for nome in arquivos:
-            if _eh_arquivo_gma(nome):
+            if ler_cartao.eh_nao_midia(nome):
                 continue
 
             caminho = os.path.join(raiz, nome)
