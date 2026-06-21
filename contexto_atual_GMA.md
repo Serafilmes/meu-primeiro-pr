@@ -1,7 +1,7 @@
 # Contexto Atual — Sistema GMA
 ## Estado vivo do projeto (carregar em TODA sessão junto com `arquitetura_GMA.md`)
 
-> Última atualização: 2026-06-19 (sessão 39)
+> Última atualização: 2026-06-20 (sessão 40)
 > Para detalhes técnicos históricos, ver `historico_GMA.md` (não carregar por padrão).
 
 ---
@@ -21,6 +21,14 @@
 ---
 
 ## O que acabou de ser feito (sessões recentes)
+
+### 🗺️ Sessão 40 (ALINHAMENTO — sem código ainda) — redesenho C2/C4 "régua única de mídia" + entrada por PASTA SATÉLITE
+**Conversa de desenho.** Nada construído; o entregável da sessão será a **régua única** (a confirmar o início). Desenho registrado nos mapas + memória [[pasta-satelite-recebidos]].
+
+- **Diagnóstico confirmado no código — "o que é mídia" mora em 3 listas que não conversam:** `copiador.py` (`ARQUIVOS_IGNORADOS`+`EXTENSOES_SISTEMA`, [copiador.py:53](copiador.py:53)), `auditoria.py` (só `.sppo`/`_relatorio.pdf`/`_manifesto.json`, [auditoria.py:60](auditoria.py:60)) e `ler_cartao.py` (allowlist de mídia, [ler_cartao.py:29](ler_cartao.py:29)). Na s39 o Finder criou um `.DS_Store` NOVO no **destino** depois da cópia → a auditoria (que não conhece esse nome) contou 108 vs 106 e travou. **Raiz: 3 baldes de não-mídia que nenhum lugar conhece por inteiro** — (1) lixo do SO (`.DS_Store`/`Thumbs.db`/`desktop.ini`), (2) sistema do cartão (`.fseventsd`/`.Spotlight-V100`/`.Trashes`), (3) arquivos do próprio GMA (`.sppo`/`_relatorio.pdf`/`_manifesto.json`/`_GMA_frames/`).
+- **Proposta — RÉGUA ÚNICA:** uma só função compartilhada que responde "este arquivo conta como material?" e é usada pela C2 (copiar) E pela C4 (auditar), batendo igual na origem e no destino. Mantém a segurança: mídia conhecida entra; lixo conhecido (3 baldes) sai; **desconhecido = copia mesmo assim + marca "revisar"** (princípio nº 2 — nunca pular footage estranho). É a FUNDAÇÃO do redesenho C2/C4 (cópia rápida/auto-cura/benchmark vêm depois, sobre ela).
+- **Pasta satélite = a régua paga o desacoplamento "de onde vem" × "o que é":** material que NÃO vem por cartão (fotógrafo foi embora; PGM/feed) entra por uma pasta `recebidos/<post>/` alimentada por Drive/Dropbox; o `copiador.py` já copia "a partir de um caminho", então cartão e satélite viram a mesma coisa. **Desenho fechado (ver [[pasta-satelite-recebidos]]):** última pergunta da ficha "Cartão físico?"; gatilho em camadas (botão do operador 1º · estabilidade ajustável · aviso remoto); C4 roda auditoria mas **NÃO** Parashoot (não há cartão); staging fica/limpa só com confirmação. **Cuidado registrado:** Drive/Dropbox "arquivo na nuvem" baixa só sob demanda → a pasta precisa estar "disponível offline" (C5), senão copia vazio. Não fere "vídeo nunca sobe pra nuvem" (a nuvem é canal de ENTRADA de terceiro; o ciclo do GMA segue local).
+- **Encadeamento decidido:** (1) registrar o desenho [feito]; (2) construir a **régua única** (fecha a ferida da s39); (3) o arco satélite (ficha→`recebidos/`→botão→cópia→C4 sem Parashoot) como sessão própria, com estabilidade/aviso remoto como incrementos.
 
 ### ✅ Sessão 39 (TESTE ao vivo + BUILD #1 + #2 proxy A/B) — cópia real GoPro, Sheets por projeto, proxy na C2, redesenho C2/C4
 **Branch:** `s39-sheets-por-projeto`. **Sem commit.** Teste com cartão GoPro real (HERO7, 107 arq / 7,7 GB) no projeto **SP2B**.

@@ -9,7 +9,7 @@
 > O sistema guarda o dado em um lugar só; as telas são jeitos diferentes de LER
 > esse mesmo dado. Nada diverge.
 >
-> Última atualização: 2026-06-19 (sessão 39 — TESTE de cópia real (GoPro 7,7GB) ponta a ponta no projeto SP2B; BUILD: Google Sheets POR PROJETO no exportador (#1), PROXY marcado na cópia (sempre copia + avisa — Fatias A/B), EXCLUIR Post definitivo (#3), DATA DE LOGAGEM pelo relógio do sistema (#4), NOMES CURTOS editáveis (#5: nome_raiz/nome_curto, pasta+cartão+planilha, ASCII), CENTRO DE CONTROLE DOS POSTS na Nova Ficha (grupos recolhíveis por status + cancelar/restaurar/excluir; Operação ficou só com o MATCH). Em desenho: redesenho C2/C4 com "regra única do que é mídia" + benchmark de velocidade. Antes: MATCH MANUAL + GATE DOS CARTÕES + Acompanhamento AO VIVO (s38), PAINEL DE CONTROLE / cockpit (s37), Rock in Rio + programação do dia (s36), Sheets real+dinâmico (s32/s34), grupos editáveis (s33).)
+> Última atualização: 2026-06-20 (sessão 40 — ALINHAMENTO (sem código): redesenho C2/C4 "RÉGUA ÚNICA do que é mídia" (uma só função compartilhada C2+C4, contra o tropeço dos .DS_Store/.fseventsd/.sppo da s39) + entrada por PASTA SATÉLITE (material que não vem por cartão: pasta recebidos/<post> alimentada por Drive/Dropbox, gatilho do operador→estabilidade→aviso remoto, C4 sem Parashoot). Desenho gravado; próximo build = a régua única. — anterior s39: TESTE de cópia real (GoPro 7,7GB) ponta a ponta no projeto SP2B; BUILD: Google Sheets POR PROJETO no exportador (#1), PROXY marcado na cópia (sempre copia + avisa — Fatias A/B), EXCLUIR Post definitivo (#3), DATA DE LOGAGEM pelo relógio do sistema (#4), NOMES CURTOS editáveis (#5: nome_raiz/nome_curto, pasta+cartão+planilha, ASCII), CENTRO DE CONTROLE DOS POSTS na Nova Ficha (grupos recolhíveis por status + cancelar/restaurar/excluir; Operação ficou só com o MATCH). Em desenho: redesenho C2/C4 com "regra única do que é mídia" + benchmark de velocidade. Antes: MATCH MANUAL + GATE DOS CARTÕES + Acompanhamento AO VIVO (s38), PAINEL DE CONTROLE / cockpit (s37), Rock in Rio + programação do dia (s36), Sheets real+dinâmico (s32/s34), grupos editáveis (s33).)
 
 ---
 
@@ -397,11 +397,17 @@ Em ordem de impacto:
    Operação = só o MATCH; Nova Ficha = centro de controle dos Posts (grupos recolhíveis por status +
    editar/cancelar/restaurar/excluir). ⏭️ falta só: "reverter ENTREGA" (desfazer cartão já matched —
    hoje só pelo reset manual do teste) e garantir que TODAS as ações gravem no Log + rename "ficha"→"Post".
-2b. 🧱 **Redesenho C2/C4 + "regra única do que é mídia"** (em desenho com o idealizador) — o teste
-   da s39 tropeçou em 3 não-mídias diferentes (.fseventsd · .DS_Store · .sppo/.pdf). Definir UMA
-   regra do que conta como "mídia real" e usá-la na contagem da C2 E da C4. Junto: C2 copia rápido
-   (checksum durante a cópia) + auto-cura (recopia só o que divergiu) + benchmark de velocidade sob
-   demanda; frames travam a liberação (com opção de desligar), origem×cópia da extração por velocidade.
+2b. 🧱 **Redesenho C2/C4 + "régua única do que é mídia"** (desenho fechado s40 — PRÓXIMO BUILD) — o teste
+   da s39 tropeçou em 3 não-mídias diferentes (.fseventsd · .DS_Store · .sppo/.pdf). UMA função
+   compartilhada que responde "este arquivo conta como material?", usada na contagem da C2 E da C4
+   (origem e destino batem). Desconhecido = copia + marca "revisar" (princípio nº 2). É a FUNDAÇÃO:
+   depois, C2 copia rápido (checksum durante a cópia) + auto-cura (recopia só o que divergiu) +
+   benchmark sob demanda; frames travam a liberação (com opção de desligar).
+2c. 📁 **Entrada por PASTA SATÉLITE (desenho fechado s40, arco próprio)** — material que NÃO vem por
+   cartão (fotógrafo foi embora; PGM/feed): ficha pergunta "Cartão físico?"; satélite → o sistema cria
+   `recebidos/<post>/` alimentada por Drive/Dropbox; gatilho do operador (depois estabilidade ajustável
+   e aviso remoto); cópia idêntica (a régua faz cartão=satélite); C4 audita mas NÃO roda Parashoot.
+   Cuidado: Drive/Dropbox "arquivo na nuvem" exige modo "disponível offline". Ver [[pasta-satelite-recebidos]].
 3. 🎨 **Marca / identidade visual (andar 7)** — sem prazo de data + o relatório PDF de hoje
    ficou abaixo do esperado. Definir logo, paleta, tipografia e grid ANTES de refazer o PDF.
 4. 📄 **PDF Overview** — refazer o gerador no estilo dashboard + folha de contato
