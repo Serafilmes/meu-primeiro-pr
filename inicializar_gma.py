@@ -18,6 +18,7 @@ Uso:
     python3 /Users/serafa/GMA/inicializar_gma.py
 """
 
+import fcntl
 import os
 import signal
 import subprocess
@@ -98,6 +99,14 @@ RAIZ_GMA = "/Users/serafa/GMA"
 # Arquivo sentinela: quando existe, o Porteiro processa eventos
 SENTINELA = os.path.join(RAIZ_GMA, ".gma_ativo")
 
+# Trava de instância única do maestro. Um lock de arquivo (flock) garante UM
+# ÚNICO maestro por vez: se o "Iniciar" for acionado duas vezes, o segundo não
+# consegue o lock e sai na hora (sem prompt, sem pendurar). O flock se solta
+# sozinho quando o processo morre — então um maestro que caiu não deixa a trava
+# presa (não precisa limpar PID velho).
+TRAVA_MAESTRO = os.path.join(RAIZ_GMA, ".gma_maestro.lock")
+_trava_handle = None  # mantém o arquivo aberto pela vida do processo (segura o lock)
+
 # Sinais do Painel de Controle (Camada 5). O Flask cria estes arquivos quando o
 # operador clica em "Trocar projeto" / "Reiniciar" / "Encerrar". O maestro vigia
 # o laço de espera e age:
@@ -149,6 +158,47 @@ def log(prefixo_chave, mensagem):
     """
     prefixo = PREFIXOS.get(prefixo_chave, f"[{prefixo_chave.upper()}]")
     print(f"{prefixo} {agora()} | {mensagem}", flush=True)
+
+
+def adquirir_trava_maestro():
+    """
+    Garante UM ÚNICO maestro: tenta travar (flock) o arquivo .gma_maestro.lock.
+
+    Se outro maestro já segura o lock, NÃO inicia um segundo — é o que evita o
+    "maestro duplicado" que aparecia quando o 'Iniciar' era acionado duas vezes
+    (o segundo, antes, ficava pendurado no prompt de confirmação).
+
+    O flock é POR PROCESSO e se solta automaticamente quando o processo morre —
+    então um maestro que caiu não deixa a trava presa.
+
+    Retorna True se conseguiu a trava (pode iniciar), False se já há outro maestro.
+    """
+    global _trava_handle
+    try:
+        _trava_handle = open(TRAVA_MAESTRO, "w")
+        fcntl.flock(_trava_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return False  # outro maestro já segura a trava
+    try:
+        _trava_handle.seek(0)
+        _trava_handle.truncate()
+        _trava_handle.write(str(os.getpid()))
+        _trava_handle.flush()
+    except OSError:
+        pass  # gravar o PID é só informativo; o que vale é o flock
+    return True
+
+
+def liberar_trava_maestro():
+    """Solta a trava do maestro (também sai sozinha quando o processo morre)."""
+    global _trava_handle
+    if _trava_handle is not None:
+        try:
+            fcntl.flock(_trava_handle.fileno(), fcntl.LOCK_UN)
+            _trava_handle.close()
+        except OSError:
+            pass
+        _trava_handle = None
 
 
 def criar_sentinela():
@@ -446,6 +496,17 @@ def main():
     5. Ao receber Ctrl+C ou o sinal de encerrar: encerra tudo de forma limpa.
     """
 
+    # ── Trava de instância única (ANTES de tudo) ─────────────────────────────
+    # Um clique a mais no "Iniciar" não pode subir um segundo maestro. Se já há
+    # um GMA rodando, este aqui para na hora — sem prompt, sem pendurar.
+    if not adquirir_trava_maestro():
+        print()
+        print("  Ja existe um GMA rodando (um so maestro por vez).")
+        print("  Abra o painel em http://127.0.0.1:5050 — ou use 'Encerrar GMA'")
+        print("  antes de iniciar de novo.")
+        print()
+        sys.exit(0)
+
     print()
     print("=" * 60)
     print("  GMA — Gerenciamento de Midia Audiovisual")
@@ -514,6 +575,7 @@ def main():
                 log("sistema", "Sinal de ENCERRAR recebido pelo painel. Encerrando...")
                 descer_todos(processos)
                 remover_sentinela()
+                liberar_trava_maestro()
                 print()
                 log("sistema", "Sistema GMA encerrado pelo painel.")
                 print()
@@ -545,6 +607,7 @@ def main():
         log("sistema", "Encerrando sistema...")
         descer_todos(processos)
         remover_sentinela()
+        liberar_trava_maestro()
         print()
         log("sistema", "Sistema GMA encerrado com seguranca.")
         print()
