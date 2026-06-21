@@ -9,7 +9,7 @@
 > O sistema guarda o dado em um lugar só; as telas são jeitos diferentes de LER
 > esse mesmo dado. Nada diverge.
 >
-> Última atualização: 2026-06-21 (sessão 42 — SAGUÃO DE 2 NÍVEIS construído (Camada 5): novo `saguao.py` = o "térreo" do sistema, um servidorzinho próprio na porta fixa 5055 que NUNCA cai. Mostra a lista de projetos; **Entrar** sobe a sessão daquele projeto (Flask na 5050 + processos, reusando o motor do maestro); **Voltar ao saguão** desce SÓ a sessão e volta ao térreo (que continuou de pé) — fim do reinício frágil na troca de projeto. Trava de instância única própria (.gma_saguao.lock), encerramento limpo por SIGTERM, abre o navegador sozinho. Atalhos "Iniciar/Encerrar GMA" repontados pro saguão; Painel do projeto ganhou "⬅ Voltar ao saguão". Decisão: ABANDONAR o "maestro robusto" da s41 (o saguão o substitui); as mudanças sem commit da s41 não foram apagadas, só deixaram de ser o caminho. Testado ponta a ponta (subir/descer sessão real, trava, SIGTERM). Sem commit. — anterior s41 — ARCO RECEBIDOS avança + MAESTRO robusto: pergunta de ORIGEM no Post ("Como o material chega?" Cartão físico × Pasta recebida) · PASTA LOCAL por Post + LINK por Post (acesso externo) + GATILHO do operador ("pronto para copiar", só marca) · BLINDAGEM do maestro (troca de projeto não derruba mais o sistema) · ESPERA DA PORTA 5050 na subida do Flask (corrige o "sem tela" na troca: o Flask não subia porque a porta não tinha liberado) · AUTO-RECARREGAMENTO do painel (fim da página enganosa "maestro não rodando"). DECISÕES: link direção A (sistema oferece) + 1 pasta/link por Post; modelo SAGUÃO DE 2 NÍVEIS aprovado como rumo da C5 (substitui o reinício-na-troca; a blindagem de hoje é o 1º tijolo). Sem commit. — anterior s40 — 4 BUILDS mergeados no main: RÉGUA ÚNICA do que é mídia (função compartilhada C2+C4, fecha o "108 vs 106" da s39) · caixa de PASTA DE RECEBIDOS no Painel (1ª fatia do arco satélite: config + Testar com detecção do Drive "só na nuvem") · TRAVA de instância única do maestro (flock — clicar Iniciar 2x não duplica) · NGROK AUTOMÁTICO (o maestro sobe o túnel junto com o sistema, validado ao vivo). Arco satélite desenhado (memória pasta-satelite-recebidos); lição de git gravada (não deixar o disco num branch-surpresa). — anterior s39: TESTE de cópia real (GoPro 7,7GB) ponta a ponta no projeto SP2B; BUILD: Google Sheets POR PROJETO no exportador (#1), PROXY marcado na cópia (sempre copia + avisa — Fatias A/B), EXCLUIR Post definitivo (#3), DATA DE LOGAGEM pelo relógio do sistema (#4), NOMES CURTOS editáveis (#5: nome_raiz/nome_curto, pasta+cartão+planilha, ASCII), CENTRO DE CONTROLE DOS POSTS na Nova Ficha (grupos recolhíveis por status + cancelar/restaurar/excluir; Operação ficou só com o MATCH). Em desenho: redesenho C2/C4 com "regra única do que é mídia" + benchmark de velocidade. Antes: MATCH MANUAL + GATE DOS CARTÕES + Acompanhamento AO VIVO (s38), PAINEL DE CONTROLE / cockpit (s37), Rock in Rio + programação do dia (s36), Sheets real+dinâmico (s32/s34), grupos editáveis (s33).)
+> Última atualização: 2026-06-21 (sessão 43 — ARCO RECEBIDOS FECHADO (C2+C4), mergeado no main: material que NÃO vem por cartão (pasta satélite `RECEBIDOS/<NOME>_<idPost>/`) agora COPIA e AUDITA. Dor que abriu a sessão: o idealizador criou um Post de material avulso (DANIEL PARDAL, 115 RAW), clicou em "pronto para copiar" e nada aconteceu — porque o arco tinha só as Fatias 1-3 (s41) e o botão SÓ marcava. Construído: **Fatia 4 (C2)** — 2º botão "Copiar agora" cria o material JÁ CASADO com o Post (sem Matcher — a pasta já é dele pelo id no nome), copia com MD5/.sppo/PDF igual a cartão, e renomeia a pasta de origem `_COPIADO` (nunca apaga); marca `origem_material=recebido` no banco. **Fatia 5 (C4)** — audita contagem+tamanho normal mas PULA o Parashoot (não há cartão pra ejetar); cartão físico segue COM Parashoot. Decisões do idealizador: dois passos (marcar × copiar) e não apagar (renomeia). Testes verdes (25+3); FALTA testar ao vivo com o Post 11 real. Próxima fatia pedida: OK remoto da cópia (acionar pelo celular). — anterior s42 — SAGUÃO DE 2 NÍVEIS construído (Camada 5): novo `saguao.py` = o "térreo" do sistema, um servidorzinho próprio na porta fixa 5055 que NUNCA cai. Mostra a lista de projetos; **Entrar** sobe a sessão daquele projeto (Flask na 5050 + processos, reusando o motor do maestro); **Voltar ao saguão** desce SÓ a sessão e volta ao térreo (que continuou de pé) — fim do reinício frágil na troca de projeto. Trava de instância única própria (.gma_saguao.lock), encerramento limpo por SIGTERM, abre o navegador sozinho. Atalhos "Iniciar/Encerrar GMA" repontados pro saguão; Painel do projeto ganhou "⬅ Voltar ao saguão". Decisão: ABANDONAR o "maestro robusto" da s41 (o saguão o substitui); as mudanças sem commit da s41 não foram apagadas, só deixaram de ser o caminho. Testado ponta a ponta (subir/descer sessão real, trava, SIGTERM). Sem commit. — anterior s41 — ARCO RECEBIDOS avança + MAESTRO robusto: pergunta de ORIGEM no Post ("Como o material chega?" Cartão físico × Pasta recebida) · PASTA LOCAL por Post + LINK por Post (acesso externo) + GATILHO do operador ("pronto para copiar", só marca) · BLINDAGEM do maestro (troca de projeto não derruba mais o sistema) · ESPERA DA PORTA 5050 na subida do Flask (corrige o "sem tela" na troca: o Flask não subia porque a porta não tinha liberado) · AUTO-RECARREGAMENTO do painel (fim da página enganosa "maestro não rodando"). DECISÕES: link direção A (sistema oferece) + 1 pasta/link por Post; modelo SAGUÃO DE 2 NÍVEIS aprovado como rumo da C5 (substitui o reinício-na-troca; a blindagem de hoje é o 1º tijolo). Sem commit. — anterior s40 — 4 BUILDS mergeados no main: RÉGUA ÚNICA do que é mídia (função compartilhada C2+C4, fecha o "108 vs 106" da s39) · caixa de PASTA DE RECEBIDOS no Painel (1ª fatia do arco satélite: config + Testar com detecção do Drive "só na nuvem") · TRAVA de instância única do maestro (flock — clicar Iniciar 2x não duplica) · NGROK AUTOMÁTICO (o maestro sobe o túnel junto com o sistema, validado ao vivo). Arco satélite desenhado (memória pasta-satelite-recebidos); lição de git gravada (não deixar o disco num branch-surpresa). — anterior s39: TESTE de cópia real (GoPro 7,7GB) ponta a ponta no projeto SP2B; BUILD: Google Sheets POR PROJETO no exportador (#1), PROXY marcado na cópia (sempre copia + avisa — Fatias A/B), EXCLUIR Post definitivo (#3), DATA DE LOGAGEM pelo relógio do sistema (#4), NOMES CURTOS editáveis (#5: nome_raiz/nome_curto, pasta+cartão+planilha, ASCII), CENTRO DE CONTROLE DOS POSTS na Nova Ficha (grupos recolhíveis por status + cancelar/restaurar/excluir; Operação ficou só com o MATCH). Em desenho: redesenho C2/C4 com "regra única do que é mídia" + benchmark de velocidade. Antes: MATCH MANUAL + GATE DOS CARTÕES + Acompanhamento AO VIVO (s38), PAINEL DE CONTROLE / cockpit (s37), Rock in Rio + programação do dia (s36), Sheets real+dinâmico (s32/s34), grupos editáveis (s33).)
 
 ---
 
@@ -44,6 +44,8 @@ ANDAR                                       PROGRESSO
            no .sppo+banco) + AVISA; teste de cópia real GoPro 7,7GB OK (106/106)
         └─ NOVO (s40): RÉGUA ÚNICA do que é "mídia real" (compartilhada C2+C4 — fim do
            tropeço em .DS_Store/.fseventsd/.sppo); falta cópia rápida + auto-cura + benchmark
+        └─ NOVO (s43): COPIA MATERIAL RECEBIDO (pasta satélite, sem cartão) — botão "Copiar agora"
+           cria o material já casado com o Post, copia de RECEBIDOS/<slug>/ e renomeia _COPIADO
 3 · Banco de dados (guardar tudo)           ███████████░  QUASE ✅
         └─ Kanban + Planilha + Google Sheets REAL no ar (s32, via impersonação)
         └─ GRUPOS EDITÁVEIS (s33): 1 ponto de criação → chip na ficha + coluna na
@@ -53,6 +55,8 @@ ANDAR                                       PROGRESSO
            escreve na SUA planilha; projeto real sem planilha PAUSA (não vaza pro global)
 4 · Auditoria + devolver o cartão           ████████████  PRONTO ✅
         └─ embaralha · ejeta · RESTAURA pelo Parashoot — testado com cartão real
+        └─ NOVO (s43): material RECEBIDO (sem cartão) → audita contagem+tamanho e conclui,
+           mas PULA o Parashoot (não há cartão pra ejetar); cartão físico segue COM Parashoot
 5 · Tela bonita + várias máquinas           ███░░░░░░░░░  EM CONSTRUÇÃO
         └─ NOVO (s37): PAINEL DE CONTROLE (cockpit no Flask) — troca de projeto com
            reinício guiado, conexões com Testar, ligar/encerrar por atalho clicável
@@ -427,6 +431,19 @@ Nenhuma decisão foi à toa. Cada uma resolveu um problema que apareceu
            🧪 Testado ponta a ponta: Entrar laboratório → Flask 5050 sobe → Voltar → 5050 cai, saguão
               segue 200, nada vazou; trava recusa o 2º; SIGTERM desce tudo limpo
            💾 Sem commit
+
+21/06  S43 📥 BUILD ARCO RECEBIDOS FECHADO (C2+C4) — pasta satélite vira entrega, sem cartão
+           ❗ Dor: Post de material avulso (DANIEL PARDAL, 115 RAW) + "pronto para copiar" = nada
+              aconteceu. Causa: arco tinha só as Fatias 1-3 (s41); o botão SÓ marcava, ninguém copiava.
+           🔶 Decisão: dois passos (botão "pronto" marca × 2º botão "Copiar agora" dispara) + NÃO apagar
+              (a pasta de origem é renomeada _COPIADO depois da cópia OK). Recebido NÃO passa pelo Matcher
+              (a pasta já nasce amarrada ao Post pelo id no nome → entra já casado).
+           📦 Fatia 4 (C2): "Copiar agora" cria o material casado, copia de RECEBIDOS/<slug>/ com MD5+.sppo+PDF
+              igual a cartão; marca origem_material=recebido no banco (a bandeira que a C4 lê)
+           ✂️ Fatia 5 (C4): audita contagem+tamanho normal mas PULA o Parashoot (não há cartão); cartão
+              físico segue COM Parashoot (confirmado em teste)
+           🧪 Testes verdes (copia 25 PASS · auditoria 3 OK); FALTA testar ao vivo com o Post 11 real (sp2b)
+           💾 Commitado e MERGEADO no main
 ```
 
 ---
@@ -462,14 +479,16 @@ Em ordem de impacto:
    fecha o "108 vs 106" da s39. Desconhecido = copia + marca "revisar" (princípio nº 2). É a FUNDAÇÃO:
    FALTA por cima — C2 copia rápido (checksum durante a cópia) + auto-cura (recopia só o divergente) +
    benchmark sob demanda; frames travam a liberação (com opção de desligar).
-2c. 📁 **Entrada por PASTA SATÉLITE (arco próprio — 3 fatias CONSTRUÍDAS)** — material que NÃO
+2c. ✅ **Entrada por PASTA SATÉLITE (arco próprio — 5 fatias CONSTRUÍDAS)** — material que NÃO
    vem por cartão (fotógrafo foi embora; PGM/feed). ✅ Caixa "Pasta de recebidos" no Painel (s40, PR #11).
    ✅ **s41:** pergunta de ORIGEM no Post ("Como o material chega?") · pasta `recebidos/<post>/` local ao
    salvar Post satélite · LINK por Post (acesso externo) · GATILHO do operador "pronto para copiar" (só marca).
-   🔶 Link decidido: direção A (o sistema oferece) + 1 pasta/link por Post. **FALTA: a CÓPIA (C2)** — ensinar
-   a transferência a olhar Posts com `recebido_pronto=1` e copiar de `recebidos/<post>/` (copiador já é
-   agnóstico de origem); depois **C4 audita mas NÃO roda Parashoot**; e (futuro) criar a subpasta na nuvem +
-   link automático (API Drive/Dropbox). Ver [[pasta-satelite-recebidos]].
+   ✅ **s43:** **a CÓPIA (C2)** — 2º botão "Copiar agora" cria o material já casado e copia de `RECEBIDOS/<slug>/`
+   com MD5/.sppo/PDF (renomeia a origem `_COPIADO`); **a AUDITORIA (C4)** — contagem+tamanho e conclui, PULANDO
+   o Parashoot. Link decidido: direção A (o sistema oferece) + 1 pasta/link por Post.
+   ⏭️ FALTA: testar AO VIVO com o Post 11 real (Encerrar+Iniciar → "Copiar agora"); **OK remoto da cópia**
+   (acionar pelo celular — pedido do idealizador, depende do binding ficha↔projeto #2); e (futuro) criar a
+   subpasta na nuvem + link automático (API Drive/Dropbox). Ver [[pasta-satelite-recebidos]].
 2e. ✅ **SAGUÃO DE 2 NÍVEIS (s42 — CONSTRUÍDO)** — `saguao.py` é o térreo na porta fixa 5055 que NUNCA
    cai; **Entrar** sobe a sessão do projeto (Flask 5050 + processos), **Voltar ao saguão** desce só ela.
    Substituiu o frágil reinício-na-troca (s41 "maestro robusto" abandonado). Trava única + SIGTERM limpo +

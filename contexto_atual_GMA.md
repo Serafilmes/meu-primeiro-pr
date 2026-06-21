@@ -1,7 +1,7 @@
 # Contexto Atual — Sistema GMA
 ## Estado vivo do projeto (carregar em TODA sessão junto com `arquitetura_GMA.md`)
 
-> Última atualização: 2026-06-21 (sessão 42)
+> Última atualização: 2026-06-21 (sessão 43)
 > Para detalhes técnicos históricos, ver `historico_GMA.md` (não carregar por padrão).
 
 ---
@@ -11,9 +11,9 @@
 | Camada | Nome | Status |
 |---|---|---|
 | 1 | Check-in e identificação | ⚠️ Quase completa — Nova Ficha v2 ✅ (s33); **match manual** (s38); **nomes curtos editáveis** (#5) + **centro de controle dos Posts** na Nova Ficha (s39); **pergunta de ORIGEM no Post** ("Como o material chega?" — porta do arco recebidos) (s41); falta mural dos câmeras, login do operador (2.3) e domínio fixo do túnel |
-| 2 | Transferência | ✅ Concluída e testada com cartão real; **régua única do que é "mídia real"** compartilhada com a C4 (s40) |
+| 2 | Transferência | ✅ Concluída e testada com cartão real; **régua única do que é "mídia real"** compartilhada com a C4 (s40); **cópia de material RECEBIDO** (pasta satélite, sem cartão) — botão "Copiar agora" (s43) |
 | 3 | Controle e segurança das informações | ✅ Quase completa — Kanban + Planilha + Molde; grupos editáveis (s33); Sheets dinâmico (s34); exportador em loop (s35); **Sheets por projeto ligado no exportador (s39)** |
-| 4 | Auditoria + liberação do cartão | ✅ Concluída — ciclo integrado testado |
+| 4 | Auditoria + liberação do cartão | ✅ Concluída — ciclo integrado testado; **audita material RECEBIDO sem acionar o Parashoot** (não há cartão pra ejetar) (s43) |
 | 5 | Plataforma profissional + multi-máquina | 🔧 Em construção — **Painel Fatia 1 ✅ (s37)**; **s40:** Pasta de recebidos, trava de instância e ngrok automático; **s42:** **SAGUÃO DE 2 NÍVEIS construído ✅** (`saguao.py` — térreo na 5055 que nunca cai; entrar/voltar sobe/desce a sessão do projeto sem reinício; substitui o reinício-na-troca da s41) ([[saguao-dois-niveis]]) |
 | 6 | IA assíncrona | 📋 Futura |
 | 7 | Marca e design | 📋 Planejada — foco desejado, **sem prazo de data** (s33) |
@@ -21,6 +21,19 @@
 ---
 
 ## O que acabou de ser feito (sessões recentes)
+
+### ✅ Sessão 43 (BUILD) — ARCO RECEBIDOS FECHADO (C2+C4) — pasta satélite vira entrega, sem cartão
+**Arquivos:** `transferencia.py`, `banco_dados.py`, `auditoria.py`, `flask_gma.py` + testes `teste_recebidos_copia.py` (25 PASS), `teste_recebidos_auditoria.py` (3 OK). **Commitado e MERGEADO no `main`** (branch `s43-recebidos-copia-auditoria`). Delegado a `transferencia-gma` (Fatia 4) + `auditoria-gma` (Fatia 5). Memória [[pasta-satelite-recebidos]].
+> **Dor do idealizador que abriu a sessão:** criou um Post de material fora de cartão (DANIEL PARDAL → pasta `RECEBIDOS/DANIEL_PARDAL_11/` com 115 RAW `.NEF` no projeto sp2b), colou os arquivos, clicou em "📥 Material recebido — pronto para copiar" — e **nada aconteceu** (não copiou, não deu match). **Causa:** o arco recebidos tinha as Fatias 1-3 (s41 — pergunta de origem, cria pasta, gatilho que SÓ marca `recebido_pronto=1`) mas **faltavam as Fatias 4 e 5** (a cópia e a auditoria). O botão só levantava bandeira; ninguém a consumia. A pasta satélite era invisível pro pipeline do cartão.
+
+- **Esclarecimento do nome `DANIEL_PARDAL_11`:** `<NOME>_<id_do_Post>`; o `11` é o id interno do Post (carimbo de unicidade), NÃO número de cartão. Funciona como desenhado.
+- **Decisão-chave (recebido NÃO passa pelo Matcher):** a pasta já nasce amarrada ao Post (o id no nome), então não há o que adivinhar — o material entra **já casado**. A cópia dispensa a pontuação do Matcher.
+- **DECISÕES DO IDEALIZADOR nesta sessão:** (1) **dois passos** — o botão "pronto para copiar" só marca; um **2º botão "Copiar agora"** confirma o disparo da cópia (evita copiar pasta incompleta); (2) **não apagar** a pasta de origem — depois da cópia OK ela é **renomeada `_COPIADO`** (princípio nº 2).
+- **Fatia 4 — cópia (C2, `transferencia-gma`):** botão "Copiar agora" nos Posts `recebido`+`pronto` + rota `POST /post/<id>/copiar-recebido`; `transferencia.copiar_material_recebido()` valida (origem=recebido, pronto=1, pasta com arquivos, sem match/cópia), cria o material **já casado** (`banco_dados.registrar_cartao_recebido`), copia de `RECEBIDOS/<slug>/` pro destino do projeto com MD5+.sppo+PDF (igual a cartão; `copiador.py` já é agnóstico de origem), e ao fim renomeia a pasta `_COPIADO` (`marcar_cartao_recebido_copiado`). **Marca pra C4:** coluna **`origem_material`='recebido'** na tabela `cartoes` (migração não-destrutiva `migrar_schema_cartoes`).
+- **Fatia 5 — auditoria (C4, `auditoria-gma`):** ramificação cirúrgica em `auditoria.py` (linha ~561): se `origem_material='recebido'`, roda contagem+tamanho (régua única) e marca `concluido` via `_aprovar_recebido()`, mas **PULA o Parashoot** (etapas 3-5 nunca alcançadas) + evento `auditoria_recebido_concluida` no Log. Cartão físico (origem='cartao'/NULL) segue **intacto, COM Parashoot** (cenário C do teste confirma).
+- **🔶 FALTA TESTAR AO VIVO:** o ciclo ponta a ponta com o Post 11 real (115 NEF) ainda não rodou no sp2b — só em banco isolado `/tmp`. **Para testar:** Encerrar GMA + Iniciar GMA (carrega o código novo) → Nova Ficha → Post DANIEL PARDAL → **"Copiar agora"**.
+- **🔶 PRÓXIMA FATIA (pedida pelo idealizador):** **OK remoto da cópia** — o profissional/operador remoto aciona o "Copiar agora" pelo celular (acesso externo). Depende do binding ficha↔projeto (#2 da s38).
+- **🔶 PENDÊNCIA do arco:** subpasta+link na nuvem automáticos (API Drive/Dropbox) seguem como fatia futura; hoje o operador cola o link à mão.
 
 ### ✅ Sessão 42 (BUILD) — SAGUÃO DE 2 NÍVEIS (Camada 5) — o térreo que nunca cai
 **Arquivos:** `saguao.py` (NOVO), `flask_gma.py`, `Iniciar GMA.command`, `Encerrar GMA.command`, `.gitignore`. **Sem commit.** Testado ponta a ponta (subir/descer sessão real na 5050, trava única, SIGTERM). Laboratório intocado. Memória [[saguao-dois-niveis]].
