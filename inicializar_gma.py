@@ -605,11 +605,19 @@ def main():
     # Um clique a mais no "Iniciar" não pode subir um segundo maestro. Se já há
     # um GMA rodando, este aqui para na hora — sem prompt, sem pendurar.
     if not adquirir_trava_maestro():
+        # O sistema JA esta ligado. Em vez de so piscar uma mensagem que some
+        # quando a janela fecha, abrimos o painel no navegador — assim o operador
+        # ve na hora que o GMA esta no ar (e nao fica na duvida se ligou ou nao).
+        painel_url = "http://127.0.0.1:5050/painel"
         print()
-        print("  Ja existe um GMA rodando (um so maestro por vez).")
-        print("  Abra o painel em http://127.0.0.1:5050 — ou use 'Encerrar GMA'")
-        print("  antes de iniciar de novo.")
+        print("  O GMA ja esta rodando (um so sistema por vez).")
+        print(f"  Abrindo o painel no navegador: {painel_url}")
+        print("  Para desligar, use 'Encerrar GMA'.")
         print()
+        try:
+            subprocess.run(["open", painel_url], timeout=5)
+        except Exception:
+            pass  # se nao abrir o navegador, a mensagem acima ja orienta
         sys.exit(0)
 
     print()

@@ -547,6 +547,11 @@ def _processar_e_salvar_formulario(dados_recebidos, origem="FORMS",
             "mensagem":        "Entrega registrada como duas fichas (áudio à parte)."
         }), 201
 
+    # Lê origem do material: "cartao" (padrão) ou "recebido" (pasta satélite).
+    # Formulários externos (Tally/webhook) que não mandam o campo ficam com "cartao".
+    _origem_raw = dados_recebidos.get("origem_material", "cartao") or "cartao"
+    origem_material_norm = _origem_raw if _origem_raw in ("cartao", "recebido") else "cartao"
+
     dados_form = {
         "id_form":          id_form,
         "timestamp":        timestamp_iso,
@@ -571,6 +576,8 @@ def _processar_e_salvar_formulario(dados_recebidos, origem="FORMS",
         "local_cena":       dados_recebidos.get("local_cena", "").strip() or None,
         "prioridade":       dados_recebidos.get("prioridade", "NORMAL").strip().upper() or "NORMAL",
         "observacoes":      dados_recebidos.get("observacoes", "").strip() or None,
+        # Arco pasta satélite: de onde o material chega (não muda o fluxo nesta camada)
+        "origem_material":  origem_material_norm,
         "status":           "aguardando_material",  # estado inicial
         "material_match":   None,                   # preenchido pelo Matcher
     }
@@ -621,6 +628,7 @@ def _processar_e_salvar_formulario(dados_recebidos, origem="FORMS",
             tem_video=dados_form.get("tem_video", 0),
             nome_audio=dados_form.get("nome_audio"),
             entrega_id=dados_form.get("entrega_id"),
+            origem_material=dados_form.get("origem_material", "cartao"),
         )
         # Classificação por chips (ponte chips→ficha): grava os itens de lista
         # escolhidos. Vem da ficha local; webhooks externos não mandam e o default
@@ -633,6 +641,26 @@ def _processar_e_salvar_formulario(dados_recebidos, origem="FORMS",
             _bd.definir_chips_formulario(_conn_flask, _db_id, _chips)
             if _textos:
                 _bd.definir_textos_formulario(_conn_flask, _db_id, _textos)
+        # ── Peça 1 do arco "recebidos": cria subpasta local para Posts satélite ──
+        # Quando o material NÃO vem por cartão físico, cria a pasta de destino
+        # imediatamente — o profissional (ou o Drive/Dropbox) vai depositar lá.
+        # Falha aqui é AVISO: o Post salva normalmente, só avisa no log.
+        if origem_material_norm == "recebido" and _db_id is not None:
+            try:
+                import painel_config as _pc
+                _slug_ativo, _cfg_ativo = _pc.projeto_ativo()
+                _base_recebidos = _pc.caminho_recebidos(_cfg_ativo)
+                _pasta_criada, _erro_pasta = _bd.criar_pasta_recebidos_post(
+                    _conn_flask, _db_id, _base_recebidos
+                )
+                if _pasta_criada:
+                    logger.info(f"RECEBIDOS | Pasta criada: {_pasta_criada}")
+                    dados_form["pasta_recebidos"] = _pasta_criada
+                else:
+                    logger.warning(f"RECEBIDOS | Pasta não criada: {_erro_pasta}")
+            except Exception as _err_pasta:
+                logger.warning(f"RECEBIDOS | Erro ao criar pasta (Post salvo mesmo assim): {_err_pasta}")
+
         _conn_flask.close()
         # Salva o ID do banco de volta no JSON (ponte para o Matcher e Transferência)
         dados_form["db_formulario_id"] = _db_id
@@ -2314,6 +2342,59 @@ def post_excluir(formulario_id):
     return redirect("/")
 
 
+# ── ROTAS DO ARCO "RECEBIDOS" — Peça 2 (link) e Peça 3 (gatilho) ─────────────
+# Acesso só na base (localhost). O portão _portao_de_acesso já barra remoto.
+
+@app.route("/post/<int:formulario_id>/link-recebidos", methods=["POST"])
+def post_link_recebidos(formulario_id):
+    """
+    Peça 2 — salva o link da pasta na nuvem para um Post satélite.
+    O operador cola o link à mão (Drive/Dropbox/etc.). A criação automática
+    via API Drive é fatia futura.
+    """
+    link = request.form.get("link_recebidos", "").strip()
+    resultado = {"ok": False, "motivo": "banco_indisponivel"}
+    if BANCO_DISPONIVEL:
+        try:
+            conn = bd.obter_conexao()
+            atualizado = bd.definir_link_recebidos(conn, formulario_id, link)
+            conn.close()
+            resultado = {"ok": atualizado, "motivo": "" if atualizado else "post_inexistente"}
+        except Exception as erro:
+            logger.error(f"LINK RECEBIDOS | Erro | Post {formulario_id} | {erro}")
+            resultado = {"ok": False, "motivo": f"erro_interno: {erro}"}
+    if resultado.get("ok"):
+        logger.info(f"LINK RECEBIDOS | Post {formulario_id} | link={'<vazio>' if not link else link[:60]}")
+    return redirect(f"/?ok=link_salvo#{formulario_id}" if resultado.get("ok")
+                    else f"/?aviso=link_nao_salvo#{formulario_id}")
+
+
+@app.route("/post/<int:formulario_id>/recebido-pronto", methods=["POST"])
+def post_recebido_pronto(formulario_id):
+    """
+    Peça 3 — gatilho do operador: sinaliza que o material do Post satélite chegou
+    e está pronto para cópia. SÓ MARCA — NÃO dispara cópia.
+
+    PRÓXIMA FATIA: a Camada 2 (copiador.py/transferencia.py) vai monitorar o flag
+    'recebido_pronto' e iniciar a cópia a partir da pasta local de recebidos.
+    """
+    resultado = {"ok": False, "motivo": "banco_indisponivel"}
+    if BANCO_DISPONIVEL:
+        try:
+            conn = bd.obter_conexao()
+            resultado = bd.marcar_recebido_pronto(conn, formulario_id)
+            conn.close()
+        except Exception as erro:
+            logger.error(f"RECEBIDO PRONTO | Erro | Post {formulario_id} | {erro}")
+            resultado = {"ok": False, "motivo": f"erro_interno: {erro}"}
+    if resultado.get("ok"):
+        logger.info(f"RECEBIDO PRONTO | Post {formulario_id} marcado como pronto para cópia")
+    else:
+        logger.warning(f"RECEBIDO PRONTO | Não marcado | Post {formulario_id} | {resultado.get('motivo')}")
+    return redirect(f"/?ok=recebido_pronto#{formulario_id}" if resultado.get("ok")
+                    else f"/?aviso={resultado.get('motivo', 'erro')}#{formulario_id}")
+
+
 def _celula_planilha(col, linha, chips, textos=None):
     """
     Renderiza o valor de uma célula da planilha em HTML.
@@ -3288,6 +3369,10 @@ def _bloco_tipo_nome_ficha(d, trava, profissionais):
     nome_atual     = d.get("nome", "")
     nome_audio_atual = d.get("nome_audio", "")
 
+    # Origem do material: "cartao" (padrão, operação normal) ou "recebido" (pasta satélite).
+    # Posts antigos não têm o campo — caem para "cartao" como esperado.
+    origem_atual = d.get("origem_material", "cartao") or "cartao"
+
     # Descobre quais checkboxes marcar a partir do tipo já gravado.
     foto_chk  = "checked" if "FOTO"  in tipo_atual else ""
     audio_chk = "checked" if "AUDIO" in tipo_atual else ""
@@ -3321,6 +3406,25 @@ def _bloco_tipo_nome_ficha(d, trava, profissionais):
           <!-- campo hidden que o backend lê: "FOTO", "AUDIO+VIDEO", "FOTO+AUDIO", etc. -->
           <input type="hidden" id="campo_tipo_material" name="tipo_material"
                  value="{_esc(tipo_atual)}">
+        </div>
+
+        <!-- ── ORIGEM DO MATERIAL: cartão físico ou pasta satélite ─────────── -->
+        <!-- Pergunta estrutural: comanda o fluxo do arco "recebidos".          -->
+        <!-- Padrão = "cartao" → operação normal não muda em nada.              -->
+        <div class="campo largo">
+          <label>Como o material chega?</label>
+          <div class="tipo-checks">
+            <label>
+              <input type="radio" name="origem_material" value="cartao"
+                     {"checked" if origem_atual == "cartao" else ""}{trava_chk}>
+              Cartão físico
+            </label>
+            <label>
+              <input type="radio" name="origem_material" value="recebido"
+                     {"checked" if origem_atual == "recebido" else ""}{trava_chk}>
+              Pasta recebida (Drive/Dropbox)
+            </label>
+          </div>
         </div>
 
         <!-- ── NOME: dropdown(s) fechado(s), filtrados por tipo ── -->
@@ -3533,8 +3637,27 @@ _GRUPOS_POSTS = [
 ]
 
 
+def _row_get(row, chave, padrao=None):
+    """Lê uma coluna de um sqlite3.Row com segurança.
+
+    Diferente de um dicionário, o sqlite3.Row NÃO tem .get() e levanta IndexError
+    quando a coluna não veio no SELECT. Algumas queries (ex.: Posts cancelados) não
+    trazem os campos do arco satélite — aqui devolvemos o padrão em vez de quebrar.
+    """
+    try:
+        valor = row[chave]
+    except (IndexError, KeyError):
+        return padrao
+    return padrao if valor is None else valor
+
+
 def _linha_post_html(f):
-    """Uma linha da tabela de Posts: dados + ações (editar / cancelar)."""
+    """Uma linha da tabela de Posts: dados + ações (editar / cancelar).
+
+    Posts satélite (origem_material='recebido') ganham blocos extras:
+      - campo para o operador colar/editar o link da pasta na nuvem;
+      - botão "Material recebido — pronto para copiar" (gatilho, não dispara cópia).
+    """
     fid = f["id"]
     status = f["status"] or ""
     cor = COR_STATUS_FICHA.get(status, "#495057")
@@ -3552,7 +3675,52 @@ def _linha_post_html(f):
         f"<button type='submit' style='background:none;border:none;color:#c0392b;"
         f"font-size:0.82em;cursor:pointer;text-decoration:underline'>cancelar</button></form>"
     )
-    return f"""
+
+    # ── Blocos extras para Posts satélite ────────────────────────────────────
+    # Mostrados SOMENTE quando origem_material = 'recebido'.
+    # O operador (acesso local) vê o campo de link e o botão de gatilho.
+    extra_satelite = ""
+    eh_satelite = (_row_get(f, "origem_material") or "cartao") == "recebido"
+    if eh_satelite:
+        link_atual = _esc(_row_get(f, "link_recebidos") or "")
+        ja_pronto = bool(_row_get(f, "recebido_pronto"))
+
+        # Campo para colar/editar o link da pasta na nuvem (Peça 2).
+        form_link = (
+            f"<form action='/post/{fid}/link-recebidos' method='post' "
+            f"style='margin:4px 0 0 0;display:flex;gap:6px;align-items:center'>"
+            f"<label style='font-size:0.8em;color:#6c757d;white-space:nowrap'>"
+            f"Link p/ recebimento:</label>"
+            f"<input type='url' name='link_recebidos' value='{link_atual}' "
+            f"placeholder='https://drive.google.com/...' "
+            f"style='flex:1;font-size:0.82em;padding:2px 6px;border:1px solid #ced4da;"
+            f"border-radius:4px;min-width:160px'>"
+            f"<button type='submit' style='font-size:0.8em;padding:2px 8px;"
+            f"background:#495057;color:#fff;border:none;border-radius:4px;cursor:pointer'>"
+            f"salvar</button></form>"
+        )
+
+        # Botão de gatilho: só aparece se ainda não foi marcado como pronto (Peça 3).
+        # NOTA: este botão SÓ MARCA — a cópia real (copiador.py) é a próxima fatia (C2).
+        if ja_pronto:
+            btn_gatilho = (
+                f"<span style='font-size:0.8em;color:#2e7d32;font-weight:600'>"
+                f"✅ Material pronto para cópia</span>"
+            )
+        else:
+            btn_gatilho = (
+                f"<form action='/post/{fid}/recebido-pronto' method='post' "
+                f"style='margin:4px 0 0 0' "
+                f"onsubmit=\"return confirm('Confirmar: o material deste Post chegou e "
+                f"está pronto para cópia?');\">"
+                f"<button type='submit' "
+                f"style='font-size:0.82em;padding:3px 10px;background:#1a7a4a;"
+                f"color:#fff;border:none;border-radius:4px;cursor:pointer'>"
+                f"📥 Material recebido — pronto para copiar</button></form>"
+            )
+
+    # Linha principal da tabela
+    linha = f"""
       <tr>
         <td class="mono">{fid}</td>
         <td>{nome_html}</td>
@@ -3565,6 +3733,23 @@ def _linha_post_html(f):
           {cancelar}
         </td>
       </tr>"""
+
+    # Linha extra (apenas para Posts satélite): ocupa as 6 colunas com o campo
+    # de link e o botão de gatilho. Reutiliza form_link e btn_gatilho já montados.
+    if eh_satelite:
+        linha += f"""
+      <tr style="background:#f0fff4">
+        <td colspan="6" style="padding:4px 8px 8px 24px;border-top:none">
+          <div style='font-size:0.78em;color:#1a7a4a;font-weight:600;margin-bottom:4px'>
+            📂 Pasta satélite (material enviado digitalmente)</div>
+          <div style='display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start'>
+            <div style='flex:1;min-width:200px'>{form_link}</div>
+            <div style='padding-top:2px'>{btn_gatilho}</div>
+          </div>
+        </td>
+      </tr>"""
+
+    return linha
 
 
 def _grupo_posts_html(titulo, fichas, aberto):
@@ -3631,7 +3816,9 @@ def _fichas_recentes_html(limite=40):
     try:
         conn = bd.obter_conexao()
         ativas = conn.execute(
-            "SELECT id, nome, nome_audio, tipo_material, data_gravacao, status "
+            # Inclui os campos do arco satélite para renderizar o link e o botão
+            "SELECT id, nome, nome_audio, tipo_material, data_gravacao, status, "
+            "       origem_material, link_recebidos, recebido_pronto "
             "FROM formularios WHERE status <> 'cancelado' OR status IS NULL "
             "ORDER BY id DESC LIMIT ?", (limite,)
         ).fetchall()
@@ -4109,6 +4296,10 @@ def _normalizar_campos_ficha(dados):
     if "local_cena" in dados:     out["local_cena"] = dados.get("local_cena", "").strip() or None
     if "prioridade" in dados:     out["prioridade"] = dados.get("prioridade", "NORMAL").strip().upper() or "NORMAL"
     if "observacoes" in dados:    out["observacoes"] = dados.get("observacoes", "").strip() or None
+    if "origem_material" in dados:
+        # Garante que só valores válidos entram; qualquer outro vira "cartao" (padrão seguro).
+        _orig = dados.get("origem_material", "cartao") or "cartao"
+        out["origem_material"] = _orig if _orig in ("cartao", "recebido") else "cartao"
     return out
 
 
@@ -4198,13 +4389,54 @@ def ficha_enviar():
       </p>"""
     else:
         titulo_ok = "✅ Ficha recebida com sucesso"
+        # ── Bloco extra para Posts satélite (Peça 2 — acesso externo) ──────────
+        # Quando o material NÃO vem por cartão físico, orienta o profissional remoto
+        # sobre onde enviar o material. O link é definido pelo operador à mão;
+        # enquanto vazio, exibe um aviso neutro.
+        origem_enviada = (dados.get("origem_material") or "cartao")
+        if origem_enviada == "recebido":
+            # Tenta buscar o link já definido (o operador pode ter pré-configurado)
+            link_nuvem = ""
+            try:
+                _conn_ficha = bd.obter_conexao()
+                _id_form = payload.get("id_form")
+                if _id_form:
+                    _row_link = _conn_ficha.execute(
+                        "SELECT link_recebidos FROM formularios WHERE id_form_original = ?",
+                        (_id_form,)
+                    ).fetchone()
+                    if _row_link:
+                        link_nuvem = (_row_link["link_recebidos"] or "").strip()
+                _conn_ficha.close()
+            except Exception:
+                pass
+
+            if link_nuvem:
+                bloco_link = (
+                    f"<div style='margin-top:12px;padding:10px 14px;background:#e8f5e9;"
+                    f"border-left:4px solid #2e7d32;border-radius:4px'>"
+                    f"<b>📂 Envie seu material para:</b><br>"
+                    f"<a href='{_esc(link_nuvem)}' target='_blank' "
+                    f"style='word-break:break-all'>{_esc(link_nuvem)}</a></div>"
+                )
+            else:
+                bloco_link = (
+                    "<div style='margin-top:12px;padding:10px 14px;background:#fff8e1;"
+                    "border-left:4px solid #f9a825;border-radius:4px;color:#5d4037'>"
+                    "📂 O operador vai disponibilizar o link de envio em breve. "
+                    "Aguarde a confirmação antes de fazer o upload.</div>"
+                )
+        else:
+            bloco_link = ""
+
         resumo = f"""
       <div class="resumo">
         <div><b>Nome</b> {_esc(payload.get('nome'))}</div>
         <div><b>Tipo</b> {_esc(_tipo_display(dados.get('tipo_material','')))}</div>
         <div><b>Data</b> {_esc(dados.get('data_gravacao',''))}</div>
         <div><b>ID da ficha</b> <span class="mono">{_esc(payload.get('id_form'))}</span></div>
-      </div>"""
+      </div>
+      {bloco_link}"""
     # Botões de gestão (Kanban/Planilha) só na BASE; o link remoto da câmera
     # recebe apenas "preencher outra ficha".
     if _host_local():

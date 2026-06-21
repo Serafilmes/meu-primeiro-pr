@@ -710,7 +710,7 @@ def gravar_formulario(conn, id_form, nome, camera, tipo_material, data_gravacao,
                       modelo_camera=None, tipo_conteudo=None, local_cena=None,
                       prioridade=None, observacoes=None,
                       tem_foto=0, tem_audio=0, tem_video=0, nome_audio=None,
-                      entrega_id=None):
+                      entrega_id=None, origem_material="cartao"):
     """
     Insere um formulário de check-in na tabela 'formularios'.
 
@@ -737,20 +737,28 @@ def gravar_formulario(conn, id_form, nome, camera, tipo_material, data_gravacao,
       tem_foto/tem_audio/tem_video — multi-seleção de tipo como booleanos (0/1)
       nome_audio    — segundo nome (operador de áudio), quando a entrega tem áudio
 
+      Arco pasta satélite:
+      origem_material — "cartao" (padrão) ou "recebido" (pasta satélite/Drive/Dropbox).
+                        Posts antigos sem o campo são lidos como "cartao" pelo sistema.
+
     Retorna o ID (rowid) do registro inserido ou o ID já existente se já havia no banco.
     """
+    # Garante que origem_material sempre seja "cartao" ou "recebido".
+    # Qualquer valor inesperado cai para o padrão seguro "cartao".
+    origem_material_norm = origem_material if origem_material in ("cartao", "recebido") else "cartao"
+
     cursor = conn.execute(
         """
         INSERT OR IGNORE INTO formularios
             (id_form_original, nome, camera, tipo_material, data_gravacao, operador,
              modelo_camera, tipo_conteudo, local_cena, prioridade, observacoes,
-             tem_foto, tem_audio, tem_video, nome_audio, entrega_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             tem_foto, tem_audio, tem_video, nome_audio, entrega_id, origem_material)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (id_form, nome, camera, tipo_material, data_gravacao, operador,
          modelo_camera, tipo_conteudo, local_cena, prioridade, observacoes,
          int(bool(tem_foto)), int(bool(tem_audio)), int(bool(tem_video)),
-         (nome_audio or "").strip().upper() or None, entrega_id)
+         (nome_audio or "").strip().upper() or None, entrega_id, origem_material_norm)
     )
     conn.commit()
 
@@ -803,6 +811,17 @@ def migrar_schema_formularios(conn):
         ("nome_audio",     "TEXT"),
         # Liga as duas fichas de uma entrega mista (áudio = transferência à parte)
         ("entrega_id",     "TEXT"),
+        # De onde o material chega: "cartao" (padrão) ou "recebido" (pasta satélite).
+        # Posts antigos sem este campo são tratados como "cartao" (retrocompatível).
+        ("origem_material", "TEXT NOT NULL DEFAULT 'cartao'"),
+        # Arco pasta satélite — Fatia 2:
+        # Link da pasta na nuvem (Drive/Dropbox) para onde o profissional envia material.
+        # O operador preenche à mão; a criação automática via API é fatia futura.
+        ("link_recebidos", "TEXT"),
+        # Arco pasta satélite — Fatia 3 (gatilho do operador):
+        # 1 = operador confirmou que o material chegou e está pronto para cópia.
+        # 0 (padrão) = aguardando. A cópia de verdade é disparada pela Camada 2 (fatia futura).
+        ("recebido_pronto", "INTEGER NOT NULL DEFAULT 0"),
     ]
 
     for nome_col, tipo_col in novos_campos:
@@ -1521,6 +1540,12 @@ def atualizar_formulario(conn, formulario_id, campos):
         "modelo_camera", "tipo_conteudo", "local_cena", "prioridade", "observacoes",
         # Nova Ficha v2, Fatia 5 — multi-tipo (booleanos) + segundo nome (áudio)
         "tem_foto", "tem_audio", "tem_video", "nome_audio",
+        # Arco pasta satélite: origem do material ("cartao" ou "recebido")
+        "origem_material",
+        # Arco pasta satélite — Fatia 2: link da pasta na nuvem (colar à mão)
+        "link_recebidos",
+        # Arco pasta satélite — Fatia 3: gatilho do operador (1 = pronto para cópia)
+        "recebido_pronto",
     }
     # Filtra só o que é permitido editar (segurança: ignora qualquer campo estranho)
     campos_limpos = {c: v for c, v in (campos or {}).items() if c in COLUNAS_EDITAVEIS}
@@ -3897,6 +3922,168 @@ def montar_planilha(conn):
         textos = textos_map.get(r["form_id"], {})
         linhas.append([valor_celula_planilha(c, r, chips, textos) for c in colunas])
     return colunas, linhas
+
+
+# ── ARCO PASTA SATÉLITE — FUNÇÕES DA CAMADA 1 ────────────────────────────────
+#
+# Estas funções cuidam do ciclo de vida do Post de origem "recebido":
+#   1. criar_pasta_recebidos_post — cria a subpasta local no check-in.
+#   2. definir_link_recebidos    — salva o link da pasta na nuvem (colado à mão).
+#   3. marcar_recebido_pronto    — gatilho do operador: material chegou, aguarda cópia.
+#
+# A cópia de verdade (Camada 2) é a PRÓXIMA FATIA — estas funções só preparam
+# e sinalizam, nunca disparam copiador.py.
+
+
+def criar_pasta_recebidos_post(conn, formulario_id, caminho_recebidos_base):
+    """
+    Cria a subpasta local do Post dentro da pasta-raiz de recebidos do projeto.
+
+    Chamado no check-in quando origem_material='recebido'. Idempotente: usa
+    exist_ok=True, então chamar duas vezes não causa erro.
+
+    Estrutura:
+      <caminho_recebidos_base>/<slug_post>/
+
+    O <slug_post> é derivado do nome do profissional + ID do formulário para
+    ser estável, único e ASCII-safe (sem acento, sem espaço).
+
+    Segurança: se o caminho base não existir ou não for gravável, registra um
+    AVISO no Log e retorna o erro — o salvamento do Post continua normalmente.
+
+    Parâmetros:
+      conn                  — conexão SQLite aberta
+      formulario_id         — ID do Post no banco (inteiro)
+      caminho_recebidos_base — caminho absoluto da pasta-raiz de recebidos
+                               (de painel_config.caminho_recebidos())
+
+    Retorna (caminho_da_pasta, None) em caso de sucesso, ou (None, mensagem_erro).
+    """
+    # Busca o Post para construir o slug
+    row = conn.execute(
+        "SELECT nome, id_form_original FROM formularios WHERE id = ?",
+        (formulario_id,)
+    ).fetchone()
+
+    if row is None:
+        return None, f"Post ID={formulario_id} não encontrado no banco"
+
+    # Slug da subpasta: sanitiza o nome + usa o ID do banco como sufixo único.
+    # Reaproveita _sanitizar_nome_pasta (ASCII-safe, maiúsculas, sem caracteres estranhos).
+    nome_limpo = _sanitizar_nome_pasta(row["nome"] or "desconhecido")
+    slug_post = f"{nome_limpo}_{formulario_id}"
+
+    caminho_subpasta = os.path.join(caminho_recebidos_base, slug_post)
+
+    try:
+        os.makedirs(caminho_subpasta, exist_ok=True)
+    except OSError as erro:
+        mensagem = (
+            f"Não foi possível criar a pasta de recebidos para o Post ID={formulario_id}: {erro}. "
+            f"O Post foi salvo normalmente — crie a pasta manualmente depois."
+        )
+        # Registra AVISO no Log (não interrompe o fluxo)
+        registrar_evento(
+            conn,
+            tipo="recebidos_pasta_falhou",
+            descricao=mensagem,
+            formulario_id=formulario_id,
+            dados={"caminho_tentado": caminho_subpasta, "erro": str(erro)},
+        )
+        return None, mensagem
+
+    # Sucesso: registra no Log para rastreabilidade
+    registrar_evento(
+        conn,
+        tipo="recebidos_pasta_criada",
+        descricao=f"Pasta de recebidos criada para Post ID={formulario_id}: {caminho_subpasta}",
+        formulario_id=formulario_id,
+        dados={"caminho": caminho_subpasta, "slug_post": slug_post},
+    )
+
+    return caminho_subpasta, None
+
+
+def definir_link_recebidos(conn, formulario_id, link):
+    """
+    Salva o link da pasta na nuvem (Drive/Dropbox) onde o profissional deve enviar
+    o material. O operador cola o link à mão; a criação automática via API é fatia futura.
+
+    Aceita qualquer string (URL ou vazio para apagar). Registra no Log.
+    Retorna True se atualizou, False se o ID não existia.
+    """
+    link_limpo = (link or "").strip()
+
+    cursor = conn.execute(
+        "UPDATE formularios SET link_recebidos = ? WHERE id = ?",
+        (link_limpo or None, formulario_id)
+    )
+    conn.commit()
+
+    if cursor.rowcount == 0:
+        return False
+
+    registrar_evento(
+        conn,
+        tipo="link_recebidos_definido",
+        descricao=(
+            f"Link de recebidos {'definido' if link_limpo else 'removido'} "
+            f"para Post ID={formulario_id}"
+        ),
+        formulario_id=formulario_id,
+        dados={"link_recebidos": link_limpo or None},
+    )
+    return True
+
+
+def marcar_recebido_pronto(conn, formulario_id):
+    """
+    Gatilho do operador: marca o Post satélite como pronto para cópia.
+
+    Só age em Posts com origem_material='recebido' que ainda NÃO estejam prontos.
+    Registra evento no Log de operações para rastreabilidade.
+
+    ATENÇÃO — este botão SÓ MARCA; NÃO dispara cópia. A ligação com o copiador.py
+    (Camada 2) é a PRÓXIMA FATIA. Aqui apenas preparamos o sinal para a C2.
+
+    Retorna um dicionário:
+      {"ok": True}                       — marcado com sucesso
+      {"ok": False, "motivo": "..."}     — recusado (não é recebido, já estava pronto,
+                                           Post não encontrado)
+    """
+    row = conn.execute(
+        "SELECT id, nome, origem_material, recebido_pronto FROM formularios WHERE id = ?",
+        (formulario_id,)
+    ).fetchone()
+
+    if row is None:
+        return {"ok": False, "motivo": "post_inexistente"}
+
+    if row["origem_material"] != "recebido":
+        return {"ok": False, "motivo": "nao_e_recebido"}
+
+    if row["recebido_pronto"]:
+        return {"ok": False, "motivo": "ja_estava_pronto"}
+
+    conn.execute(
+        "UPDATE formularios SET recebido_pronto = 1 WHERE id = ?",
+        (formulario_id,)
+    )
+    conn.commit()
+
+    # Registra no Log (governança: toda operação fica rastreada)
+    registrar_evento(
+        conn,
+        tipo="recebido_pronto",
+        descricao=(
+            f"Operador sinalizou material recebido e pronto para cópia | "
+            f"Post ID={formulario_id} | Nome: {row['nome']}"
+        ),
+        formulario_id=formulario_id,
+        dados={"formulario_id": formulario_id, "nome": row["nome"]},
+    )
+
+    return {"ok": True}
 
 
 # ── PONTO DE ENTRADA (INICIALIZAÇÃO DIRETA) ───────────────────────────────────
