@@ -1,7 +1,7 @@
 # Contexto Atual — Sistema GMA
 ## Estado vivo do projeto (carregar em TODA sessão junto com `arquitetura_GMA.md`)
 
-> Última atualização: 2026-06-20 (sessão 40)
+> Última atualização: 2026-06-21 (sessão 40)
 > Para detalhes técnicos históricos, ver `historico_GMA.md` (não carregar por padrão).
 
 ---
@@ -11,10 +11,10 @@
 | Camada | Nome | Status |
 |---|---|---|
 | 1 | Check-in e identificação | ⚠️ Quase completa — Nova Ficha v2 ✅ (s33); **match manual** (s38); **nomes curtos editáveis** (#5) + **centro de controle dos Posts** na Nova Ficha (grupos por status + cancelar/restaurar/excluir; Operação só com o MATCH) (s39); falta mural dos câmeras, login do operador (2.3) e domínio fixo do túnel |
-| 2 | Transferência | ✅ Concluída e testada com cartão real |
+| 2 | Transferência | ✅ Concluída e testada com cartão real; **régua única do que é "mídia real"** compartilhada com a C4 (s40) |
 | 3 | Controle e segurança das informações | ✅ Quase completa — Kanban + Planilha + Molde; grupos editáveis (s33); Sheets dinâmico (s34); exportador em loop (s35); **Sheets por projeto ligado no exportador (s39)** |
 | 4 | Auditoria + liberação do cartão | ✅ Concluída — ciclo integrado testado |
-| 5 | Plataforma profissional + multi-máquina | 🔧 Em construção — **Painel de Controle Fatia 1 ✅ (s37)**: cockpit no Flask (troca de projeto com reinício guiado, conexões com teste, ligar/encerrar) |
+| 5 | Plataforma profissional + multi-máquina | 🔧 Em construção — **Painel de Controle Fatia 1 ✅ (s37)**: cockpit no Flask; **s40:** caixa de **Pasta de recebidos** (satélite), **trava de instância única** do maestro e **ngrok automático** (o túnel sobe junto com o sistema) |
 | 6 | IA assíncrona | 📋 Futura |
 | 7 | Marca e design | 📋 Planejada — foco desejado, **sem prazo de data** (s33) |
 
@@ -22,14 +22,17 @@
 
 ## O que acabou de ser feito (sessões recentes)
 
-### ✅ Sessão 40 (ALINHAMENTO + 2 BUILDS) — RÉGUA ÚNICA de mídia (C2+C4) + caixa de RECEBIDOS no Painel
-**Desenho registrado + 2 entregas.** Régua única **mergeada** (PR #10); caixa de recebidos em **PR separado** (branch `s40-caixa-recebidos`). Memória [[pasta-satelite-recebidos]].
+### ✅ Sessão 40 (ALINHAMENTO + 4 BUILDS) — RÉGUA ÚNICA (C2+C4) · caixa de RECEBIDOS · TRAVA do maestro · NGROK automático
+**Desenho registrado + 4 entregas, TUDO mergeado no `main`** (PR #10 régua · #11 recebidos · #12 maestro). Memória [[pasta-satelite-recebidos]], [[git-nao-deixar-disco-em-branch-surpresa]].
 
 - **Diagnóstico confirmado no código — "o que é mídia" mora em 3 listas que não conversam:** `copiador.py` (`ARQUIVOS_IGNORADOS`+`EXTENSOES_SISTEMA`, [copiador.py:53](copiador.py:53)), `auditoria.py` (só `.sppo`/`_relatorio.pdf`/`_manifesto.json`, [auditoria.py:60](auditoria.py:60)) e `ler_cartao.py` (allowlist de mídia, [ler_cartao.py:29](ler_cartao.py:29)). Na s39 o Finder criou um `.DS_Store` NOVO no **destino** depois da cópia → a auditoria (que não conhece esse nome) contou 108 vs 106 e travou. **Raiz: 3 baldes de não-mídia que nenhum lugar conhece por inteiro** — (1) lixo do SO (`.DS_Store`/`Thumbs.db`/`desktop.ini`), (2) sistema do cartão (`.fseventsd`/`.Spotlight-V100`/`.Trashes`), (3) arquivos do próprio GMA (`.sppo`/`_relatorio.pdf`/`_manifesto.json`/`_GMA_frames/`).
 - **Proposta — RÉGUA ÚNICA:** uma só função compartilhada que responde "este arquivo conta como material?" e é usada pela C2 (copiar) E pela C4 (auditar), batendo igual na origem e no destino. Mantém a segurança: mídia conhecida entra; lixo conhecido (3 baldes) sai; **desconhecido = copia mesmo assim + marca "revisar"** (princípio nº 2 — nunca pular footage estranho). É a FUNDAÇÃO do redesenho C2/C4 (cópia rápida/auto-cura/benchmark vêm depois, sobre ela).
 - **Pasta satélite = a régua paga o desacoplamento "de onde vem" × "o que é":** material que NÃO vem por cartão (fotógrafo foi embora; PGM/feed) entra por uma pasta `recebidos/<post>/` alimentada por Drive/Dropbox; o `copiador.py` já copia "a partir de um caminho", então cartão e satélite viram a mesma coisa. **Desenho fechado (ver [[pasta-satelite-recebidos]]):** última pergunta da ficha "Cartão físico?"; gatilho em camadas (botão do operador 1º · estabilidade ajustável · aviso remoto); C4 roda auditoria mas **NÃO** Parashoot (não há cartão); staging fica/limpa só com confirmação. **Cuidado registrado:** Drive/Dropbox "arquivo na nuvem" baixa só sob demanda → a pasta precisa estar "disponível offline" (C5), senão copia vazio. Não fere "vídeo nunca sobe pra nuvem" (a nuvem é canal de ENTRADA de terceiro; o ciclo do GMA segue local).
 - **Encadeamento:** (1) registrar o desenho ✅; (2) **RÉGUA ÚNICA construída ✅** (`ler_cartao.eh_nao_midia`/`eh_pasta_ignorada`; C2 e C4 contam igual; `teste_regua_midia.py` reproduz o "108 vs 106" da s39; PR #10 mergeado); (3) o arco satélite como sessão própria — **1ª fatia construída ✅: caixa de "Pasta de recebidos" no Painel** (config + Testar com a régua + detecção da armadilha do Drive "só na nuvem"; `painel_config.caminho_recebidos/checar_recebidos/definir_recebidos` + card/rota no Flask + `teste_recebidos_painel.py`); **falta** o resto do arco (pergunta "Cartão físico?" na ficha → cria `recebidos/<post>/` → gatilho do operador → cópia → C4 sem Parashoot).
-- **🎓 Esclarecimento do túnel/ngrok (s40):** a bolinha amarela do túnel NÃO é bug — "ativo" é só bandeira de intenção; **nada sobe o ngrok** (o maestro sobe 6 processos, ngrok fica de fora, levantado à mão por `./ngrok_gma.sh`). Offline-first: o ngrok precisa de internet, então é **sempre opcional** — offline, as câmeras usam a **rede local** (`GMA_HOST=0.0.0.0`), sem ngrok. **Evolução (a fazer):** o maestro (já supervisor desde s37) subir o ngrok como **7º processo opcional** comandado pelo "ativo" (falha graciosa se offline/sem token); manual só o setup 1x (instalar+authtoken) + domínio fixo opcional. Tudo mecânico, sem IA.
+- **🎓 Esclarecimento do túnel/ngrok (s40):** a bolinha amarela do túnel NÃO é bug — "ativo" é só bandeira de intenção; offline-first: o ngrok precisa de internet, então é **sempre opcional** — offline, as câmeras usam a **rede local** (`GMA_HOST=0.0.0.0`), sem ngrok. (Incidente do teste: o idealizador colou o **token** do ngrok no campo de **link** do Painel — limpei; token vai no `ngrok config add-authtoken`, o campo de link aceita só URL; vazio = auto-detecta.)
+- **🔌 NGROK AUTOMÁTICO construído ✅ (PR #12):** o maestro (supervisor desde s37) agora sobe o ngrok como **7º processo opcional** comandado pelo "ativo" — `iniciar_ngrok()` só age se ficha ligada · sem link fixo · ngrok instalado · nenhum túnel no ar; **verifica de verdade** (o túnel aparece no `127.0.0.1:4040`?) e, se não subir, **avisa e segue** (sistema de pé). `descer_todos` derruba junto. **Validado ao vivo** (subiu `https://…ngrok-free.dev`). `teste_ngrok_maestro.py` (caminhos de pular). Manual só o setup 1x (instalar+authtoken) + domínio fixo opcional. Sem IA.
+- **🔒 TRAVA de instância única do maestro construída ✅ (PR #12):** clicar "Iniciar" 2x subia DOIS maestros (o `verificar_instancias_ativas` só via os filhos + prompt interativo que pendurava o 2º). Agora um **lock de arquivo** (`flock` em `.gma_maestro.lock`) no início do `main()` — o 2º sai na hora com mensagem clara; o flock se solta sozinho se o maestro cair. `teste_trava_maestro.py`.
+- **🧹 Lição de PROCESSO (git) — gravada [[git-nao-deixar-disco-em-branch-surpresa]]:** trabalhar em 3 branches enquanto o idealizador roda o sistema AO VIVO do disco fez a caixa de recebidos "sumir" da tela (o disco estava noutro branch; nada se perdeu — estava no PR #11). Ele é iniciante e se perde nisso. **Regra nova:** manter o disco no `main`, mergear cedo, e avisar explícito se precisar trocar de branch. As 4 entregas foram **consolidadas no `main`** ao fim da sessão.
 
 ### ✅ Sessão 39 (TESTE ao vivo + BUILD #1 + #2 proxy A/B) — cópia real GoPro, Sheets por projeto, proxy na C2, redesenho C2/C4
 **Branch:** `s39-sheets-por-projeto`. **Sem commit.** Teste com cartão GoPro real (HERO7, 107 arq / 7,7 GB) no projeto **SP2B**.
@@ -337,9 +340,10 @@ Candidatos naturais para a próxima sessão:
 
 ## Estado de commit (atenção)
 
-**Tudo da S37 → S39 está commitado e mergeado no `main`.** Histórico: Painel de Controle / cockpit (S37, commit `3520567`), Match Manual + gate dos cartões + Acompanhamento ao vivo (S38, PR #6 `b6a42a5`), Sheets por projeto + proxy + #3 + #4 (S39, PRs #7/#8), Nomes Curtos #5 (S39, PR #9 `cf24790`).
+**Tudo da S37 → S40 está commitado e mergeado no `main`.** Histórico: cockpit (S37), Match Manual + gate (S38), Sheets por projeto + proxy + #3 + #4 + Nomes Curtos (S39).
+**S40 — 3 PRs mergeados:** régua única (PR #10) · caixa de recebidos (PR #11) · maestro robusto = trava única + ngrok automático (PR #12). **Disco no `main`, working tree limpo, `main` local == origin.**
 
-**🔶 Pendência de hoje (s39):** o commit `c712c5c` (centro de controle dos Posts na Nova Ficha) está **no `main` local mas ainda NÃO foi enviado** (`git push`). Working tree limpo. Backups do laboratório em `gma.db.bak_*`.
+**🔶 Regra reforçada (s40):** manter o disco no `main` enquanto o idealizador roda o sistema ao vivo — trocar de branch faz feature "sumir" da tela e o confunde (ver [[git-nao-deixar-disco-em-branch-surpresa]]). Backups do laboratório em `gma.db.bak_*`.
 
 ---
 

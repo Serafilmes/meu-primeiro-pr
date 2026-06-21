@@ -9,7 +9,7 @@
 > O sistema guarda o dado em um lugar só; as telas são jeitos diferentes de LER
 > esse mesmo dado. Nada diverge.
 >
-> Última atualização: 2026-06-20 (sessão 40 — ALINHAMENTO (sem código): redesenho C2/C4 "RÉGUA ÚNICA do que é mídia" (uma só função compartilhada C2+C4, contra o tropeço dos .DS_Store/.fseventsd/.sppo da s39) + entrada por PASTA SATÉLITE (material que não vem por cartão: pasta recebidos/<post> alimentada por Drive/Dropbox, gatilho do operador→estabilidade→aviso remoto, C4 sem Parashoot). Desenho gravado; próximo build = a régua única. — anterior s39: TESTE de cópia real (GoPro 7,7GB) ponta a ponta no projeto SP2B; BUILD: Google Sheets POR PROJETO no exportador (#1), PROXY marcado na cópia (sempre copia + avisa — Fatias A/B), EXCLUIR Post definitivo (#3), DATA DE LOGAGEM pelo relógio do sistema (#4), NOMES CURTOS editáveis (#5: nome_raiz/nome_curto, pasta+cartão+planilha, ASCII), CENTRO DE CONTROLE DOS POSTS na Nova Ficha (grupos recolhíveis por status + cancelar/restaurar/excluir; Operação ficou só com o MATCH). Em desenho: redesenho C2/C4 com "regra única do que é mídia" + benchmark de velocidade. Antes: MATCH MANUAL + GATE DOS CARTÕES + Acompanhamento AO VIVO (s38), PAINEL DE CONTROLE / cockpit (s37), Rock in Rio + programação do dia (s36), Sheets real+dinâmico (s32/s34), grupos editáveis (s33).)
+> Última atualização: 2026-06-21 (sessão 40 — 4 BUILDS mergeados no main: RÉGUA ÚNICA do que é mídia (função compartilhada C2+C4, fecha o "108 vs 106" da s39) · caixa de PASTA DE RECEBIDOS no Painel (1ª fatia do arco satélite: config + Testar com detecção do Drive "só na nuvem") · TRAVA de instância única do maestro (flock — clicar Iniciar 2x não duplica) · NGROK AUTOMÁTICO (o maestro sobe o túnel junto com o sistema, validado ao vivo). Arco satélite desenhado (memória pasta-satelite-recebidos); lição de git gravada (não deixar o disco num branch-surpresa). — anterior s39: TESTE de cópia real (GoPro 7,7GB) ponta a ponta no projeto SP2B; BUILD: Google Sheets POR PROJETO no exportador (#1), PROXY marcado na cópia (sempre copia + avisa — Fatias A/B), EXCLUIR Post definitivo (#3), DATA DE LOGAGEM pelo relógio do sistema (#4), NOMES CURTOS editáveis (#5: nome_raiz/nome_curto, pasta+cartão+planilha, ASCII), CENTRO DE CONTROLE DOS POSTS na Nova Ficha (grupos recolhíveis por status + cancelar/restaurar/excluir; Operação ficou só com o MATCH). Em desenho: redesenho C2/C4 com "regra única do que é mídia" + benchmark de velocidade. Antes: MATCH MANUAL + GATE DOS CARTÕES + Acompanhamento AO VIVO (s38), PAINEL DE CONTROLE / cockpit (s37), Rock in Rio + programação do dia (s36), Sheets real+dinâmico (s32/s34), grupos editáveis (s33).)
 
 ---
 
@@ -40,7 +40,8 @@ ANDAR                                       PROGRESSO
            quando o volume some (acaba o "copiando eterno")
         └─ NOVO (s39): PROXY atravessa o pipeline — SEMPRE copia + marca (tipo/proxy_de
            no .sppo+banco) + AVISA; teste de cópia real GoPro 7,7GB OK (106/106)
-        └─ em desenho: redesenho C2/C4 (regra única do que é mídia + auto-cura + benchmark)
+        └─ NOVO (s40): RÉGUA ÚNICA do que é "mídia real" (compartilhada C2+C4 — fim do
+           tropeço em .DS_Store/.fseventsd/.sppo); falta cópia rápida + auto-cura + benchmark
 3 · Banco de dados (guardar tudo)           ███████████░  QUASE ✅
         └─ Kanban + Planilha + Google Sheets REAL no ar (s32, via impersonação)
         └─ GRUPOS EDITÁVEIS (s33): 1 ponto de criação → chip na ficha + coluna na
@@ -54,6 +55,8 @@ ANDAR                                       PROGRESSO
         └─ NOVO (s37): PAINEL DE CONTROLE (cockpit no Flask) — troca de projeto com
            reinício guiado, conexões com Testar, ligar/encerrar por atalho clicável
         └─ projeto-festival Rock in Rio + programação do dia (s36); por-projeto isolado
+        └─ NOVO (s40): caixa de PASTA DE RECEBIDOS (satélite) · TRAVA de instância única do
+           maestro · NGROK AUTOMÁTICO (o túnel sobe junto com o sistema)
         └─ falta: conexões por-projeto (Fatia 2) · login/usuário (Fatia 3) · .app
 6 · Inteligência artificial (opcional)      ░░░░░░░░░░░░  futuro
 7 · Marca e identidade visual               ░░░░░░░░░░░░  sem prazo (próximo foco)
@@ -367,6 +370,22 @@ Nenhuma decisão foi à toa. Cada uma resolveu um problema que apareceu
            🛠️ BUILD: CENTRO DE CONTROLE DOS POSTS na Nova Ficha — tabela "Fichas recentes" virou
               grupos recolhíveis por status (editar/cancelar/restaurar/excluir); Operação = só o MATCH
            💾 Commitado (branch s39-sheets-por-projeto): #1, proxy A/B, #3, #4 · #5 (PR #9)
+
+20/06  S40 🧱 BUILD RÉGUA ÚNICA do que é "mídia real" — uma função compartilhada (ler_cartao)
+              usada pela C2 (copiar) e C4 (auditar); origem e destino contam igual → fim do
+              "108 vs 106" da s39 (lixo do SO/cartão/GMA + download). PR #10 mergeado
+           📁 BUILD caixa de PASTA DE RECEBIDOS no Painel (1ª fatia do arco satélite): config +
+              Testar com detecção do Drive "só na nuvem". Arco satélite inteiro DESENHADO (memória)
+           🔶 DESENHO satélite: ficha "Cartão físico?" → recebidos/<post> por Drive/Dropbox →
+              gatilho do operador (depois estabilidade/aviso remoto) → cópia → C4 sem Parashoot
+21/06  S40 🔒 BUILD TRAVA de instância única do maestro (flock) — clicar "Iniciar" 2x não
+              duplica mais (achado ao vivo: 2 maestros, o 2º pendurado no prompt). PR #12
+           🔌 BUILD NGROK AUTOMÁTICO — o maestro sobe o túnel junto com o sistema (7º processo
+              opcional; verifica no 4040; falha graciosa offline). Validado ao vivo. PR #12
+           🎓 Esclarecido: "ativo" do túnel é só intenção; offline o túnel é opcional (rede local)
+           🧹 LIÇÃO de git: não deixar o disco num branch-surpresa enquanto ele roda ao vivo
+              (a caixa "sumiu" da tela por isso) → tudo consolidado no main ao fim (memória)
+           💾 PRs #10/#11/#12 mergeados no main; disco no main, working tree limpo
 ```
 
 ---
@@ -402,16 +421,17 @@ Em ordem de impacto:
    fecha o "108 vs 106" da s39. Desconhecido = copia + marca "revisar" (princípio nº 2). É a FUNDAÇÃO:
    FALTA por cima — C2 copia rápido (checksum durante a cópia) + auto-cura (recopia só o divergente) +
    benchmark sob demanda; frames travam a liberação (com opção de desligar).
-2c. 📁 **Entrada por PASTA SATÉLITE (s40, arco próprio — 1ª fatia construída)** — material que NÃO vem por
-   cartão (fotógrafo foi embora; PGM/feed). ✅ **Caixa "Pasta de recebidos" no Painel** (config + Testar
-   com detecção do Drive "só na nuvem"; branch `s40-caixa-recebidos`). FALTA: ficha pergunta "Cartão
-   físico?" → sistema cria `recebidos/<post>/` alimentada por Drive/Dropbox → gatilho do operador
-   (depois estabilidade ajustável e aviso remoto) → cópia idêntica (a régua faz cartão=satélite) →
-   C4 audita mas NÃO roda Parashoot. Ver [[pasta-satelite-recebidos]].
-2d. 🔌 **Túnel/ngrok como 7º processo do maestro (s40, a fazer)** — hoje "ativo" é só intenção; nada sobe
-   o ngrok (levantado à mão por `./ngrok_gma.sh`) → bolinha amarela. O maestro (já supervisor) deve subir
-   o ngrok opcionalmente quando "ativo" + online (falha graciosa offline; câmeras usam a rede local).
-   Manual só o setup 1x (instalar + authtoken) + domínio fixo opcional. Sem IA.
+2c. 📁 **Entrada por PASTA SATÉLITE (s40, arco próprio — 1ª fatia CONSTRUÍDA, mergeada)** — material que NÃO
+   vem por cartão (fotógrafo foi embora; PGM/feed). ✅ **Caixa "Pasta de recebidos" no Painel** (config +
+   Testar com detecção do Drive "só na nuvem"; PR #11). FALTA: ficha pergunta "Cartão físico?" → sistema
+   cria `recebidos/<post>/` alimentada por Drive/Dropbox → gatilho do operador (depois estabilidade
+   ajustável e aviso remoto) → cópia idêntica (a régua faz cartão=satélite) → C4 audita mas NÃO roda
+   Parashoot. Ver [[pasta-satelite-recebidos]].
+2d. ✅ **Maestro robusto (s40 — CONSTRUÍDO, PR #12)** — (a) **TRAVA de instância única** (`flock` em
+   `.gma_maestro.lock`): clicar "Iniciar" 2x não duplica mais o maestro (o 2º sai na hora). (b) **NGROK
+   AUTOMÁTICO**: o maestro sobe o túnel como 7º processo opcional quando "ativo" + online (verifica no
+   4040, falha graciosa offline; câmeras usam a rede local). Validado ao vivo. Manual só o setup 1x
+   (instalar + authtoken) + domínio fixo opcional. Sem IA.
 3. 🎨 **Marca / identidade visual (andar 7)** — sem prazo de data + o relatório PDF de hoje
    ficou abaixo do esperado. Definir logo, paleta, tipografia e grid ANTES de refazer o PDF.
 4. 📄 **PDF Overview** — refazer o gerador no estilo dashboard + folha de contato
