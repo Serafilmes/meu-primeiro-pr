@@ -1,7 +1,7 @@
 # Contexto Atual — Sistema GMA
 ## Estado vivo do projeto (carregar em TODA sessão junto com `arquitetura_GMA.md`)
 
-> Última atualização: 2026-06-22 (sessão 45)
+> Última atualização: 2026-06-22 (sessão 46)
 > Para detalhes técnicos históricos, ver `historico_GMA.md` (não carregar por padrão).
 
 ---
@@ -12,7 +12,7 @@
 |---|---|---|
 | 1 | Check-in e identificação | ⚠️ Quase completa — Nova Ficha v2 ✅ (s33); **match manual** (s38); **nomes curtos editáveis** (#5) + **centro de controle dos Posts** na Nova Ficha (s39); **pergunta de ORIGEM no Post** ("Como o material chega?" — porta do arco recebidos) (s41); falta mural dos câmeras, login do operador (2.3) e domínio fixo do túnel |
 | 2 | Transferência | ✅ Concluída e testada com cartão real; **régua única do que é "mídia real"** compartilhada com a C4 (s40); **cópia de material RECEBIDO** (pasta satélite, sem cartão) — botão "Copiar agora" (s43) |
-| 3 | Controle e segurança das informações | ✅ Quase completa — Kanban + Planilha + Molde; grupos editáveis (s33); Sheets dinâmico (s34); exportador em loop (s35); **Sheets por projeto ligado no exportador (s39)** |
+| 3 | Controle e segurança das informações | ✅ Quase completa — Kanban + Planilha + Molde; grupos editáveis (s33); Sheets dinâmico (s34); exportador em loop (s35); **Sheets por projeto ligado no exportador (s39)**; **bilhete de status do exportador → bolinha de saúde do Sheets no Painel (s46)** |
 | 4 | Auditoria + liberação do cartão | ✅ Concluída — ciclo integrado testado; **audita material RECEBIDO sem acionar o Parashoot** (não há cartão pra ejetar) (s43) |
 | 5 | Plataforma profissional + multi-máquina | 🔧 Em construção — **Painel Fatia 1 ✅ (s37)**; **s40:** Pasta de recebidos, trava de instância e ngrok automático; **s42:** **SAGUÃO DE 2 NÍVEIS construído ✅** (`saguao.py` — térreo na 5055 que nunca cai; entrar/voltar sobe/desce a sessão do projeto sem reinício; substitui o reinício-na-troca da s41) ([[saguao-dois-niveis]]) |
 | 6 | IA assíncrona | 🟢 INICIADA — desenho das **3 camadas de IA** + agente `ia-gma` (s44); **1º TIJOLO CONSTRUÍDO (s45): transcrição de áudio (Whisper local) POR ARQUIVO** — caixa isolada `.venv_ia` + `transcritor.py`; texto em `arquivos.transcricao`, planilha mostra status compacto, tela `/cartao/<id>/transcricao` por arquivo. Próximo: Missão A ([[transcricao-audio-c6]], [[camada6-tres-camadas-ia]]) |
@@ -21,6 +21,16 @@
 ---
 
 ## O que acabou de ser feito (sessões recentes)
+
+### ✅ Sessão 46 (BUILD) — AVISO DE LOGIN DO GOOGLE NO PAINEL (C3+C5) — fim da falha silenciosa do Sheets
+**Arquivos:** `exportador_sheets.py`, `flask_gma.py`, `.gitignore`, `teste_status_sheets.py` (NOVO, 10 PASS). Feito direto (orquestrador), sessão curta (idealizador "não podia fazer muita coisa"). **Commitado no `main`** (`cbbdb82`). Resolve a pendência DEFERIDA na s43 ([[sheets-auth-impersonacao]]).
+> **Dor que isto cura (achada na s43):** a sessão do `gcloud` expira de tempos em tempos (política da org); o exportador roda não-interativo, não pode relogar, e **falhava EM SILÊNCIO a cada minuto** — o Sheet de TODOS os projetos travava e só se percebia pela planilha parada (~21:50 na s43). O log sabia, a tela não.
+- **Bilhete de status (C3, `exportador_sheets.py`):** a cada ciclo o exportador grava `.gma_sheets_status.json` (troca atômica via `os.replace`) com `{estado, mensagem, projeto, horario, quando}`. Estados: **ok · login-vencido · sem-internet · pausado · nao-configurado · erro**. Gravado em TODO ponto de saída do `sincronizar` (cred ausente, projeto sem planilha, sem internet, sucesso, exceção). `_erro_eh_login_vencido()` isola o caso do gcloud (marcas `reauth`/`invalid_grant`/`auth login`/`token has expired`) — separado dos erros genéricos (404/quota/rede) que viram `erro`. Falha de escrita do bilhete nunca quebra o ciclo (é só informativo; a mídia já está segura).
+- **Bolinha no Painel (C5, `flask_gma.py`):** `_status_sheets_bilhete(slug)` lê o bilhete e o traduz em (bolinha, nota) — **🟢 "atualizado HH:MM" · 🔴 "Google precisa de login — rode `gcloud auth login`" · 🟡 "sem internet"** · ⏸ pausado. Ignora bilhete de **outro projeto** (o exportador roda um por vez) e **velho >5min** (exportador parado = não afirma nada). A caixa "Google Sheets" do cockpit passou a usar essa bolinha viva (em vez de só "ID configurado/não") e mostra a nota na descrição. O CSS `.dot.erro` (vermelho) já existia.
+- **Offline-first preservado:** o bilhete é só leitura de estado; copiar/MD5/auditar nunca dependeram do login Google e continuam iguais. Login vencido = material seguro, só o espelho pausa — agora **com aviso visível**.
+- **✅ VERIFICADO:** `teste_status_sheets.py` (10 verdes) cobre classificador (login vencido × genérico), gravação atômica, e a tradução do Painel (verde/vermelho/amarelo + ignora outro projeto/velho). **NÃO testado ao vivo no sistema rodando** (precisa Encerrar+Iniciar pra o exportador carregar o código novo e começar a deixar o bilhete; até lá o Painel não acha bilhete e cai no comportamento antigo — sem regressão).
+- **🔶 FALTA por cima (futuro, registrado na s43):** ação do admin — esticar a duração da sessão Google (admin.google.com → Segurança → Controle de sessão do Google Cloud) pra reduzir a frequência do relogin; futuro distante = identidade-robô própria.
+- **🔶 PRÓXIMO (escolha do idealizador, igual à s45):** **Missão A** (2ª camada de IA, busca conversacional sobre `arquivos.transcricao` + classificação); **trilha de áudio dos vídeos** (estende o tijolo da s45 com ffmpeg); **controle por DATA na aba Listas** (pré-requisito da 1ª camada de IA); ou **Camada 7** (marca/design).
 
 ### ✅ Sessão 45 (BUILD) — 1º TIJOLO DA CAMADA 6: transcrição de áudio (Whisper local) POR ARQUIVO
 **Arquivos:** `transcritor.py` (NOVO), `banco_dados.py`, `flask_gma.py`, `.gitignore`, `teste_transcricao.py` (NOVO, 12 PASS) + `.venv_ia/` (caixa isolada, fora do git). Feito direto (orquestrador). **Commitado no `main`.** Memória [[transcricao-audio-c6]].
