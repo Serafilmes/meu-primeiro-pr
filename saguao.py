@@ -98,6 +98,38 @@ def projeto_rodando():
 
 # ── SUBIR / DESCER A SESSÃO DO PROJETO (nível 2) ────────────────────────────────
 
+def _migrar_banco_do_projeto():
+    """
+    Roda as migrações de schema no banco do projeto ATIVO (lê GMA_DB do ambiente,
+    que `aplicar_ao_ambiente` acabou de definir) ANTES de subir os processos.
+
+    Por que existe (s46): as migrações vivem em `banco_dados.inicializar_banco()`,
+    mas o Flask/exportador abrem o banco com `obter_conexao()`, que NÃO migra. Sem
+    isto, um banco de projeto antigo entra na sessão sem as colunas novas e a
+    planilha quebra em silêncio (foi o caso da coluna `transcricao` da s45, que
+    derrubou o Sheets de todos os projetos). Rodar aqui, no Entrar, garante que o
+    banco está no schema atual toda vez — mesma ideia do `_inicializar_banco_projeto`
+    do Flask para projetos novos. É idempotente e não-destrutivo (só ADD COLUMN).
+
+    Falha de migração NÃO impede a entrada: registra e segue (o material já está
+    seguro; pior caso, volta-se ao comportamento de antes).
+    """
+    try:
+        r = subprocess.run(
+            [maestro.PYTHON, os.path.join(maestro.RAIZ_GMA, "banco_dados.py")],
+            cwd=maestro.RAIZ_GMA, env=os.environ.copy(),
+            capture_output=True, text=True, timeout=120,
+        )
+        if r.returncode != 0:
+            print(f"[SAGUAO]        AVISO: migração do banco retornou {r.returncode}: "
+                  f"{(r.stderr or '').strip()[:200]}", flush=True)
+        else:
+            print(f"[SAGUAO]        Banco do projeto migrado/atualizado: "
+                  f"{os.environ.get('GMA_DB', '(padrão)')}", flush=True)
+    except Exception as e:
+        print(f"[SAGUAO]        AVISO: não consegui migrar o banco do projeto: {e}", flush=True)
+
+
 def entrar_no_projeto(slug):
     """
     Sobe a sessão de um projeto (nível 2): aplica o projeto ao ambiente e liga os
@@ -126,6 +158,11 @@ def entrar_no_projeto(slug):
         # processos filhos herdam isto e nascem já dentro do projeto certo.
         painel_config.definir_ativo(slug)
         painel_config.aplicar_ao_ambiente(os.environ, forcar=True)
+
+        # Garante que o banco deste projeto está no schema atual ANTES de subir os
+        # processos (s46) — senão um banco antigo entra sem as colunas novas e a
+        # planilha/Sheets quebra em silêncio. Idempotente e não-destrutivo.
+        _migrar_banco_do_projeto()
 
         maestro.criar_sentinela()          # liga o processamento (o Porteiro lê isto)
         _sessao["processos"] = maestro.subir_todos()
