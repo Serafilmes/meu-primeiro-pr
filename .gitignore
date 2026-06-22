@@ -46,6 +46,9 @@ TESTE LOGAGEM/
 # Destino por-projeto (GMA_DESTINO) — mídia copiada dos cartões; mesma regra: fora do repo
 PROJETO/
 
+# Pasta satélite de recebidos (staging de material que NÃO vem por cartão — mídia, fora do repo)
+RECEBIDOS/
+
 # Miniaturas geradas pelo extrator de frames (saída operacional, recriável)
 _GMA_frames/
 *_manifesto.json
