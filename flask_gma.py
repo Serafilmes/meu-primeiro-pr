@@ -6954,6 +6954,53 @@ def _ajuda_sheets_html():
     )
 
 
+def _status_sheets_bilhete(slug_ativo):
+    """
+    Lê o "bilhete de status" que o exportador (Camada 3) grava a cada ciclo
+    (.gma_sheets_status.json) e traduz em (bolinha, nota) para a caixa do Google
+    Sheets no Painel. Assim uma falha (ex.: login do gcloud expirado) aparece na
+    tela em vez de ficar escondida no log — o problema que travou o Sheet em
+    silêncio na s43.
+
+    Retorna (dot, nota) ou None se não houver bilhete confiável (sem arquivo,
+    velho demais, ou de OUTRO projeto — o exportador roda um projeto por vez).
+    """
+    caminho = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           ".gma_sheets_status.json")
+    try:
+        with open(caminho, "r", encoding="utf-8") as f:
+            b = json.load(f)
+    except Exception:
+        return None
+
+    # Bilhete de outro projeto não vale para este Painel.
+    if (b.get("projeto") or "") and slug_ativo and b.get("projeto") != slug_ativo:
+        return None
+
+    # Bilhete velho (exportador parado/derrubado) não é confiável — o ciclo é de
+    # 60s; depois de ~5min sem novo bilhete, melhor não afirmar nada.
+    try:
+        from datetime import datetime as _dt
+        idade = (_dt.now() - _dt.fromisoformat(b.get("quando"))).total_seconds()
+        if idade > 300:
+            return None
+    except Exception:
+        pass
+
+    estado = b.get("estado", "")
+    hora = b.get("horario", "")
+    msg = (b.get("mensagem") or "").strip()
+    mapa = {
+        "ok":             ("ok",    f"🟢 atualizado às {hora}"),
+        "login-vencido":  ("erro",  "🔴 Google precisa de login — rode no Terminal: gcloud auth login"),
+        "sem-internet":   ("aviso", "🟡 sem internet — sincronização adiada"),
+        "pausado":        ("aviso", "⏸ " + (msg or "sincronização pausada")),
+        "nao-configurado":("aviso", msg or "exportador sem credenciais"),
+        "erro":           ("erro",  "🔴 falha na sincronização" + (f": {msg}" if msg else "")),
+    }
+    return mapa.get(estado)
+
+
 def _conexoes_cockpit():
     """Monta a lista de conexões do projeto ativo para o cockpit."""
     _slug, cfg = painel_config.projeto_ativo()
@@ -6968,12 +7015,19 @@ def _conexoes_cockpit():
     sid = (cfg.get("sheets_id") or os.environ.get("GMA_SHEETS_ID", "")).strip()
     sheets_ativo = cfg.get("sheets_ativo", True)
     sheets_txt = ("…" + sid[-8:]) if sid else "— (não configurado)"
+    sheets_nota = ""  # estado VIVO do exportador (bolinha 🟢/🔴/🟡), quando houver
     if not sheets_ativo:
         sheets_status = "off"
     elif sid:
         sheets_status = "ok"
     else:
         sheets_status = "aviso"
+    # Sobrepõe com o que o exportador realmente reportou no último ciclo (s46):
+    # login vencido → 🔴, sem internet → 🟡, ok → 🟢 "atualizado HH:MM".
+    if sheets_ativo:
+        bilhete = _status_sheets_bilhete(_slug)
+        if bilhete:
+            sheets_status, sheets_nota = bilhete
 
     # Túnel — link override por projeto (painel_estado) ou fallback no .env
     tunel_link = (cfg.get("tunel_link") or os.environ.get("GMA_LINK_FICHA", "")).strip()
@@ -7030,7 +7084,8 @@ def _conexoes_cockpit():
          "direcionar": True, "campo": recebidos_override, "acao": "/painel/recebidos",
          "placeholder": "Pasta sincronizada (ex.: ~/Library/CloudStorage/...) — vazio = padrão do projeto"},
         {"chave": "sheets", "rot": "Google Sheets", "val": sheets_txt,
-         "desc": "Espelho de entrega na nuvem. ID salvo por projeto.",
+         "desc": "Espelho de entrega na nuvem. ID salvo por projeto."
+                 + (f"  ·  {sheets_nota}" if sheets_nota else ""),
          "status": sheets_status, "testavel": bool(sid),
          "direcionar": True, "campo": sid, "acao": "/painel/sheets-id",
          "placeholder": "Cole o link (ou o ID) da planilha Google deste projeto",

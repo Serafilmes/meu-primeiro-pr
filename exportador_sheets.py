@@ -30,6 +30,7 @@ Uso para testar:
 """
 
 import os
+import json
 import time
 import logging
 import socket
@@ -44,6 +45,13 @@ RAIZ_GMA = "/Users/serafa/GMA"
 
 # Intervalo entre tentativas de sincronização (segundos)
 INTERVALO_SYNC = 60
+
+# "Bilhete de status" — a cada ciclo o exportador grava aqui como foi a última
+# sincronização (ok / login-vencido / sem-internet / pausado / nao-configurado /
+# erro). O Painel (Camada 5) lê este arquivo e mostra uma bolinha 🟢/🔴/🟡 na
+# caixa do Google Sheets, para que uma falha (ex.: login do gcloud expirado) NUNCA
+# mais fique escondida no log — o problema que travou o Sheet em silêncio na s43.
+ARQUIVO_STATUS = os.path.join(RAIZ_GMA, ".gma_sheets_status.json")
 
 # As COLUNAS são DINÂMICAS (s34 — Fatia 5): vêm do mesmo montador que a /planilha
 # local (banco_dados.montar_planilha), refletindo o Molde + os grupos editáveis.
@@ -168,6 +176,52 @@ def _tem_internet(host="www.google.com", porta=443, timeout=5):
         return False
 
 
+# ── BILHETE DE STATUS (lido pelo Painel) ────────────────────────────────────────
+
+def _escrever_status(estado, mensagem=""):
+    """
+    Grava o "bilhete de status" da última sincronização para o Painel ler.
+
+    `estado` é uma palavra-chave estável que o Painel traduz em bolinha:
+      ok · login-vencido · sem-internet · pausado · nao-configurado · erro
+
+    Inclui o horário e o projeto ativo, para o Painel mostrar "atualizado HH:MM"
+    e ignorar um bilhete de outro projeto. Falha de escrita nunca quebra o ciclo —
+    o bilhete é só informativo; o material já está seguro de qualquer jeito.
+    """
+    try:
+        try:
+            slug, _ = painel_config.projeto_ativo()
+        except Exception:
+            slug = ""
+        agora = datetime.now()
+        dados = {
+            "estado": estado,
+            "mensagem": mensagem,
+            "projeto": slug,
+            "horario": agora.strftime("%H:%M:%S"),
+            "quando": agora.isoformat(timespec="seconds"),
+        }
+        tmp = ARQUIVO_STATUS + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(dados, f, ensure_ascii=False)
+        os.replace(tmp, ARQUIVO_STATUS)  # troca atômica — o Painel nunca lê pela metade
+    except Exception as e:
+        log.warning(f"Não consegui gravar o bilhete de status: {e}")
+
+
+def _erro_eh_login_vencido(texto):
+    """
+    Reconhece, pela mensagem de erro, o caso específico em que a sessão do gcloud
+    expirou (a impersonação para de gerar token até o operador rodar
+    `gcloud auth login`). É o que travou o Sheet em silêncio na s43.
+    """
+    t = (texto or "").lower()
+    marcas = ("reauth", "reauthentication", "auth login",
+              "invalid_grant", "token has expired", "credentials do not")
+    return any(m in t for m in marcas)
+
+
 # ── SINCRONIZAÇÃO COM O SHEETS ─────────────────────────────────────────────────
 
 def _extrair_id_planilha(valor):
@@ -267,15 +321,18 @@ def sincronizar(conn):
     ok, erro = _credenciais_configuradas()
     if not ok:
         log.warning(f"Exportação não configurada: {erro}")
+        _escrever_status("nao-configurado", erro)
         return False
 
     sheet_id, motivo_pular = _resolver_sheet_alvo()
     if motivo_pular:
         log.info(f"Sincronização pulada: {motivo_pular}")
+        _escrever_status("pausado", motivo_pular)
         return False
 
     if not _tem_internet():
         log.info("Sem internet — sincronização adiada.")
+        _escrever_status("sem-internet", "Sem conexão com a internet.")
         return False
 
     try:
@@ -306,10 +363,17 @@ def sincronizar(conn):
             aba.format(f"A1:{_coluna_letra(n_cols)}1", {"textFormat": {"bold": True}})
 
         log.info(f"Sheets sincronizado: {len(linhas)} cartão(ões), {n_cols} coluna(s).")
+        _escrever_status("ok", f"{len(linhas)} cartão(ões) · {n_cols} coluna(s)")
         return True
 
     except Exception as e:
-        log.warning(f"Falha na sincronização: {e}")
+        msg = str(e)
+        if _erro_eh_login_vencido(msg):
+            log.warning(f"Login do Google expirado: {msg}")
+            _escrever_status("login-vencido", "Sessão do Google expirou — rode: gcloud auth login")
+        else:
+            log.warning(f"Falha na sincronização: {msg}")
+            _escrever_status("erro", msg[:200])
         return False
 
 
