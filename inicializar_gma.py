@@ -124,6 +124,9 @@ SCRIPT_FLASK         = os.path.join(RAIZ_GMA, "flask_gma.py")
 SCRIPT_TRANSFERENCIA = os.path.join(RAIZ_GMA, "transferencia.py")
 SCRIPT_AUDITORIA     = os.path.join(RAIZ_GMA, "auditoria.py")
 SCRIPT_SHEETS        = os.path.join(RAIZ_GMA, "exportador_sheets.py")
+# Camada 6 (IA): vigia que transcreve cartões de áudio sozinho (pós-cópia).
+# Opcional — se a caixa .venv_ia não existir, ele dorme em silêncio.
+SCRIPT_VIGIA_TRANSCRICAO = os.path.join(RAIZ_GMA, "vigia_transcricao.py")
 
 # Todos os scripts GMA dependem de pacotes instalados no /usr/bin/python3 (3.9):
 # Flask, gspread, google-auth, etc. O python3 do Homebrew (3.14) não os tem.
@@ -142,6 +145,7 @@ PREFIXOS = {
     "transferencia": "[TRANSF]       ",
     "auditoria":     "[AUDITORIA]    ",
     "sheets":        "[SHEETS]       ",
+    "transcricao":   "[TRANSCRICAO]  ",
     "sistema":       "[GMA]          ",
 }
 
@@ -632,6 +636,10 @@ def subir_todos():
     processos["Transferencia"]   = iniciar_processo(SCRIPT_TRANSFERENCIA, "transferencia", "Transferencia")
     processos["Auditoria"]       = iniciar_processo(SCRIPT_AUDITORIA,     "auditoria",     "Auditoria")
     processos["Sheets"]          = iniciar_processo(SCRIPT_SHEETS,        "sheets",        "Exportador Sheets")
+    # Camada 6 (IA), opcional: vigia que transcreve cartões de áudio sozinho. Sobe
+    # como mais um processo de fundo; se a caixa .venv_ia não existir, ele apenas
+    # dorme (nunca atrapalha o ciclo crítico).
+    processos["Transcricao"]     = iniciar_processo(SCRIPT_VIGIA_TRANSCRICAO, "transcricao", "Vigia da Transcricao")
 
     iniciados = sum(1 for p in processos.values() if p is not None)
     print()
@@ -646,6 +654,7 @@ def subir_todos():
 def descer_todos(processos):
     """Encerra os processos filhos na ordem inversa da inicialização."""
     encerrar_processo(processos.get("Ngrok"),           "Tunel (ngrok)")
+    encerrar_processo(processos.get("Transcricao"),     "Vigia da Transcricao")
     encerrar_processo(processos.get("Sheets"),          "Exportador Sheets")
     encerrar_processo(processos.get("Auditoria"),       "Auditoria")
     encerrar_processo(processos.get("Transferencia"),   "Transferencia")

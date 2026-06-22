@@ -158,6 +158,11 @@ def _rodar_transcricao_async(cartao_id, destino_pasta):
         n_audios = resultado.get("n_audios", 0)
         conn = bd.obter_conexao()
         r = bd.salvar_transcricoes_arquivos(conn, cartao_id, arquivos)
+        # Carimba o cartão como já processado para o VIGIA da transcrição automática
+        # (vigia_transcricao.py) não repegar um cartão que o operador acabou de
+        # transcrever na mão. Reprocessar pelo botão continua valendo (a rota não
+        # filtra pelo carimbo); o vigia, sim.
+        bd.marcar_transcricao_tentada(conn, cartao_id)
         conn.close()
         logger.info(f"TRANSCRIÇÃO | Concluída | cartão {cartao_id} | "
                     f"{n_audios} áudio(s) | {r.get('n_arquivos_atualizados', 0)} arquivo(s) gravado(s)")

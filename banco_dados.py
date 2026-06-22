@@ -209,6 +209,15 @@ def inicializar_banco():
                 -- (não há cartão físico a embaralhar/ejetar).
                 origem_material                 TEXT NOT NULL DEFAULT 'cartao',
 
+                -- ── Transcrição automática (Camada 6 — IA, opcional) ────────
+                -- Carimbo de QUANDO o vigia da transcrição tentou este cartão.
+                -- NULL = nunca tentado (entra na fila do vigia). Preenchido = já
+                -- foi processado uma vez (sai da fila), mesmo que não tenha achado
+                -- fala — impede o vigia de repetir eternamente um cartão de áudio
+                -- sem gravação (como o Sound Devices só-metadados do teste s47).
+                -- Reprocessar = limpar este carimbo (o botão manual 🎙 faz isso).
+                transcricao_tentada_em          TEXT,
+
                 -- ── Timestamps de controle ──────────────────────────────────
                 -- Criado: quando o registro entrou no banco
                 criado_em                       TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
@@ -4456,6 +4465,13 @@ def migrar_schema_cartoes(conn):
             "ALTER TABLE cartoes ADD COLUMN origem_material TEXT NOT NULL DEFAULT 'cartao'"
         )
         conn.commit()
+    # Camada 6 (IA): carimbo de tentativa do vigia da transcrição automática.
+    # NULL = ainda não tentado (entra na fila); preenchido = já processado uma vez.
+    if "transcricao_tentada_em" not in colunas_existentes:
+        conn.execute(
+            "ALTER TABLE cartoes ADD COLUMN transcricao_tentada_em TEXT"
+        )
+        conn.commit()
 
 
 def salvar_transcricoes_arquivos(conn, cartao_id, resultados):
@@ -4506,6 +4522,72 @@ def salvar_transcricoes_arquivos(conn, cartao_id, resultados):
     )
     conn.commit()
     return {"ok": True, "n_arquivos_atualizados": atualizados, "n_audios": len(resultados)}
+
+
+def cartoes_pendentes_transcricao(conn):
+    """
+    Lista os cartões de ÁUDIO já copiados que o vigia da transcrição (Camada 6)
+    ainda NÃO tentou — a fila do gatilho automático.
+
+    Critérios (todos precisam bater):
+      • tipo_material = 'AUDIO'        — só áudio (o tijolo da s45 não cobre vídeo);
+      • destino_pasta presente e real  — os arquivos já estão copiados no HD;
+      • status copiado/concluído       — pós-cópia (fora do ciclo crítico);
+      • transcricao_tentada_em IS NULL — o vigia nunca processou este cartão.
+
+    O carimbo `transcricao_tentada_em` é o que faz um cartão de áudio SEM fala
+    (ex.: cartão só com metadados) sair da fila depois de UMA tentativa, em vez de
+    o vigia repeti-lo a cada ciclo. Reprocessar = limpar o carimbo.
+
+    Devolve uma lista de dicts {id, numero_cartao, destino_pasta}.
+    """
+    linhas = conn.execute(
+        """
+        SELECT id, numero_cartao, destino_pasta
+          FROM cartoes
+         WHERE tipo_material = 'AUDIO'
+           AND destino_pasta IS NOT NULL
+           AND TRIM(destino_pasta) <> ''
+           AND status IN ('transferencia_ok', 'concluido')
+           AND transcricao_tentada_em IS NULL
+         ORDER BY id
+        """
+    ).fetchall()
+    return [
+        {"id": r["id"], "numero_cartao": r["numero_cartao"],
+         "destino_pasta": r["destino_pasta"]}
+        for r in linhas
+    ]
+
+
+def marcar_transcricao_tentada(conn, cartao_id):
+    """
+    Carimba que o vigia da transcrição já PROCESSOU este cartão (independente de
+    ter achado fala ou não). Tira o cartão da fila de `cartoes_pendentes_transcricao`
+    para sempre — até alguém limpar o carimbo (reprocessar).
+
+    Idempotente e nunca quebra: o carimbo é só controle do vigia; a mídia já está
+    segura de qualquer jeito.
+    """
+    conn.execute(
+        "UPDATE cartoes SET transcricao_tentada_em = datetime('now', 'localtime') "
+        "WHERE id = ?",
+        (cartao_id,),
+    )
+    conn.commit()
+
+
+def limpar_transcricao_tentada(conn, cartao_id):
+    """
+    Limpa o carimbo de tentativa do vigia, devolvendo o cartão à fila da
+    transcrição automática. Usado quando se quer reprocessar um cartão (ex.: o
+    botão manual 🎙, ou uma transcrição que falhou e se quer tentar de novo).
+    """
+    conn.execute(
+        "UPDATE cartoes SET transcricao_tentada_em = NULL WHERE id = ?",
+        (cartao_id,),
+    )
+    conn.commit()
 
 
 def registrar_cartao_recebido(conn, formulario_id, caminho_pasta, nome_profissional,
