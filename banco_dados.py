@@ -441,6 +441,13 @@ def inicializar_banco():
                 -- proxy é sempre copiado, mas não conta como vídeo nem gera frames.
                 proxy_de                TEXT,
 
+                -- ── Camada 6 (IA) — transcrição POR ARQUIVO ────────────────
+                -- Texto gerado pelo Whisper LOCAL para ESTE arquivo de áudio,
+                -- a partir da cópia no destino. Preenchido sob demanda (assíncrono,
+                -- opcional), nunca no ciclo crítico. NULL = ainda não transcrito.
+                transcricao             TEXT,
+                transcricao_em          TEXT,
+
                 -- ── Timestamp de controle ──────────────────────────────────
                 -- Criado: quando o registro foi inserido no banco
                 criado_em               TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
@@ -2001,6 +2008,13 @@ def migrar_schema_arquivos(conn):
         conn.execute("ALTER TABLE arquivos ADD COLUMN tipo TEXT")
     if "proxy_de" not in colunas:
         conn.execute("ALTER TABLE arquivos ADD COLUMN proxy_de TEXT")
+    # Camada 6 (IA): transcrição POR ARQUIVO (Whisper local) + quando rodou.
+    # Cada arquivo de áudio guarda a SUA transcrição — grão certo para a Missão A
+    # apontar "qual arquivo / qual take". NULL = ainda não transcrito.
+    if "transcricao" not in colunas:
+        conn.execute("ALTER TABLE arquivos ADD COLUMN transcricao TEXT")
+    if "transcricao_em" not in colunas:
+        conn.execute("ALTER TABLE arquivos ADD COLUMN transcricao_em TEXT")
     conn.commit()
 
 
@@ -3737,6 +3751,11 @@ CATALOGO_PLANILHA = [
     ("tamanho",      "Tamanho",       "tecnicas",      "tamanho",  "tamanho_transferido_bytes",     1),
     ("status",       "Status",        "tecnicas",      "dado",     "status",                        1),
     ("destino_pasta","Caminho no HD", "tecnicas",      "dado",     "destino_pasta",                 1),
+    # Camada 6 (IA) — coluna FIXA do sistema (não varia por evento → fica no bloco
+    # técnico estável, nunca dança de posição e não quebra os filtros do editor).
+    # Mostra um STATUS compacto (quantos áudios já transcritos), não o texto inteiro;
+    # o texto mora POR ARQUIVO na tabela `arquivos`. tipo_render "transcricao".
+    ("transcricao",  "Transcrição",   "tecnicas",      "transcricao", None,                         1),
     ("pos_editor",   "Editor",        "pos_producao",  "dado",     None,                            0),
     ("pos_edicao",   "Edição",        "pos_producao",  "dado",     None,                            0),
     ("pos_upload",   "Upload",        "pos_producao",  "dado",     None,                            0),
@@ -3745,8 +3764,15 @@ CATALOGO_PLANILHA = [
 _CATALOGO_PLANILHA_IDX = {e[0]: e for e in CATALOGO_PLANILHA}
 
 # Ordem dos blocos (agrupa colunas por bloco mesmo quando criadas depois).
+#
+# DECISÃO s44 (idealizador): NÚCLEO FIXO NA FRENTE → CLASSIFICAÇÃO VARIÁVEL NO FIM.
+# Os grupos editáveis fazem o bloco "classificacao" crescer/encolher por evento; no
+# Google Sheets os filtros e fórmulas se prendem à POSIÇÃO da coluna, então a parte
+# que muda de tamanho TEM de ficar por último — senão um grupo novo no meio do evento
+# empurra as colunas técnicas e quebra os filtros do editor. Por isso a ordem é:
+#   identificacao · tecnicas (inclui Transcrição, coluna FIXA) · pos_producao · classificacao · custom
 _RANK_BLOCO_PLANILHA = {b: i for i, b in enumerate(
-    ["identificacao", "classificacao", "tecnicas", "pos_producao", "custom"]
+    ["identificacao", "tecnicas", "pos_producao", "classificacao", "custom"]
 )}
 
 # Consulta base da planilha. Duas fontes somadas, ordenadas da mais recente:
@@ -3760,6 +3786,8 @@ _SQL_PLANILHA = """
     SELECT c.id, c.numero_cartao, c.volume, c.marca_camera, c.tipo_material,
            c.status, c.total_arquivos_transferidos, c.tamanho_transferido_bytes,
            c.destino_pasta,
+           (SELECT COUNT(*) FROM arquivos a
+              WHERE a.cartao_id = c.id AND a.transcricao IS NOT NULL) AS n_transcritos,
            f.id AS form_id,
            f.nome AS prof_nome, f.nome_audio AS prof_nome_audio, f.data_gravacao,
            p.nome_raiz AS prof_raiz, p.nome_curto AS prof_curto,
@@ -3782,6 +3810,7 @@ _SQL_PLANILHA = """
            f.camera AS marca_camera, f.tipo_material AS tipo_material,
            'Post in' AS status, NULL AS total_arquivos_transferidos,
            NULL AS tamanho_transferido_bytes, NULL AS destino_pasta,
+           0 AS n_transcritos,
            f.id AS form_id,
            f.nome AS prof_nome, f.nome_audio AS prof_nome_audio, f.data_gravacao,
            p.nome_raiz AS prof_raiz, p.nome_curto AS prof_curto,
@@ -3903,6 +3932,13 @@ def valor_celula_planilha(col, linha, chips, textos=None):
 
     if tipo == "tamanho":
         return _fmt_tamanho_planilha(linha["tamanho_transferido_bytes"])
+
+    if tipo == "transcricao":  # status compacto (o texto mora por arquivo em `arquivos`)
+        try:
+            n = linha["n_transcritos"] or 0
+        except (IndexError, KeyError):
+            n = 0
+        return f"{n} áudio(s) transcrito(s)" if n else "—"
 
     # tipo == "dado" (campo SQL direto)
     if not campo:
@@ -4131,6 +4167,56 @@ def migrar_schema_cartoes(conn):
             "ALTER TABLE cartoes ADD COLUMN origem_material TEXT NOT NULL DEFAULT 'cartao'"
         )
         conn.commit()
+
+
+def salvar_transcricoes_arquivos(conn, cartao_id, resultados):
+    """
+    Grava a transcrição de áudio (Camada 6) POR ARQUIVO e registra no Log.
+
+    Chamada DEPOIS que o transcritor.py (Whisper local) rodou sobre os áudios já
+    copiados deste cartão. Cada arquivo guarda a SUA transcrição na tabela
+    `arquivos` (grão certo para a Missão A apontar "qual arquivo / qual take").
+    Só escreve TEXTO — nunca toca em mídia. Carimba `transcricao_em` com o relógio
+    do sistema e deixa rastro na tabela de eventos (governança).
+
+    Parâmetros:
+      cartao_id  — id do cartão na tabela `cartoes`
+      resultados — lista de dicts {nome, texto, erro} (de transcritor.transcrever_pasta);
+                   cada `nome` casa com `arquivos.nome_arquivo` daquele cartão.
+
+    Casamento por NOME do arquivo dentro do cartão (a tabela `arquivos` não guarda
+    o caminho de destino de forma confiável). Guarda o texto mesmo quando vazio
+    (áudio sem fala) — `transcricao IS NOT NULL` passa a significar "já processado".
+
+    Retorna dict {ok, n_arquivos_atualizados, n_audios}.
+    """
+    if not resultados:
+        return {"ok": True, "n_arquivos_atualizados": 0, "n_audios": 0}
+
+    atualizados = 0
+    for r in resultados:
+        nome = (r.get("nome") or "").strip()
+        if not nome or r.get("erro"):
+            continue  # arquivo que falhou não recebe transcrição (fica NULL = pendente)
+        texto = r.get("texto", "") or ""
+        cur = conn.execute(
+            "UPDATE arquivos SET transcricao = ?, "
+            "transcricao_em = datetime('now', 'localtime') "
+            "WHERE cartao_id = ? AND nome_arquivo = ?",
+            (texto, cartao_id, nome),
+        )
+        atualizados += cur.rowcount or 0
+
+    registrar_evento(
+        conn,
+        tipo="transcricao_concluida",
+        descricao=(f"Transcrição de áudio gravada por arquivo "
+                   f"({atualizados} arquivo(s) de {len(resultados)} áudio(s))"),
+        cartao_id=cartao_id,
+        dados={"n_audios": len(resultados), "n_arquivos_atualizados": atualizados},
+    )
+    conn.commit()
+    return {"ok": True, "n_arquivos_atualizados": atualizados, "n_audios": len(resultados)}
 
 
 def registrar_cartao_recebido(conn, formulario_id, caminho_pasta, nome_profissional,

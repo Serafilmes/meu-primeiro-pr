@@ -56,3 +56,7 @@ _GMA_frames/
 # Lixo de build do Python
 __pycache__/
 *.pyc
+
+# Caixa isolada da IA (Camada 6) — bibliotecas pesadas do Whisper (faster-whisper).
+# Recriável: python3 -m venv .venv_ia && .venv_ia/bin/pip install faster-whisper
+.venv_ia/

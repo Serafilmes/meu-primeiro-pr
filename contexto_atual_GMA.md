@@ -1,7 +1,7 @@
 # Contexto Atual — Sistema GMA
 ## Estado vivo do projeto (carregar em TODA sessão junto com `arquitetura_GMA.md`)
 
-> Última atualização: 2026-06-21 (sessão 43)
+> Última atualização: 2026-06-22 (sessão 45)
 > Para detalhes técnicos históricos, ver `historico_GMA.md` (não carregar por padrão).
 
 ---
@@ -15,12 +15,39 @@
 | 3 | Controle e segurança das informações | ✅ Quase completa — Kanban + Planilha + Molde; grupos editáveis (s33); Sheets dinâmico (s34); exportador em loop (s35); **Sheets por projeto ligado no exportador (s39)** |
 | 4 | Auditoria + liberação do cartão | ✅ Concluída — ciclo integrado testado; **audita material RECEBIDO sem acionar o Parashoot** (não há cartão pra ejetar) (s43) |
 | 5 | Plataforma profissional + multi-máquina | 🔧 Em construção — **Painel Fatia 1 ✅ (s37)**; **s40:** Pasta de recebidos, trava de instância e ngrok automático; **s42:** **SAGUÃO DE 2 NÍVEIS construído ✅** (`saguao.py` — térreo na 5055 que nunca cai; entrar/voltar sobe/desce a sessão do projeto sem reinício; substitui o reinício-na-troca da s41) ([[saguao-dois-niveis]]) |
-| 6 | IA assíncrona | 📋 Futura |
+| 6 | IA assíncrona | 🟢 INICIADA — desenho das **3 camadas de IA** + agente `ia-gma` (s44); **1º TIJOLO CONSTRUÍDO (s45): transcrição de áudio (Whisper local) POR ARQUIVO** — caixa isolada `.venv_ia` + `transcritor.py`; texto em `arquivos.transcricao`, planilha mostra status compacto, tela `/cartao/<id>/transcricao` por arquivo. Próximo: Missão A ([[transcricao-audio-c6]], [[camada6-tres-camadas-ia]]) |
 | 7 | Marca e design | 📋 Planejada — foco desejado, **sem prazo de data** (s33) |
 
 ---
 
 ## O que acabou de ser feito (sessões recentes)
+
+### ✅ Sessão 45 (BUILD) — 1º TIJOLO DA CAMADA 6: transcrição de áudio (Whisper local) POR ARQUIVO
+**Arquivos:** `transcritor.py` (NOVO), `banco_dados.py`, `flask_gma.py`, `.gitignore`, `teste_transcricao.py` (NOVO, 12 PASS) + `.venv_ia/` (caixa isolada, fora do git). Feito direto (orquestrador). **Commitado no `main`.** Memória [[transcricao-audio-c6]].
+> O idealizador escolheu começar pelo 1º tijolo da IA. Antes de codar, alinhamos: o tijolo é **só a transcrição crua** (matéria-prima); o trabalho de *guiar qual arquivo usar* é a **Missão A (2ª camada)**, construída depois, em cima disso. A transcrição é o combustível sem o qual a Missão A não funciona.
+
+- **Motor (provado primeiro):** `faster-whisper` LOCAL, modelo `small`, português — transcreveu um áudio real idêntico, 100% offline e grátis. Mora numa **caixa isolada `.venv_ia/`** (separada do Python do ciclo crítico; recriável; fora do git via `.gitignore`). O Flask (que roda no /usr/bin/python3, sem a lib) chama o `transcritor.py` como **subprocesso** com o python da caixa.
+- **`transcritor.py` (NOVO, C6):** acha os áudios de uma pasta de material JÁ COPIADO usando a **régua única** (`ler_cartao` — mesma fonte da C2/C4, ignora não-mídia), transcreve e devolve resultado **por arquivo** (`{nome, caminho, texto, erro}`) em JSON. Nunca toca no cartão, não move/apaga nada, a mídia não sobe — só o texto.
+- **🔶 DECISÃO DO IDEALIZADOR (a "troca" da sessão): granularidade POR ARQUIVO, não por card.** Meu 1º corte guardava tudo numa célula gorda em `cartoes.transcricao`; ele apontou (certeiro) que (1) incharia a tabela/Sheets e (2) a Missão A precisa apontar "qual arquivo / qual take". **Refatorado:** a transcrição mora em **`arquivos.transcricao`** (+ `transcricao_em`), 1 por áudio — primeiro degrau do `arquivo→trecho→take`. A coluna `transcricao` de `cartoes` foi removida (não chegou a ser commitada/migrada).
+- **Banco:** colunas `transcricao`/`transcricao_em` em `arquivos` (DDL + `migrar_schema_arquivos`, não-destrutivo). `salvar_transcricoes_arquivos(conn, cartao_id, resultados)` casa cada texto à linha de `arquivos` por **nome do arquivo** (a tabela não guarda `caminho_destino` confiável), grava mesmo vazio (áudio sem fala = processado), e loga `transcricao_concluida` (governança).
+- **Planilha (status compacto, não o paredão):** a coluna **"Transcrição"** virou tipo_render `transcricao` em `montar_planilha` (fonte única → /planilha local E Google Sheets): mostra **"N áudio(s) transcrito(s)"** (conta `arquivos` com transcrição via subquery `n_transcritos`), nunca o texto. Continua FIXA no bloco técnico.
+- **🧱 Reorder dos blocos da planilha (decisão s44 aplicada agora):** `_RANK_BLOCO_PLANILHA` mudou para `identificacao · tecnicas · pos_producao · classificacao · custom` — **classificação variável foi pro FIM**, núcleo fixo (incl. Transcrição) na frente. Era a regra registrada na s44 ("entra quando mexermos na planilha"). **Efeito visível:** as colunas de classificação mudam de posição no Sheets uma vez, no próximo boot.
+- **Flask:** botão **🎙 Transcrever** na célula da planilha só em **cartão de ÁUDIO já copiado** (`tipo_material=AUDIO` + `destino_pasta`); roda em **segundo plano** (thread + set `_transcricoes_em_andamento` com lock → mostra "⏳ transcrevendo…", não dispara 2x). Rota `POST /cartao/<id>/transcrever`. Tela leve **`GET /cartao/<id>/transcricao`** lista cada arquivo com sua transcrição (é o que a Missão A vai pesquisar). O link "ver" na planilha leva pra lá.
+- **Escopo do tijolo:** só **cartões de áudio**. Transcrever a trilha dos vídeos (extrair som com ffmpeg) = fatia futura.
+- **✅ VERIFICADO:** Whisper transcreve PT (ao vivo); integração via test client (botão → background → texto por-arquivo no banco + status compacto na planilha + texto na tela por-arquivo); 12 testes em `teste_transcricao.py`; exportador herda a coluna pela fonte única. **NÃO testado ao vivo no sistema rodando ainda** (precisa Encerrar+Iniciar pra carregar o código + rodar a migração nos bancos dos projetos).
+- **🔶 PRÓXIMO (escolha do idealizador):** **Missão A** (2ª camada — busca conversacional lendo `arquivos.transcricao` + classificação do Post; pode usar API/nuvem pela qualidade); ou o pré-requisito **controle por DATA na aba Listas** (da 1ª camada); ou a trilha-de-vídeo do próprio tijolo; ou Camada 7.
+
+### ✅ Sessão 44 (DESENHO + AGENTE) — CAMADA 6 ABERTA: as 3 camadas de IA
+**Arquivos:** `desenho_camada6_IA_GMA.md` (NOVO), `.claude/agents/ia-gma.md` (NOVO). **Sem código de produção** — sessão de desenho/escopo, como o s43 previu ("1º passo é design/escopo + criar o agente"). Memória [[camada6-tres-camadas-ia]].
+> O idealizador escolheu abrir a Camada 6, mas pediu que eu **entendesse primeiro como ele pensa a IA** antes de construir. Sessão inteira foi alinhar a visão e registrá-la.
+
+- **As 3 camadas de IA (visão do idealizador):** (1ª) **montar o projeto** — upload de materiais de referência + chat de esclarecimento → a IA monta sozinha Posts/listas/grupos; o operador **ajusta depois** (grupos editáveis), não aprova antes; (2ª) **busca conversacional (Missão A)** — o editor pergunta em linguagem natural ("vídeo com tal tema/contexto/pessoas/ambiente") e o agente diz **qual arquivo tem aquilo, sugerindo takes**, cruzando classificação do Post + transcrição (+ imagem quando houver); (3ª) **leitura de imagem (Missão B)** — visão sobre o material, mirando **profundidade até o take/timecode** (degraus arquivo→trecho→take) = poder de venda.
+- **Centro de tudo:** planilha com filtros + **barra de busca conversacional**; as camadas 2/3 **enriquecem a planilha que já existe**, não criam telas novas.
+- **DECISÕES do idealizador (s44):** (1) **nuvem/API permitida** nas camadas de IA pela QUALIDADE da apuração (grandes eventos têm internet mínima) — só o ciclo crítico segue offline-sagrado; mídia **nunca sobe** (só informação sobre ela); (2) **ordem de build ≠ ordem conceitual**: transcrição (Whisper LOCAL, grátis) → Missão A → Missão B (a 3ª alimenta a 2ª); (3) na 1ª camada a IA **monta sozinha** (não pede aprovação prévia), humano refina depois.
+- **🧱 Decisão estrutural da PLANILHA (achado do idealizador):** as colunas crescem/encolhem (grupos editáveis) e isso quebra filtros/fórmulas se a parte variável fica no meio (no Sheets, filtros se prendem à POSIÇÃO). Regra adotada: **núcleo fixo na frente** (identificação + técnicas do sistema, incl. a coluna de TRANSCRIÇÃO) → **classificação variável no FIM** (cresce ali). Fonte única da ordem = `banco_dados.montar_planilha`. Entra quando mexermos na planilha.
+- **🔶 PRÉ-REQUISITO/COMPANHEIRO da 1ª camada (pedido do idealizador):** **controle por DATA na aba Listas** — poder criar grupo/lista amarrado a um dia (como os shows por data do Rock in Rio, a "virada das fichas"). É C1/C3; generaliza o que já fizemos pro festival. A 1ª camada de IA vai *preencher* essa estrutura ao ler um line-up datado.
+- **🔶 PRIMEIRO TIJOLO (definido, não construído):** **transcrição de áudio (Whisper local) → coluna fixa na planilha** — grátis, offline, não cruza com nada. Escopo a fechar com o `ia-gma`: onde roda (gatilho assíncrono pós-cópia), em qual material (cartões de áudio e/ou trilha dos vídeos), como grava via `montar_planilha`.
+- **🔶 A DECIDIR mais adiante:** onde vive a barra de busca (dentro da planilha × chat à parte); modelo/custo de cada API.
 
 ### ✅ Sessão 43 (BUILD) — ARCO RECEBIDOS FECHADO (C2+C4) — pasta satélite vira entrega, sem cartão
 **Arquivos:** `transferencia.py`, `banco_dados.py`, `auditoria.py`, `flask_gma.py` + testes `teste_recebidos_copia.py` (25 PASS), `teste_recebidos_auditoria.py` (3 OK). **Commitado e MERGEADO no `main`** (branch `s43-recebidos-copia-auditoria`). Delegado a `transferencia-gma` (Fatia 4) + `auditoria-gma` (Fatia 5). Memória [[pasta-satelite-recebidos]].

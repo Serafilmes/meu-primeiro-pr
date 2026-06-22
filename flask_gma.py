@@ -31,6 +31,7 @@ import random
 import string
 import hmac
 import hashlib
+import threading
 from datetime import datetime, timedelta
 from flask import Flask, request, jsonify, redirect
 
@@ -107,6 +108,66 @@ except ImportError:
 # O painel_config já foi importado no topo (resolve as filas por projeto). Aqui
 # só garantimos o subprocess (usado pelos testes de conexão e criação de projeto).
 import subprocess
+
+
+# ── CAMADA 6 (IA) — TRANSCRIÇÃO DE ÁUDIO (assíncrona, opcional) ────────────────
+# O Whisper é pesado e mora numa CAIXA ISOLADA (.venv_ia/), separada do Python que
+# roda este Flask e o ciclo crítico. Por isso NÃO importamos faster-whisper aqui:
+# chamamos o transcritor.py como SUBPROCESSO, com o python da caixa.
+PYTHON_IA = os.path.join(RAIZ_GMA, ".venv_ia", "bin", "python")
+TRANSCRITOR_SCRIPT = os.path.join(RAIZ_GMA, "transcritor.py")
+
+# Cartões com transcrição rodando agora (para a planilha mostrar "⏳ transcrevendo…"
+# e para não disparar duas vezes o mesmo). Protegido por lock — várias requisições.
+_transcricoes_em_andamento = set()
+_lock_transcricao = threading.Lock()
+
+
+def _transcricao_disponivel():
+    """True se a caixa isolada da IA e o transcritor existem (recurso instalado)."""
+    return os.path.exists(PYTHON_IA) and os.path.exists(TRANSCRITOR_SCRIPT)
+
+
+def _rodar_transcricao_async(cartao_id, destino_pasta):
+    """Roda o Whisper local (subprocesso na caixa isolada) e grava o texto no banco.
+
+    Executa DENTRO de uma thread — a tela não trava enquanto o áudio é transcrito
+    (pode levar minutos). Nunca toca na mídia: só lê os áudios já copiados e grava
+    o TEXTO resultante. Qualquer falha é logada; o cartão sai de "em andamento".
+    """
+    try:
+        # timeout generoso: áudio longo demora; está em background, então tudo bem.
+        proc = subprocess.run(
+            [PYTHON_IA, TRANSCRITOR_SCRIPT, destino_pasta],
+            capture_output=True, text=True, timeout=3600,
+        )
+        # O transcritor imprime UMA linha JSON em stdout (a última não-vazia).
+        linha_json = ""
+        for linha in (proc.stdout or "").splitlines():
+            if linha.strip():
+                linha_json = linha.strip()
+        if not linha_json:
+            logger.error(f"TRANSCRIÇÃO | Sem saída do transcritor | cartão {cartao_id} "
+                         f"| stderr: {(proc.stderr or '')[:300]}")
+            return
+        resultado = json.loads(linha_json)
+        if not resultado.get("ok"):
+            logger.error(f"TRANSCRIÇÃO | Falhou | cartão {cartao_id} | {resultado.get('erro')}")
+            return
+        arquivos = resultado.get("arquivos", [])
+        n_audios = resultado.get("n_audios", 0)
+        conn = bd.obter_conexao()
+        r = bd.salvar_transcricoes_arquivos(conn, cartao_id, arquivos)
+        conn.close()
+        logger.info(f"TRANSCRIÇÃO | Concluída | cartão {cartao_id} | "
+                    f"{n_audios} áudio(s) | {r.get('n_arquivos_atualizados', 0)} arquivo(s) gravado(s)")
+    except subprocess.TimeoutExpired:
+        logger.error(f"TRANSCRIÇÃO | Timeout (>1h) | cartão {cartao_id}")
+    except Exception as erro:
+        logger.error(f"TRANSCRIÇÃO | Exceção | cartão {cartao_id} | {erro}")
+    finally:
+        with _lock_transcricao:
+            _transcricoes_em_andamento.discard(cartao_id)
 
 
 # ── CONFIGURAÇÃO DO LOGGER ────────────────────────────────────────────────────
@@ -2222,6 +2283,106 @@ def descartar_cartao_rota(cartao_id):
     return redirect("/kanban")
 
 
+@app.route("/cartao/<int:cartao_id>/transcrever", methods=["POST"])
+def transcrever_cartao_rota(cartao_id):
+    """
+    Camada 6 (IA) — dispara a TRANSCRIÇÃO dos áudios já copiados deste cartão.
+
+    Roda em SEGUNDO PLANO (thread): a tela volta na hora com um aviso, e o texto
+    aparece na coluna "Transcrição" da planilha quando o Whisper terminar
+    (recarregue a página). Nunca toca na mídia — só lê os áudios do destino e
+    grava o texto. Acesso só na base (o portão barra remoto).
+    """
+    if not BANCO_DISPONIVEL:
+        return redirect("/planilha?aviso=banco_indisponivel")
+    if not _transcricao_disponivel():
+        return redirect("/planilha?aviso=transcricao_indisponivel")
+
+    # Busca o destino do cartão (a pasta com os áudios já copiados).
+    try:
+        conn = bd.obter_conexao()
+        row = conn.execute(
+            "SELECT destino_pasta FROM cartoes WHERE id = ?",
+            (cartao_id,)
+        ).fetchone()
+        conn.close()
+    except Exception as erro:
+        logger.error(f"TRANSCRIÇÃO | Erro ao ler cartão {cartao_id} | {erro}")
+        return redirect("/planilha?aviso=erro_interno")
+
+    if row is None:
+        return redirect("/planilha?aviso=cartao_inexistente")
+    destino = (row["destino_pasta"] or "").strip()
+    if not destino or not os.path.isdir(destino):
+        return redirect("/planilha?aviso=sem_destino")
+
+    # Não dispara duas vezes o mesmo cartão (idempotência do gatilho).
+    with _lock_transcricao:
+        if cartao_id in _transcricoes_em_andamento:
+            return redirect("/planilha?aviso=transcricao_ja_rodando")
+        _transcricoes_em_andamento.add(cartao_id)
+
+    logger.info(f"TRANSCRIÇÃO | Iniciada | cartão {cartao_id} | pasta {destino}")
+    threading.Thread(
+        target=_rodar_transcricao_async, args=(cartao_id, destino), daemon=True
+    ).start()
+    return redirect("/planilha?ok=transcricao_iniciada")
+
+
+@app.route("/cartao/<int:cartao_id>/transcricao", methods=["GET"])
+def ver_transcricao_cartao(cartao_id):
+    """
+    Tela leve que mostra a transcrição POR ARQUIVO de um cartão (Camada 6).
+
+    A planilha guarda só o status compacto; o texto completo de cada áudio vive
+    aqui, um bloco por arquivo — o grão certo (é o que a Missão A vai pesquisar).
+    Acesso só na base (o portão barra remoto).
+    """
+    if not BANCO_DISPONIVEL:
+        corpo = "<p class='vazio'>Banco de dados indisponível.</p>"
+        return _pagina("Transcrição", "planilha", corpo), 200, {"Content-Type": "text/html; charset=utf-8"}
+
+    try:
+        conn = bd.obter_conexao()
+        cartao = conn.execute(
+            "SELECT numero_cartao FROM cartoes WHERE id = ?", (cartao_id,)
+        ).fetchone()
+        arquivos = conn.execute(
+            "SELECT nome_arquivo, transcricao, transcricao_em FROM arquivos "
+            "WHERE cartao_id = ? AND transcricao IS NOT NULL ORDER BY nome_arquivo",
+            (cartao_id,)
+        ).fetchall()
+        conn.close()
+    except Exception as erro:
+        logger.error(f"VER TRANSCRIÇÃO | Erro | cartão {cartao_id} | {erro}")
+        corpo = "<p class='vazio'>Erro ao ler as transcrições.</p>"
+        return _pagina("Transcrição", "planilha", corpo), 200, {"Content-Type": "text/html; charset=utf-8"}
+
+    rotulo = _esc(cartao["numero_cartao"]) if cartao and cartao["numero_cartao"] else f"#{cartao_id}"
+
+    if not arquivos:
+        blocos = "<p class='vazio'>Este cartão ainda não tem transcrição.</p>"
+    else:
+        blocos = ""
+        for a in arquivos:
+            texto = (a["transcricao"] or "").strip() or "(sem fala detectada)"
+            blocos += (
+                "<div style='border:1px solid #e0e0e0;border-radius:8px;padding:14px 16px;margin-bottom:14px'>"
+                f"<div style='font-weight:600;color:#1D9E75;margin-bottom:6px'>🎙 {_esc(a['nome_arquivo'])}</div>"
+                f"<div style='white-space:pre-wrap;font-size:0.95em;line-height:1.5'>{_esc(texto)}</div>"
+                "</div>"
+            )
+
+    corpo = f"""
+    <div style="margin-bottom:14px">
+      <a href="/planilha" style="color:#1D9E75">← voltar para a planilha</a>
+    </div>
+    <p class="legenda">Transcrição por arquivo do cartão <strong>{rotulo}</strong>
+      — gerada localmente (Whisper), uma por áudio. É o que a busca conversacional vai pesquisar.</p>
+    {blocos}"""
+    return _pagina(f"Transcrição — {rotulo}", "planilha", corpo), 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
 def _mover_json_form(formulario_id, para_arquivo):
     """
     Move o JSON da ficha (db_formulario_id) entre a fila e a subpasta de cancelados.
@@ -2535,6 +2696,44 @@ def _colunas_visiveis():
         return []
 
 
+def _celula_transcricao(linha):
+    """HTML da célula da coluna "Transcrição" (Camada 6) — STATUS compacto, nunca o texto.
+
+    O texto inteiro mora POR ARQUIVO na tabela `arquivos` e se lê na tela
+    /cartao/<id>/transcricao — aqui a célula só indica o estado, para não inchar
+    a planilha. Estados:
+      • já transcrito        → "✓ N áudio(s)" + link "ver" (abre a tela por arquivo)
+      • transcrevendo agora  → "⏳ transcrevendo…"
+      • cartão de áudio copiado, ainda não transcrito → botão "🎙 Transcrever"
+      • qualquer outro caso (não é áudio, sem destino) → "—"
+    """
+    cartao_id = linha["id"]
+    try:
+        n_transcritos = linha["n_transcritos"] or 0
+    except (IndexError, KeyError):
+        n_transcritos = 0
+    if n_transcritos:
+        return (f'✓ {n_transcritos} áudio(s) '
+                f'<a href="/cartao/{cartao_id}/transcricao" '
+                f'style="color:#1D9E75;font-size:0.85em">ver</a>')
+
+    with _lock_transcricao:
+        rodando = cartao_id in _transcricoes_em_andamento
+    if rodando:
+        return '<span style="color:#856404">⏳ transcrevendo…</span>'
+
+    # Elegível: cartão de ÁUDIO já copiado (tem pasta de destino). Primeiro tijolo:
+    # só áudio (a trilha dos vídeos fica para uma fatia futura).
+    tipo = (linha["tipo_material"] or "").strip().upper()
+    destino = (linha["destino_pasta"] or "").strip()
+    if tipo == "AUDIO" and destino and _transcricao_disponivel():
+        return (f'<form method="POST" action="/cartao/{cartao_id}/transcrever" style="margin:0">'
+                f'<button type="submit" style="font-size:0.82em;padding:3px 8px;'
+                f'background:#1D9E75;color:#fff;border:none;border-radius:4px;cursor:pointer">'
+                f'🎙 Transcrever</button></form>')
+    return "—"
+
+
 @app.route("/planilha", methods=["GET"])
 def planilha():
     """
@@ -2557,6 +2756,8 @@ def planilha():
             SELECT c.id, c.numero_cartao, c.volume, c.marca_camera, c.tipo_material,
                    c.status, c.total_arquivos_transferidos, c.tamanho_transferido_bytes,
                    c.destino_pasta,
+                   (SELECT COUNT(*) FROM arquivos a
+                      WHERE a.cartao_id = c.id AND a.transcricao IS NOT NULL) AS n_transcritos,
                    f.id AS form_id,
                    f.nome AS prof_nome, f.nome_audio AS prof_nome_audio, f.data_gravacao
             FROM cartoes c
@@ -2582,7 +2783,7 @@ def planilha():
         textos = textos_map.get(linha["form_id"], {})
         celulas = "".join(
             f'<td class="{"mono" if c["chave"] == "destino_pasta" else ""}">'
-            f'{_celula_planilha(c, linha, chips, textos)}</td>'
+            f'{_celula_transcricao(linha) if c["chave"] == "transcricao" else _celula_planilha(c, linha, chips, textos)}</td>'
             for c in colunas
         )
         linhas_html += f"<tr>{celulas}</tr>"
@@ -2593,7 +2794,30 @@ def planilha():
 
     cabecalhos = "".join(f"<th>{_esc(c['rotulo'])}</th>" for c in colunas)
 
+    # Banner de feedback da transcrição (?ok=/?aviso= vindos do redirect).
+    _msg_ok = (request.args.get("ok") or "").strip()
+    _msg_aviso = (request.args.get("aviso") or "").strip()
+    _avisos_transc = {
+        "transcricao_iniciada":      "Transcrição iniciada — o texto aparece aqui quando terminar (recarregue em instantes).",
+        "transcricao_ja_rodando":    "Este cartão já está sendo transcrito. Aguarde terminar.",
+        "transcricao_indisponivel":  "O motor de transcrição (IA) não está instalado nesta máquina.",
+        "sem_destino":               "Este cartão não tem pasta de material copiado para transcrever.",
+        "cartao_inexistente":        "Cartão não encontrado no banco.",
+        "banco_indisponivel":        "O banco de dados não está disponível.",
+        "erro_interno":              "Ocorreu um erro interno. Verifique os logs.",
+    }
+    bloco_feedback = ""
+    if _msg_ok == "transcricao_iniciada":
+        bloco_feedback = ("<div style='background:#e8f5e9;border:1px solid #4caf50;color:#2e7d32;"
+                          "border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:0.9em'>"
+                          f"✓ {_avisos_transc['transcricao_iniciada']}</div>")
+    elif _msg_aviso:
+        bloco_feedback = ("<div style='background:#fff3cd;border:1px solid #ffc107;color:#856404;"
+                          "border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:0.9em'>"
+                          f"{_esc(_avisos_transc.get(_msg_aviso, _msg_aviso))}</div>")
+
     corpo = f"""
+    {bloco_feedback}
     <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">
         <p class="legenda" style="margin:0;flex:1">Espelho local da entrega — é o que vai para o Google Sheets
           (só informação, nunca o vídeo).</p>
