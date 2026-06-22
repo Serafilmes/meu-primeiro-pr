@@ -937,6 +937,29 @@ def painel():
     material_aguardando = ler_jsons_da_pasta(PASTA_FILA_MATERIAL, "aguardando_match")
     forms_aguardando = ler_jsons_da_pasta(PASTA_FILA_FORMS, "aguardando_material")
 
+    # Esconde Posts que o BANCO (fonte de verdade) já tirou de "aguardando":
+    # recebidos copiados, matcheados, concluídos ou cancelados. O JSON da fila fica
+    # preso em 'aguardando_material' (o material RECEBIDO pula o Matcher, que seria
+    # quem avançaria o JSON), então cruzamos pelo db_formulario_id e confiamos no
+    # status do banco — mesmo princípio do filtro de cartões concluídos abaixo.
+    _forms_resolvidos = set()
+    if BANCO_DISPONIVEL:
+        try:
+            _conn_f = bd.obter_conexao()
+            _forms_resolvidos = {
+                linha["id"] for linha in _conn_f.execute(
+                    "SELECT id FROM formularios "
+                    "WHERE status NOT IN ('aguardando_match', 'aguardando_material')"
+                ).fetchall()
+            }
+            _conn_f.close()
+        except Exception as _err_f:
+            logger.error(f"OPERACAO | Falha ao ler formulários resolvidos do banco | {_err_f}")
+    forms_aguardando = [
+        (nome_arq, dados) for (nome_arq, dados) in forms_aguardando
+        if dados.get("db_formulario_id") not in _forms_resolvidos
+    ]
+
     # Itens aguardando confirmação humana (match ambíguo detectado pelo Matcher)
     # Lemos das duas filas e consolidamos numa lista única para exibição.
     # Usamos um dicionário para deduplicar por nome de arquivo.
@@ -2742,6 +2765,11 @@ def planilha():
     É o espelho do que vai para o Google Sheets (Camada 3): só metadados, nunca
     a mídia. Lê do banco juntando cartão + formulário (pelo match mais recente).
     As colunas renderizadas respeitam o molde configurado em /molde.
+
+    Camada 6 — Missão A (Fatia 1): aceita ?busca=<termos> para filtrar/destacar
+    linhas no servidor, cruzando identificação + classificação + transcrição.
+    A busca é SERVER-SIDE (para alcançar o texto de transcrição, que não aparece
+    nas células da tabela) e complementa o filtro JS rápido existente.
     """
     if not BANCO_DISPONIVEL:
         corpo = "<p class='vazio'>Banco de dados indisponível.</p>"
@@ -2750,51 +2778,92 @@ def planilha():
     colunas = _colunas_visiveis()
     n_cols = len(colunas) or 1
 
+    # Termo de busca profunda (Missão A, Fatia 1).
+    # Diferente do filtro JS (que age só no texto visível), esta busca alcança
+    # a transcrição e a classificação que podem não estar exibidas na célula.
+    termo_busca = (request.args.get("busca") or "").strip()
+
     try:
         conn = bd.obter_conexao()
-        linhas = conn.execute("""
-            SELECT c.id, c.numero_cartao, c.volume, c.marca_camera, c.tipo_material,
-                   c.status, c.total_arquivos_transferidos, c.tamanho_transferido_bytes,
-                   c.destino_pasta,
-                   (SELECT COUNT(*) FROM arquivos a
-                      WHERE a.cartao_id = c.id AND a.transcricao IS NOT NULL) AS n_transcritos,
-                   f.id AS form_id,
-                   f.nome AS prof_nome, f.nome_audio AS prof_nome_audio, f.data_gravacao
-            FROM cartoes c
-            LEFT JOIN matches m ON m.id = (
-                SELECT id FROM matches WHERE cartao_id = c.id ORDER BY id DESC LIMIT 1
-            )
-            LEFT JOIN formularios f ON f.id = m.formulario_id
-            ORDER BY c.id DESC
-        """).fetchall()
+        linhas = conn.execute(bd._SQL_PLANILHA).fetchall()
         form_ids = [l["form_id"] for l in linhas if l["form_id"]]
         chips_map = bd.chips_por_formulario(conn, form_ids) if form_ids else {}
         textos_map = bd.textos_por_formulario(conn, form_ids) if form_ids else {}
+
+        # Busca profunda: monta o índice de resultados antes de renderizar as linhas.
+        # resultados_busca: {(cartao_id, form_id) → dict com campos_bateram e arquivos}
+        resultados_busca = {}
+        if termo_busca:
+            for res in bd.buscar_na_planilha(conn, termo_busca):
+                chave = (res["cartao_id"], res["form_id"])
+                resultados_busca[chave] = res
+
         conn.close()
     except Exception as erro:
         logger.error(f"PLANILHA | Erro ao ler | {erro}")
         linhas = []
         chips_map = {}
         textos_map = {}
+        resultados_busca = {}
 
+    # ── Renderização das linhas ───────────────────────────────────────────────
+    # Com busca ativa: só exibe linhas que bateram, com destaque e painel de arquivos.
+    # Sem busca: exibe todas as linhas (comportamento original).
     linhas_html = ""
     for linha in linhas:
-        chips = chips_map.get(linha["form_id"], [])
+        chips  = chips_map.get(linha["form_id"], [])
         textos = textos_map.get(linha["form_id"], {})
+        chave_linha = (linha["id"], linha["form_id"])
+
+        # Com busca ativa: filtra no servidor (só mostra linhas que bateram)
+        if termo_busca and chave_linha not in resultados_busca:
+            continue
+
         celulas = "".join(
             f'<td class="{"mono" if c["chave"] == "destino_pasta" else ""}">'
             f'{_celula_transcricao(linha) if c["chave"] == "transcricao" else _celula_planilha(c, linha, chips, textos)}</td>'
             for c in colunas
         )
-        linhas_html += f"<tr>{celulas}</tr>"
+
+        # Painel de detalhe da busca: mostra quais arquivos contribuíram via transcrição
+        painel_busca = ""
+        if termo_busca and chave_linha in resultados_busca:
+            res = resultados_busca[chave_linha]
+            arqs = res.get("arquivos_transcritos", [])
+            if arqs:
+                itens_arq = "".join(
+                    f'<li style="margin-bottom:4px"><strong>{_esc(a["nome_arquivo"])}</strong>'
+                    f' — <em style="color:#555">{_esc(a["trecho"])}</em>'
+                    f' <a href="/cartao/{linha["id"]}/transcricao" '
+                    f'style="color:#1D9E75;font-size:0.82em;white-space:nowrap">ver transcrição</a></li>'
+                    for a in arqs
+                )
+                painel_busca = (
+                    f'<tr class="busca-detalhe">'
+                    f'<td colspan="{n_cols}" style="background:#f0fff8;padding:6px 14px;'
+                    f'font-size:0.82em;border-bottom:2px solid #1D9E75">'
+                    f'Transcrição: <ul style="margin:4px 0 0 16px;padding:0">{itens_arq}</ul>'
+                    f'</td></tr>'
+                )
+            # Destaque visual na linha que bateu
+            linhas_html += (
+                f'<tr style="background:#e8f5e9;outline:2px solid #1D9E75">{celulas}</tr>'
+                + painel_busca
+            )
+        else:
+            linhas_html += f"<tr>{celulas}</tr>"
 
     if not linhas_html:
-        linhas_html = (f"<tr><td colspan='{n_cols}' class='coluna-vazia'>"
-                       f"Nenhum cartão no banco ainda.</td></tr>")
+        msg = (
+            f"Nenhum resultado para <strong>{_esc(termo_busca)}</strong>."
+            if termo_busca
+            else "Nenhum cartão no banco ainda."
+        )
+        linhas_html = f"<tr><td colspan='{n_cols}' class='coluna-vazia'>{msg}</td></tr>"
 
     cabecalhos = "".join(f"<th>{_esc(c['rotulo'])}</th>" for c in colunas)
 
-    # Banner de feedback da transcrição (?ok=/?aviso= vindos do redirect).
+    # ── Banners de feedback ───────────────────────────────────────────────────
     _msg_ok = (request.args.get("ok") or "").strip()
     _msg_aviso = (request.args.get("aviso") or "").strip()
     _avisos_transc = {
@@ -2816,15 +2885,50 @@ def planilha():
                           "border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:0.9em'>"
                           f"{_esc(_avisos_transc.get(_msg_aviso, _msg_aviso))}</div>")
 
+    # ── Barra de busca profunda (Missão A, Fatia 1) ───────────────────────────
+    # Convive com o filtro JS rápido (que filtra no texto visível na tela):
+    #   • Busca profunda (formulário POST → GET): alcança transcrição + classificação
+    #     no servidor; ao submeter, recarrega a página mostrando só as linhas que batem.
+    #   • Filtro rápido JS (campo de texto instant): filtra o que já está na tela,
+    #     útil para afinar o resultado depois de uma busca, ou para filtros simples.
+    n_resultados = len(resultados_busca) if termo_busca else None
+    legenda_busca = ""
+    if termo_busca and n_resultados is not None:
+        cor = "#2e7d32" if n_resultados else "#856404"
+        legenda_busca = (
+            f'<span style="font-size:0.85em;color:{cor};margin-left:8px">'
+            f'{n_resultados} resultado(s) para "{_esc(termo_busca)}"'
+            f' — <a href="/planilha" style="color:{cor}">limpar</a></span>'
+        )
+
     corpo = f"""
     {bloco_feedback}
-    <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">
-        <p class="legenda" style="margin:0;flex:1">Espelho local da entrega — é o que vai para o Google Sheets
-          (só informação, nunca o vídeo).</p>
-        <a href="/molde" style="font-size:0.85em;color:#1D9E75;white-space:nowrap">
+    <div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:12px">
+        <p class="legenda" style="margin:0;flex:1;min-width:180px">
+            Espelho local da entrega — é o que vai para o Google Sheets
+            (só informação, nunca o vídeo).</p>
+        <a href="/molde" style="font-size:0.85em;color:#1D9E75;white-space:nowrap;align-self:center">
           ⚙ Configurar colunas</a>
     </div>
-    <input type="text" id="filtro" class="filtro" placeholder="filtrar… (profissional, câmera, status)">
+
+    <form method="GET" action="/planilha" style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+        <input type="text" name="busca" value="{_esc(termo_busca)}"
+               placeholder="buscar… transcrição, palco, marca, profissional, data"
+               style="flex:1;max-width:480px;padding:8px 12px;border:1px solid #1D9E75;
+                      border-radius:6px;font-size:0.9em"
+               title="Busca profunda: alcança transcrições de áudio e classificação completa.
+Múltiplas palavras = AND. Exemplo: sunset volkswagen">
+        <button type="submit"
+                style="padding:8px 16px;background:#1D9E75;color:#fff;border:none;
+                       border-radius:6px;cursor:pointer;font-size:0.9em">
+            Buscar</button>
+    </form>
+    {legenda_busca}
+
+    <input type="text" id="filtro" class="filtro"
+           placeholder="filtrar na tela… (afina o resultado acima)"
+           style="margin-bottom:10px">
+
     <table class="planilha-tabela" id="tabela">
         <thead><tr>{cabecalhos}</tr></thead>
         <tbody>{linhas_html}</tbody>
@@ -3583,6 +3687,7 @@ COR_STATUS_FICHA = {
     "aguardando_material": "#6c757d",
     "aguardando_match":    "#6c757d",
     "matched":             "#2196f3",
+    "concluido":           "#27ae60",
 }
 
 
@@ -3946,6 +4051,9 @@ _GRUPOS_POSTS = [
     ("aguardando_match",    "⏳ Aguardando match",    True),
     ("aguardando_material", "📭 Aguardando material", True),
     ("matched",             "✅ Com match",           True),
+    # Posts cujo cartão já passou pela auditoria (entregues). Vêm recolhidos por
+    # padrão (False): saíram da operação, ficam aqui como histórico do dia.
+    ("concluido",           "📦 Concluído / entregue", False),
 ]
 
 

@@ -1661,6 +1661,77 @@ def gravar_match(conn, cartao_id, formulario_id, score, criterios_lista, confirm
     return id_match
 
 
+def concluir_formulario_do_cartao(conn, cartao_id):
+    """Avança o Post (formulário) ligado a um cartão para o status 'concluido'.
+
+    Chamada pela Camada 4 (auditoria) quando o cartão termina o ciclo e vira
+    'concluido'. Até aqui o Post ficava preso em 'matched' para sempre — o cartão
+    já estava entregue, mas a Nova Ficha e a Operação continuavam mostrando o Post
+    como "em operação". Esta função fecha esse descompasso.
+
+    Acha o Post pelo vínculo confirmado na tabela 'matches' (1 cartão ↔ 1 Post).
+    Só promove Posts que ainda estão em andamento ('matched' e parentes) — nunca
+    reabre um Post 'cancelado' nem mexe num já 'concluido'. Registra o avanço no Log.
+
+    Vale tanto para cartão físico quanto para material recebido (pasta satélite):
+    os dois passam por 'matched' e devem terminar em 'concluido'.
+
+    Nunca levanta exceção: se algo falhar, apenas registra o aviso e devolve None —
+    a conclusão do cartão (que é o que protege a mídia) jamais pode quebrar por causa
+    deste ajuste de status, que é só informativo para as telas.
+
+    Retorna o id do formulário promovido, ou None se não havia o que promover.
+    """
+    # Status que ainda contam como "em andamento" e podem virar 'concluido'.
+    EM_ANDAMENTO = ("matched", "transferencia_ok", "copiando", "transferencia_falhou")
+    try:
+        linha = conn.execute(
+            "SELECT formulario_id FROM matches "
+            "WHERE cartao_id = ? AND confirmado = 1 "
+            "ORDER BY id DESC LIMIT 1",
+            (cartao_id,),
+        ).fetchone()
+        if not linha or linha["formulario_id"] is None:
+            return None
+        formulario_id = linha["formulario_id"]
+
+        # Lê o status atual para não reabrir um Post cancelado nem repetir o trabalho.
+        f = conn.execute(
+            "SELECT status FROM formularios WHERE id = ?", (formulario_id,)
+        ).fetchone()
+        if not f:
+            return None
+        status_atual = f["status"] or ""
+        if status_atual not in EM_ANDAMENTO:
+            # Já está 'concluido', 'cancelado' ou outro estado terminal — não mexe.
+            return None
+
+        conn.execute(
+            "UPDATE formularios SET status = 'concluido' WHERE id = ?",
+            (formulario_id,),
+        )
+        conn.commit()
+
+        registrar_evento(
+            conn,
+            tipo="post_concluido",
+            descricao=(
+                f"Post {formulario_id} concluído (acompanhou a auditoria do cartão "
+                f"{cartao_id}) | status anterior: {status_atual}"
+            ),
+            cartao_id=cartao_id,
+            formulario_id=formulario_id,
+        )
+        return formulario_id
+    except Exception as erro:
+        # Ajuste só informativo — nunca derruba a conclusão do cartão.
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            f"CONCLUIR FORM | Não foi possível avançar o Post do cartão {cartao_id} | {erro}"
+        )
+        return None
+
+
 def gravar_arquivos_do_log(conn, cartao_id, dados_log):
     """
     Insere na tabela 'arquivos' um registro para cada arquivo do log .sppo.
@@ -3914,8 +3985,12 @@ def valor_celula_planilha(col, linha, chips, textos=None):
         if not prof and linha["numero_cartao"]:
             prof = linha["numero_cartao"].rsplit("_", 1)[0]
         val = prof or "—"
-        if linha["prof_nome_audio"]:
-            val += f" + {linha['prof_nome_audio']} (áudio)"
+        # Só acrescenta o 2º nome (operador de áudio) quando ele EXISTE e é
+        # DIFERENTE do principal. Num Post só de áudio o nome do áudio costuma
+        # repetir o nome principal — aí mostrar "CALIFA + CALIFA (áudio)" é ruído.
+        nome_audio = (linha["prof_nome_audio"] or "").strip()
+        if nome_audio and nome_audio.upper() != (prof or "").strip().upper():
+            val += f" + {nome_audio} (áudio)"
         return val
 
     if tipo == "chip":
@@ -3971,6 +4046,220 @@ def montar_planilha(conn):
         textos = textos_map.get(r["form_id"], {})
         linhas.append([valor_celula_planilha(c, r, chips, textos) for c in colunas])
     return colunas, linhas
+
+
+# ── CAMADA 6 — BUSCA TEXTUAL (Missão A, Fatia 1) ────────────────────────────
+#
+# Fundação mecânica da busca conversacional: 100% offline, sem LLM/API.
+# A camada de linguagem natural (Fatia 2) vai CHAMAR estas funções; por isso a
+# lógica de busca fica aqui (banco_dados), desacoplada da tela e do Flask.
+#
+# Sobre a escolha de implementação:
+#   • Case-insensitive via LOWER() no SQLite.
+#   • Ignora acentos: normaliza com unicodedata.normalize("NFKD") antes de buscar.
+#   • Múltiplas palavras = AND (todas devem aparecer em ALGUM campo da linha).
+#     Isso é mais preciso que OR e condiz com o uso real ("palco sunset volkswagen").
+#   • Por arquivo: quando a transcrição bate, a função devolve quais arquivos
+#     contribuíram — é o primeiro degrau do caminho arquivo→trecho→take.
+# ─────────────────────────────────────────────────────────────────────────────
+
+import unicodedata as _unicodedata
+
+
+def _normalizar_busca(texto):
+    """Minúsculo + remove acentos + colapsa espaços extras.
+
+    'Pôr do Sol' → 'por do sol'
+    Facilita bater 'palco' com 'Palco' e 'Sao Paulo' com 'São Paulo'.
+    """
+    if not texto:
+        return ""
+    # NFKD decompõe o acento em letra + marca diacrítica; depois filtramos as marcas
+    sem_acento = "".join(
+        c for c in _unicodedata.normalize("NFKD", texto)
+        if _unicodedata.category(c) != "Mn"
+    )
+    return " ".join(sem_acento.lower().split())
+
+
+def _extrair_termos(consulta):
+    """Divide a consulta em palavras-chave (lista de strings normalizadas, sem vazio).
+
+    'Sunset  VOLKSWAGEN' → ['sunset', 'volkswagen']
+    """
+    return [t for t in _normalizar_busca(consulta).split() if t]
+
+
+def buscar_na_planilha(conn, consulta):
+    """Busca textual sobre tudo que o sistema sabe de cada cartão/Post.
+
+    Percorre: identificação (profissional, cartão, tipo, data, câmera),
+    classificação (chips de listas_contexto + textos livres de formularios_textos)
+    e transcrição (arquivos.transcricao).
+
+    Múltiplas palavras = AND: todos os termos têm de aparecer em algum campo
+    da mesma linha para ela bater.
+
+    Retorna lista de dicts, um por linha da planilha que bateu:
+        {
+          "cartao_id":   int ou None (None = Post ainda sem cartão),
+          "form_id":     int ou None,
+          "numero_cartao": str ou None,
+          "prof_nome":   str ou None,
+          "campos_bateram": [str, ...],  # quais campos contribuíram
+          "arquivos_transcritos": [      # arquivos cujo texto bateu
+              {"nome_arquivo": str, "trecho": str},  # trecho = contexto da busca
+              ...
+          ],
+        }
+
+    Se a consulta for vazia (sem termos), retorna lista vazia.
+    Não lança exceção: em caso de erro do banco retorna lista vazia.
+
+    Design para a Fatia 2 (LLM):
+        A Fatia 2 pode pré-processar a consulta em linguagem natural e extrair
+        palavras-chave, depois chamar esta mesma função. Ou pode interpretar os
+        resultados e construir uma resposta em linguagem natural. A lógica de
+        busca em si fica aqui, reutilizável.
+    """
+    termos = _extrair_termos(consulta)
+    if not termos:
+        return []
+
+    try:
+        # ── 1. Linhas da planilha (cartões com match + Post in sem cartão) ────
+        linhas = conn.execute(_SQL_PLANILHA).fetchall()
+        if not linhas:
+            return []
+
+        form_ids = [r["form_id"] for r in linhas if r["form_id"]]
+
+        # ── 2. Carregar chips e textos de todas as fichas de uma vez (eficiente) ──
+        chips_map  = chips_por_formulario(conn, form_ids)  if form_ids else {}
+        textos_map = textos_por_formulario(conn, form_ids) if form_ids else {}
+
+        # ── 3. Carregar arquivos com transcrição (uma query só, depois agrupa) ──
+        # Inclui cartoes de qualquer tipo que já tenham texto transcrito.
+        arquivos_com_transcricao = {}   # cartao_id → [ {nome_arquivo, transcricao} ]
+        if any(r["id"] for r in linhas):
+            ids_cartao = [r["id"] for r in linhas if r["id"]]
+            if ids_cartao:
+                marcadores = ",".join("?" for _ in ids_cartao)
+                arq_rows = conn.execute(
+                    f"SELECT cartao_id, nome_arquivo, transcricao "
+                    f"FROM arquivos "
+                    f"WHERE cartao_id IN ({marcadores}) AND transcricao IS NOT NULL",
+                    ids_cartao
+                ).fetchall()
+                for arq in arq_rows:
+                    arquivos_com_transcricao.setdefault(arq["cartao_id"], []).append({
+                        "nome_arquivo": arq["nome_arquivo"],
+                        "transcricao":  arq["transcricao"] or "",
+                    })
+
+        # ── 4. Para cada linha, verificar se TODOS os termos aparecem em algum campo ──
+        resultados = []
+        for linha in linhas:
+            form_id   = linha["form_id"]
+            cartao_id = linha["id"]      # pode ser None (Post in)
+            chips  = chips_map.get(form_id,  [])
+            textos = textos_map.get(form_id, {})
+
+            # Monta o "texto de busca" de cada campo identificado, para saber o que bateu
+            campos_texto = {
+                "Profissional":    linha["prof_nome"]     or "",
+                "2º profissional": linha["prof_nome_audio"] or "",
+                "Cartão":          linha["numero_cartao"] or "",
+                "Câmera":          linha["marca_camera"]  or "",
+                "Tipo":            linha["tipo_material"] or "",
+                "Data":            linha["data_gravacao"] or "",
+            }
+            # Chips: cada chip vira um campo com o rótulo do grupo
+            for chip in chips:
+                grupo = chip["tipo"]
+                campos_texto.setdefault(f"chip:{grupo}", "")
+                campos_texto[f"chip:{grupo}"] += " " + chip["valor"]
+            # Textos livres
+            for grupo_chave, valores in textos.items():
+                campos_texto[f"texto:{grupo_chave}"] = " ".join(valores)
+
+            # Normaliza todos os campos de uma vez
+            campos_normalizados = {k: _normalizar_busca(v) for k, v in campos_texto.items()}
+
+            # Verifica quais arquivos transcritos batem (por arquivo, não por cartão inteiro)
+            arquivos_batendo = []
+            if cartao_id and cartao_id in arquivos_com_transcricao:
+                for arq in arquivos_com_transcricao[cartao_id]:
+                    texto_norm = _normalizar_busca(arq["transcricao"])
+                    if all(t in texto_norm for t in termos):
+                        # Extrai um trecho de contexto em torno do 1º termo encontrado
+                        trecho = _extrair_trecho(arq["transcricao"], termos[0])
+                        arquivos_batendo.append({
+                            "nome_arquivo": arq["nome_arquivo"],
+                            "trecho":       trecho,
+                        })
+
+            # Quais campos de identificação/classificação batem com TODOS os termos?
+            campos_que_batem = [
+                rotulo for rotulo, texto_norm in campos_normalizados.items()
+                if all(t in texto_norm for t in termos)
+            ]
+
+            # A linha bate se: (a) algum campo bate com todos os termos, OU
+            #                  (b) algum arquivo transcrito bate com todos os termos.
+            # Nota: cada termo pode aparecer em campos diferentes (AND entre campos).
+            #
+            # Caso especial — AND entre campos:
+            # "Sunset Volkswagen" → "Sunset" em chip:palco e "Volkswagen" em chip:marca.
+            # Precisamos verificar se, JUNTOS, os campos cobrem todos os termos.
+            todos_campos_concatenados = " ".join(campos_normalizados.values())
+            todos_cobertos = all(t in todos_campos_concatenados for t in termos)
+
+            if todos_cobertos or arquivos_batendo:
+                resultados.append({
+                    "cartao_id":          cartao_id,
+                    "form_id":            form_id,
+                    "numero_cartao":      linha["numero_cartao"],
+                    "prof_nome":          linha["prof_nome"],
+                    "campos_bateram":     campos_que_batem,
+                    "arquivos_transcritos": arquivos_batendo,
+                })
+
+        return resultados
+
+    except Exception as erro:
+        # A busca é OPCIONAL — em caso de falha, retorna vazio sem quebrar nada.
+        import logging as _logging
+        _logging.getLogger(__name__).warning(f"BUSCA | Erro na busca: {erro}")
+        return []
+
+
+def _extrair_trecho(texto, termo, janela=80):
+    """Retorna até `janela` caracteres em torno da 1ª ocorrência do termo no texto.
+
+    Usado para mostrar o contexto da transcrição onde o termo foi achado.
+    Ex: '…cantou Péricles com Motown no palco…'
+
+    Se não achar o termo (pode acontecer quando a normalização muda a busca),
+    devolve os primeiros `janela` caracteres do texto.
+    """
+    if not texto or not termo:
+        return (texto or "")[:janela].strip()
+    texto_norm = _normalizar_busca(texto)
+    termo_norm = _normalizar_busca(termo)
+    pos = texto_norm.find(termo_norm)
+    if pos < 0:
+        return texto[:janela].strip() + ("…" if len(texto) > janela else "")
+    # Acha a posição equivalente no texto original (aproximada pela razão de comprimento)
+    # Heurística simples: percorre o texto original até o caractere `pos` normalizado
+    inicio = max(0, pos - janela // 2)
+    fim    = min(len(texto), pos + len(termo_norm) + janela // 2)
+    trecho = texto[inicio:fim].strip()
+    if inicio > 0:
+        trecho = "…" + trecho
+    if fim < len(texto):
+        trecho = trecho + "…"
+    return trecho
 
 
 # ── ARCO PASTA SATÉLITE — FUNÇÕES DA CAMADA 1 ────────────────────────────────

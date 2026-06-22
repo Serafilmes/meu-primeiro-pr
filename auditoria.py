@@ -430,6 +430,9 @@ def _aprovar_recebido(cartao_id, numero_cartao, volume,
     )
 
     banco_dados.atualizar_cartao(conn, cartao_id, {"status": "concluido"})
+    # O Post ligado a este cartão acompanha: sai de 'matched' e vira 'concluido'
+    # (senão ficaria preso "em operação" na Nova Ficha mesmo já entregue).
+    banco_dados.concluir_formulario_do_cartao(conn, cartao_id)
 
     banco_dados.registrar_evento(
         conn,
@@ -756,6 +759,9 @@ def auditar_cartao(cartao, conn):
     log.info(f"Cartão {cartao_id} ({numero_cartao}) — CONCLUIDO.")
 
     banco_dados.atualizar_cartao(conn, cartao_id, {"status": "concluido"})
+    # O Post ligado a este cartão acompanha: sai de 'matched' e vira 'concluido'
+    # (senão ficaria preso "em operação" na Nova Ficha mesmo já entregue).
+    banco_dados.concluir_formulario_do_cartao(conn, cartao_id)
 
     banco_dados.registrar_evento(
         conn,

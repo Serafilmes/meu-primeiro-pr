@@ -162,7 +162,10 @@ def _token_impersonado(sa):
         capture_output=True, text=True, timeout=60,
     )
     if r.returncode != 0:
-        raise RuntimeError(f"Falha ao gerar token de impersonação: {r.stderr.strip()[:200]}")
+        # Captura mais da mensagem: o gcloud cospe um WARNING longo de impersonação
+        # ANTES do erro real (reauth), que num corte curto ficava de fora — e aí o
+        # classificador de "login vencido" não enxergava a marca. 500 chars cobrem.
+        raise RuntimeError(f"Falha ao gerar token de impersonação: {r.stderr.strip()[:500]}")
     return r.stdout.strip()
 
 
@@ -218,7 +221,12 @@ def _erro_eh_login_vencido(texto):
     """
     t = (texto or "").lower()
     marcas = ("reauth", "reauthentication", "auth login",
-              "invalid_grant", "token has expired", "credentials do not")
+              "invalid_grant", "token has expired", "credentials do not",
+              # A própria falha do comando que gera o token de impersonação é, na
+              # prática, sempre falta de login: quando a sessão do gcloud vence, o
+              # `gcloud auth print-access-token` para de funcionar. Reconhecer essas
+              # marcas garante o aviso certo ("rode gcloud auth login") no Painel.
+              "print-access-token", "token de impersonação", "refreshing")
     return any(m in t for m in marcas)
 
 
