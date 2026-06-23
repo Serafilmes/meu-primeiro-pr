@@ -122,6 +122,15 @@ TRANSCRITOR_SCRIPT = os.path.join(RAIZ_GMA, "transcritor.py")
 _transcricoes_em_andamento = set()
 _lock_transcricao = threading.Lock()
 
+# ── CAMADA 6 (IA) — MISSÃO A Fatia 2: busca conversacional (opcional) ──────────
+# Põe um LLM por cima da busca mecânica da Fatia 1. Import protegido: se o módulo
+# faltar, a barra de busca segue funcionando no modo mecânico (sem regressão).
+try:
+    import assistente_ia as aia
+    AIA_OK = True
+except Exception:
+    AIA_OK = False
+
 
 def _transcricao_disponivel():
     """True se a caixa isolada da IA e o transcritor existem (recurso instalado)."""
@@ -2783,10 +2792,17 @@ def planilha():
     colunas = _colunas_visiveis()
     n_cols = len(colunas) or 1
 
-    # Termo de busca profunda (Missão A, Fatia 1).
-    # Diferente do filtro JS (que age só no texto visível), esta busca alcança
-    # a transcrição e a classificação que podem não estar exibidas na célula.
+    # Duas formas de buscar, ambas server-side (alcançam transcrição/classificação
+    # que podem não estar na célula visível), diferentes do filtro JS rápido:
+    #   • ?busca=     → busca MECÂNICA (Missão A, Fatia 1): palavras exatas.
+    #   • ?pergunta=  → busca CONVERSACIONAL (Fatia 2): a IA traduz a pergunta em
+    #                   linguagem natural e redige uma resposta. Só liga se a IA
+    #                   estiver disponível (real/simulado); senão cai na mecânica.
     termo_busca = (request.args.get("busca") or "").strip()
+    pergunta_ia = (request.args.get("pergunta") or "").strip()
+    estado_ia = aia.estado_ia() if AIA_OK else "desligado"
+    resposta_ia = None          # texto conversacional, quando houver pergunta
+    usou_ia = False             # True quando a Fatia 2 respondeu de verdade
 
     try:
         conn = bd.obter_conexao()
@@ -2798,7 +2814,15 @@ def planilha():
         # Busca profunda: monta o índice de resultados antes de renderizar as linhas.
         # resultados_busca: {(cartao_id, form_id) → dict com campos_bateram e arquivos}
         resultados_busca = {}
-        if termo_busca:
+        if pergunta_ia and estado_ia != "desligado":
+            # Fatia 2: a IA traduz, busca (Fatia 1 por dentro) e redige.
+            res_ia = aia.responder(conn, pergunta_ia)
+            resposta_ia = res_ia.get("resposta")
+            usou_ia = True
+            for res in res_ia.get("resultados", []):
+                resultados_busca[(res["cartao_id"], res["form_id"])] = res
+            termo_busca = pergunta_ia   # reusa o filtro/legenda das linhas
+        elif termo_busca:
             for res in bd.buscar_na_planilha(conn, termo_busca):
                 chave = (res["cartao_id"], res["form_id"])
                 resultados_busca[chave] = res
@@ -2906,6 +2930,61 @@ def planilha():
             f' — <a href="/planilha" style="color:{cor}">limpar</a></span>'
         )
 
+    # ── Caixa de resposta da IA (Missão A, Fatia 2) ───────────────────────────
+    # Só aparece quando a IA respondeu de fato. A resposta é texto; as LINHAS
+    # destacadas continuam vindo da busca mecânica (a verdade), nunca da IA.
+    bloco_ia = ""
+    if usou_ia and resposta_ia:
+        rotulo_estado = {"real": "🤖 Assistente IA",
+                         "simulado": "🤖 Assistente IA · modo simulado (sem custo)"}.get(
+                             estado_ia, "🤖 Assistente IA")
+        resposta_html = _esc(resposta_ia).replace("\n", "<br>")
+        bloco_ia = (
+            f'<div style="background:#f0fff8;border:1px solid #1D9E75;'
+            f'border-left:4px solid #1D9E75;border-radius:8px;padding:12px 16px;margin-bottom:12px">'
+            f'<div style="font-size:0.76em;color:#1D9E75;font-weight:600;margin-bottom:5px">'
+            f'{rotulo_estado}</div>'
+            f'<div style="font-size:0.92em;color:#222;line-height:1.45">{resposta_html}</div></div>'
+        )
+
+    # ── Barra de busca: conversacional (se a IA estiver ligada) + mecânica ─────
+    if estado_ia != "desligado":
+        placeholder_ia = ("pergunte em linguagem natural… "
+                          "ex.: take do pôr do sol com a marca patrocinadora")
+        barra_html = f"""
+    <form method="GET" action="/planilha" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+        <input type="text" name="pergunta" value="{_esc(pergunta_ia)}"
+               placeholder="{placeholder_ia}"
+               style="flex:1;max-width:560px;padding:9px 12px;border:1px solid #1D9E75;
+                      border-radius:6px;font-size:0.9em"
+               title="A IA entende a pergunta em linguagem natural, busca no acervo e redige a resposta.">
+        <button type="submit"
+                style="padding:9px 18px;background:#1D9E75;color:#fff;border:none;
+                       border-radius:6px;cursor:pointer;font-size:0.9em">🤖 Perguntar</button>
+    </form>
+    <form method="GET" action="/planilha" style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+        <input type="text" name="busca" value="{_esc('' if usou_ia else termo_busca)}"
+               placeholder="ou busca exata por palavras… palco, marca, profissional, data"
+               style="flex:1;max-width:560px;padding:7px 12px;border:1px solid #cdded6;
+                      border-radius:6px;font-size:0.85em">
+        <button type="submit"
+                style="padding:7px 14px;background:#fff;color:#1D9E75;border:1px solid #1D9E75;
+                       border-radius:6px;cursor:pointer;font-size:0.85em">Buscar</button>
+    </form>"""
+    else:
+        barra_html = f"""
+    <form method="GET" action="/planilha" style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+        <input type="text" name="busca" value="{_esc(termo_busca)}"
+               placeholder="buscar… transcrição, palco, marca, profissional, data"
+               style="flex:1;max-width:480px;padding:8px 12px;border:1px solid #1D9E75;
+                      border-radius:6px;font-size:0.9em"
+               title="Busca profunda: alcança transcrições de áudio e classificação completa.
+Múltiplas palavras = AND. Exemplo: sunset volkswagen">
+        <button type="submit"
+                style="padding:8px 16px;background:#1D9E75;color:#fff;border:none;
+                       border-radius:6px;cursor:pointer;font-size:0.9em">Buscar</button>
+    </form>"""
+
     corpo = f"""
     {bloco_feedback}
     <div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-bottom:12px">
@@ -2916,18 +2995,8 @@ def planilha():
           ⚙ Configurar colunas</a>
     </div>
 
-    <form method="GET" action="/planilha" style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
-        <input type="text" name="busca" value="{_esc(termo_busca)}"
-               placeholder="buscar… transcrição, palco, marca, profissional, data"
-               style="flex:1;max-width:480px;padding:8px 12px;border:1px solid #1D9E75;
-                      border-radius:6px;font-size:0.9em"
-               title="Busca profunda: alcança transcrições de áudio e classificação completa.
-Múltiplas palavras = AND. Exemplo: sunset volkswagen">
-        <button type="submit"
-                style="padding:8px 16px;background:#1D9E75;color:#fff;border:none;
-                       border-radius:6px;cursor:pointer;font-size:0.9em">
-            Buscar</button>
-    </form>
+    {bloco_ia}
+    {barra_html}
     {legenda_busca}
 
     <input type="text" id="filtro" class="filtro"
