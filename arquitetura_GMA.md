@@ -129,7 +129,7 @@ Processo: `banco_dados.py` · `exportador_sheets.py` · Flask (telas `/kanban` e
 - `matches` — vínculo cartão↔formulário confirmado
 - `match_candidatos` — candidatos de empate (pendente/escolhido/descartado)
 - `arquivos` — **tabela-chave**: 1 linha por arquivo (mídia da C1 + integridade da C2)
-- `eventos` — log append-only (auditoria); **grupos já gravam aqui** (fundação do log de operações — a tela fica com a Camada 5)
+- `eventos` — log append-only (auditoria); **carimba `operador`** (s51 — quem fez; NULL = ação automática do sistema), via contexto por-requisição que o Flask preenche; tela `/historico` na Camada 5
 - `perfis` — assinatura acumulada por profissional
 - `profissionais` — cadastro com letra, tipos e câmera
 - `listas_contexto` — itens de classificação (valor) por grupo (`tipo` = chave do grupo)
@@ -167,8 +167,9 @@ Fluxo **totalmente automático:**
 **Parashoot CLI:** `/Applications/ParaShoot.app/Contents/MacOS/cli/parashoot`. Saída em **JSON Lines (NDJSON)**. `check` sucesso → `{"status":"check_complete",...}`. `erase` → `erase_start` + `erase_complete`. Erro no stderr → `{"status":"error",...}`. O fake-format é **reversível** (inverte 2 MB do MBR; footage intacto).
 
 ### Camada 5 — Plataforma + multi-máquina `[Em construção]`
-- **🏛️ SAGUÃO DE 2 NÍVEIS ✅ (s42) — `saguao.py`:** o modelo de acesso da plataforma. **Nível 1 = saguão** = um servidorzinho próprio (`http.server` da stdlib, NÃO um 2º Flask) numa **porta fixa só dele (5055)**, que **nunca cai**; mostra a lista de projetos + criar novo. **Nível 2 = sessão do projeto** = ao Entrar, o saguão sobe os processos daquele projeto (Flask na 5050 + porteiro/leitor/etc., reusando `inicializar_gma.subir_todos`/`descer_todos`). **Trocar = "Voltar ao saguão"** desce só a sessão e volta ao térreo — sem reinício, sem tela morta. Trava de instância única (`.gma_saguao.lock`), encerramento limpo por SIGTERM, atalhos "Iniciar/Encerrar GMA" repontados. **Substituiu** o reinício-na-troca frágil (o "maestro robusto" da s41 foi abandonado). O `inicializar_gma.py` segue como **motor de processos** (subir/descer/ngrok/sentinela), agora orquestrado pelo saguão.
-- **Painel de Controle (cockpit) ✅ (s37):** aba no Flask do projeto — conexões com "Testar", criar projeto, "⬅ Voltar ao saguão". Por-projeto isolado.
+- **🏛️ SAGUÃO DE 2 NÍVEIS ✅ (s42, "fechado" na s50) — `saguao.py`:** o modelo de acesso da plataforma. **Nível 1 = saguão** = um servidorzinho próprio (`http.server` da stdlib, NÃO um 2º Flask) numa **porta fixa só dele (5055)**, que **nunca cai**; mostra a lista de projetos + criar novo. **Nível 2 = sessão do projeto** = ao Entrar, o saguão sobe os processos daquele projeto (Flask na 5050 + porteiro/leitor/etc., reusando `inicializar_gma.subir_todos`/`descer_todos`). **Trocar = "Voltar ao saguão"** desce só a sessão e volta ao térreo — sem reinício, sem tela morta. Trava de instância única (`.gma_saguao.lock`), encerramento limpo por SIGTERM, atalhos "Iniciar/Encerrar GMA" repontados. **Substituiu** o reinício-na-troca frágil (o "maestro robusto" da s41 foi abandonado e seu código morto removido na s50). O `inicializar_gma.py` segue como **motor de processos** (subir/descer/ngrok/sentinela), agora orquestrado pelo saguão. **s50:** ao Entrar, o saguão sobe a sessão em segundo plano e mostra uma tela de espera ("subindo…", poll de `/entrando-status`) — fim da tela congelada. **⚠️ Recarregar código ao vivo:** o Flask do projeto só relê o disco quando a sessão sobe; mudou `flask_gma.py`/`banco_dados.py` → **Voltar ao saguão + Entrar**; mudou `saguao.py` → **Encerrar + Iniciar** (a trava `.gma_saguao.lock` faz "Iniciar" sobre um saguão vivo só reabrir o navegador, sem reiniciar nada).
+- **🔑 LOGIN DO OPERADOR ✅ (s51) — `operadores.py` + Flask:** identidade **+** barreira de acesso na base. Os operadores são a **equipe** (estáveis entre eventos) → armazém **GLOBAL** num arquivo na raiz (`operadores.json`, **fora do git** — guarda senhas). Senha em **hash pbkdf2_hmac(sha256)** (sal por operador + 200k iterações, stdlib; conferência em tempo constante). A operação na base **exige operador logado** (passo "1.5" do `_portao_de_acesso`); o **remoto (câmera) não muda** — login é só-base. Sem operador ativo, `/login` cria o **primeiro** (à prova de tranca). Sessão por cookie assinado (`app.secret_key` ← `.gma_secret`/`GMA_SECRET`). Telas `/login`·`/logout`·`/operadores`·`/historico`. **Governança:** coluna `eventos.operador` + contexto por-requisição (`banco_dados.definir_operador_contexto`, `threading.local`) → toda ação na base é carimbada com quem fez; ação automática = NULL ("sistema"). O "quem preencheu" do Post puxa do operador logado.
+- **Painel de Controle (cockpit) ✅ (s37):** aba no Flask do projeto — conexões com "Testar", criar projeto, "⬅ Voltar ao saguão", e (s51) "Operando como _nome_ · Histórico · Operadores · Sair". Por-projeto isolado.
 - pywebview (janela nativa) + SSE (tempo real sem recarregar) `[futuro]`
 - 2º monitor: Mural dos Câmeras (read-only, QR fixo) `[futuro]`
 - Configuração externa por evento (`evento.toml` + `.env`)
@@ -191,6 +192,7 @@ Fluxo **totalmente automático:**
 ```
 /Users/serafa/GMA/
 ├── saguao.py                ← [C5] SAGUÃO (nível 1): térreo na porta 5055, nunca cai; sobe/desce a sessão do projeto
+├── operadores.py            ← [C5] login: armazém GLOBAL dos operadores (senha em hash; operadores.json fora do git)
 ├── inicializar_gma.py       ← MOTOR DE PROCESSOS (subir/descer/ngrok/sentinela), orquestrado pelo saguão
 ├── encerrar_gma.py          ← encerramento de emergência
 ├── porteiro.py              ← [C1] detecta cartões/volumes
@@ -255,8 +257,10 @@ Material ou formulário sem par após 10 minutos → alerta de órfão no painel
 
 ## 11. Acesso remoto e segurança
 
-- **Portão por papel:** acesso remoto (ngrok/internet) só enxerga `/ficha`. Tudo mais → 403.
-- **Portão por senha:** `GMA_SENHA` no `.env`; vazia = uso local livre; webhooks `/forms*` isentos.
+O `_portao_de_acesso` do Flask (um `before_request`) tem **três camadas**, nesta ordem:
+- **1) Portão por papel:** acesso remoto (ngrok/internet) só enxerga `/ficha` (+ webhooks `/forms*`). Tudo mais → 403.
+- **1.5) Login do operador (s51, só na BASE):** a operação exige um operador logado (ver Camada 5). O remoto nunca chega aqui (já barrado no passo 1). Rotas livres de login: `/login`·`/logout`·`/ficha`·`/status`·`/forms*`·`/static`. Sem operador na sessão → redireciona a `/login`.
+- **2) Portão por senha:** `GMA_SENHA` no `.env` (Basic Auth p/ expor na internet); vazia = uso local livre; webhooks `/forms*` isentos (têm HMAC).
 - **QR da ficha:** detecta URL ativa do ngrok automaticamente (API local `127.0.0.1:4040`). Se-auto-atualiza quando o túnel muda.
 - **Flask local:** nunca expor sem autenticação; mídia nunca servida pelo Flask; porta 5050.
 - **`GMA_HOST=0.0.0.0`** libera para a rede local (celulares no Wi-Fi do evento).

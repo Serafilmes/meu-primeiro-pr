@@ -1,6 +1,12 @@
 # Variáveis de ambiente (segredos — nunca versionar)
 .env
 
+# Operadores (login da Camada 5): contém os hashes das senhas — NUNCA versionar.
+# Também a chave de assinatura dos cookies de sessão do Flask.
+operadores.json
+operadores.json.tmp
+.gma_secret
+
 # Credenciais da conta de serviço do Google (chave privada — NUNCA versionar)
 credenciais_google.json
 *credentials*.json

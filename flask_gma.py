@@ -33,7 +33,8 @@ import hmac
 import hashlib
 import threading
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify, redirect
+import secrets
+from flask import Flask, request, jsonify, redirect, session
 
 # Gerador de QR Code (Python puro, offline). Opcional: se faltar, o painel do QR
 # simplesmente não aparece — nada quebra.
@@ -402,8 +403,40 @@ def tempo_desde(timestamp_str):
 
 # ── CRIAÇÃO DO APP FLASK ──────────────────────────────────────────────────────
 
+import operadores  # Camada 5 — armazém global dos operadores (login)
+
 app = Flask(__name__)
 logger = configurar_logger()
+
+
+def _carregar_secret():
+    """
+    Chave que ASSINA os cookies de sessão (login do operador). Precisa ser estável
+    entre reinícios — senão todo mundo cai do login a cada Iniciar. Ordem: usa
+    GMA_SECRET do .env se houver; senão gera uma e guarda em .gma_secret (fora do
+    git). Assim o login sobrevive aos reinícios sem o operador configurar nada.
+    """
+    do_env = os.environ.get("GMA_SECRET", "").strip()
+    if do_env:
+        return do_env
+    caminho = os.path.join(RAIZ_GMA, ".gma_secret")
+    try:
+        if os.path.isfile(caminho):
+            with open(caminho, "r", encoding="utf-8") as f:
+                guardada = f.read().strip()
+            if guardada:
+                return guardada
+        nova = secrets.token_hex(32)
+        with open(caminho, "w", encoding="utf-8") as f:
+            f.write(nova)
+        return nova
+    except OSError:
+        # Não deu para persistir (disco?) — usa uma chave da sessão deste processo.
+        # O login funciona; só não sobrevive a um reinício (degradação aceitável).
+        return secrets.token_hex(32)
+
+
+app.secret_key = _carregar_secret()
 
 
 # ── PORTÃO DE ACESSO (escopo por papel + autenticação) ───────────────────────
@@ -443,6 +476,41 @@ def _remoto_pode_acessar(path):
     return False                    # bloqueia edição de fichas e telas de gestão
 
 
+# Rotas que NÃO exigem operador logado na base: o próprio fluxo de login, o caminho
+# de preencher ficha (igual ao remoto) e os webhooks/saúde. Tudo mais (Painel,
+# Kanban, Planilha, match, listas…) só com operador logado.
+ROTAS_SEM_LOGIN_EXATAS = ("/login", "/logout", "/ficha", "/status")
+ROTAS_SEM_LOGIN_PREFIXOS = ("/forms", "/static")
+
+
+def _rota_livre_de_login(path):
+    """True se a rota pode ser acessada na base SEM operador logado."""
+    if path in ROTAS_SEM_LOGIN_EXATAS:
+        return True
+    return path.startswith(ROTAS_SEM_LOGIN_PREFIXOS)
+
+
+def _operador_logado():
+    """Nome do operador logado nesta sessão, ou None."""
+    return session.get("operador")
+
+
+@app.before_request
+def _carimbar_operador():
+    """
+    Deixa o operador logado no CONTEXTO do banco (governança): qualquer evento
+    gravado durante esta requisição sai carimbado com quem fez, sem precisar passar
+    o operador por toda chamada. Roda em toda requisição da base; ações automáticas
+    e webhooks ficam sem operador (NULL = sistema). Registrado ANTES do portão para
+    valer mesmo nas rotas livres de login (ex.: a ficha preenchida na base).
+    """
+    if BANCO_DISPONIVEL:
+        try:
+            bd.definir_operador_contexto(session.get("operador"))
+        except Exception:
+            pass  # o carimbo é informativo; nunca pode derrubar a requisição
+
+
 @app.before_request
 def _portao_de_acesso():
     # ── 1) Escopo por origem (papel) ──────────────────────────────────────────
@@ -458,6 +526,15 @@ def _portao_de_acesso():
             403,
             {"Content-Type": "text/html; charset=utf-8"},
         )
+
+    # ── 1.5) Login do operador (só na BASE) ───────────────────────────────────
+    # A operação na base exige um operador logado (identidade + barreira). O remoto
+    # (câmera) nunca chega aqui — o passo 1 já o limita a /ficha. Sem operador na
+    # sessão, manda ao /login, que oferece criar o PRIMEIRO operador quando ainda
+    # não há nenhum (à prova de tranca: você nunca fica trancado pra fora).
+    if _host_local() and not _rota_livre_de_login(request.path):
+        if not _operador_logado():
+            return redirect("/login")
 
     # ── 2) Autenticação por senha ─────────────────────────────────────────────
     senha_exigida = os.environ.get("GMA_SENHA", "").strip()
@@ -480,6 +557,289 @@ def _portao_de_acesso():
         401,
         {"WWW-Authenticate": 'Basic realm="GMA"', "Content-Type": "text/html; charset=utf-8"},
     )
+
+
+# ── LOGIN DO OPERADOR (Camada 5) ─────────────────────────────────────────────
+# Tela própria (sem as abas de operação — quem não entrou ainda não vê a operação).
+# Identidade + barreira: a base só opera com um operador logado; o remoto (câmera)
+# nunca chega aqui. Armazém global em operadores.py.
+
+_VERDE_GMA = "#1D9E75"
+
+
+def _pagina_acesso(corpo, titulo="Entrar", sub=""):
+    """Molde escuro e centrado para as telas de login/operadores (sem abas)."""
+    sub_html = f"<div class='sub'>{_esc(sub)}</div>" if sub else ""
+    return f"""<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GMA — {_esc(titulo)}</title>
+  <style>
+    * {{ box-sizing:border-box; }}
+    body {{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+            background:#0f1115; color:#e8eaed; margin:0; min-height:100vh;
+            display:flex; flex-direction:column; align-items:center; padding:48px 20px; }}
+    .marca {{ font-size:13px; letter-spacing:3px; color:{_VERDE_GMA};
+              text-transform:uppercase; font-weight:700; margin-bottom:6px; }}
+    h1 {{ font-size:24px; margin:0 0 4px; font-weight:600; }}
+    .sub {{ color:#9aa0a8; margin-bottom:28px; font-size:15px; text-align:center; }}
+    .cartao {{ width:100%; max-width:420px; background:#1a1d24; border:1px solid #2a2e37;
+               border-radius:12px; padding:24px; }}
+    label {{ display:block; font-size:13px; color:#9aa0a8; margin:14px 0 5px; }}
+    input, select {{ width:100%; font-family:inherit; font-size:15px; padding:11px 13px;
+                     border-radius:9px; border:1px solid #2a2e37; background:#14171d; color:#e8eaed; }}
+    button {{ font-family:inherit; font-size:15px; font-weight:600; cursor:pointer; border:none;
+              border-radius:9px; padding:12px 20px; margin-top:20px; width:100%;
+              background:{_VERDE_GMA}; color:#07130d; transition:filter .12s; }}
+    button:hover {{ filter:brightness(1.1); }}
+    .erro {{ background:#3a1f22; border:1px solid #5a3330; color:#f2b8b5; border-radius:9px;
+             padding:11px 14px; margin-bottom:16px; font-size:14px; }}
+    .ok {{ background:#16271f; border:1px solid #2f5a45; color:#a8e0c4; border-radius:9px;
+           padding:11px 14px; margin-bottom:16px; font-size:14px; }}
+    .lista-ops {{ list-style:none; padding:0; margin:0; }}
+    .lista-ops li {{ display:flex; justify-content:space-between; align-items:center;
+                     padding:11px 0; border-bottom:1px solid #2a2e37; }}
+    .lista-ops li:last-child {{ border-bottom:none; }}
+    .lista-ops .inativo {{ color:#6c727b; }}
+    .btn-mini {{ width:auto; margin:0; padding:6px 12px; font-size:13px; font-weight:600;
+                 background:transparent; color:#c2554f; border:1px solid #5a3330; }}
+    .rodape {{ margin-top:24px; font-size:13px; }}
+    .rodape a {{ color:#80868f; text-decoration:none; }}
+    .rodape a:hover {{ color:#b9c4d6; }}
+  </style>
+</head>
+<body>
+  <div class="marca">GMA</div>
+  <h1>{_esc(titulo)}</h1>
+  {sub_html}
+  {corpo}
+</body>
+</html>"""
+
+
+def _pagina_login(erro=None):
+    """Tela de login. Modo bootstrap (criar o 1º operador) quando não há nenhum ativo."""
+    bootstrap = len(operadores.listar()) == 0
+    erro_html = f"<div class='erro'>{_esc(erro)}</div>" if erro else ""
+
+    if bootstrap:
+        corpo = f"""
+        <div class="cartao">
+          {erro_html}
+          <form method="post" action="/login">
+            <p style="color:#b9c4d6;font-size:14px;margin:0 0 8px">Ainda não há nenhum operador.
+               Crie o primeiro para começar a operar.</p>
+            <label>Seu nome</label>
+            <input type="text" name="nome" autocomplete="off" autofocus required>
+            <label>Crie uma senha</label>
+            <input type="password" name="senha" required>
+            <label>Repita a senha</label>
+            <input type="password" name="senha2" required>
+            <button type="submit">Criar operador e entrar</button>
+          </form>
+        </div>"""
+        return _pagina_acesso(corpo, titulo="Bem-vindo", sub="Primeiro acesso a esta máquina")
+
+    opcoes = "".join(
+        f"<option value=\"{_esc(o['nome'])}\">{_esc(o['nome'])}</option>"
+        for o in operadores.listar()
+    )
+    corpo = f"""
+    <div class="cartao">
+      {erro_html}
+      <form method="post" action="/login">
+        <label>Operador</label>
+        <select name="nome" required>{opcoes}</select>
+        <label>Senha</label>
+        <input type="password" name="senha" autofocus required>
+        <button type="submit">Entrar</button>
+      </form>
+    </div>"""
+    return _pagina_acesso(corpo, titulo="Entrar", sub="Quem está operando?")
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    # O login é só da base; o remoto (câmera) vai para a ficha.
+    if not _host_local():
+        return redirect("/ficha")
+
+    if request.method == "GET":
+        return _pagina_login()
+
+    nome = (request.form.get("nome") or "").strip()
+    senha = request.form.get("senha") or ""
+    bootstrap = len(operadores.listar()) == 0
+
+    if bootstrap:
+        # Criação do PRIMEIRO operador (à prova de tranca). Operadores extras se
+        # criam depois, já logado, na tela /operadores.
+        senha2 = request.form.get("senha2") or ""
+        if senha != senha2:
+            return _pagina_login(erro="As duas senhas não são iguais.")
+        try:
+            operadores.criar(nome, senha)
+        except ValueError as e:
+            return _pagina_login(erro=str(e))
+        session["operador"] = nome
+        session.permanent = True
+        logger.info(f"LOGIN | Primeiro operador criado e logado: {nome}")
+        return redirect("/")
+
+    op = operadores.verificar(nome, senha)
+    if not op:
+        logger.info(f"LOGIN | Falha de login para '{nome}'")
+        return _pagina_login(erro="Nome ou senha incorretos.")
+    session["operador"] = op["nome"]
+    session.permanent = True
+    logger.info(f"LOGIN | Operador logado: {op['nome']}")
+    return redirect("/")
+
+
+@app.route("/logout", methods=["GET", "POST"])
+def logout():
+    quem = session.pop("operador", None)
+    if quem:
+        logger.info(f"LOGIN | Operador saiu: {quem}")
+    return redirect("/login")
+
+
+def _pagina_operadores(aviso=None, erro=None):
+    """Cadastro/gestão dos operadores (base, logado). Lista + criar + desativar."""
+    logado = _operador_logado()
+    erro_html = f"<div class='erro'>{_esc(erro)}</div>" if erro else ""
+    aviso_html = f"<div class='ok'>{_esc(aviso)}</div>" if aviso else ""
+
+    itens = []
+    for o in operadores.listar(incluir_inativos=True):
+        ativo = o["ativo"]
+        marca_eu = " (você)" if o["nome"] == logado else ""
+        if ativo:
+            # Não deixa desativar a si mesmo nem o último operador ativo (tranca).
+            pode_desativar = (o["nome"] != logado) and (len(operadores.listar()) > 1)
+            acao = (
+                f"<form method='post' action='/operadores/{_esc(o['nome'])}/desativar' style='margin:0'>"
+                f"<button class='btn-mini' type='submit'>Desativar</button></form>"
+                if pode_desativar else "<span style='color:#6c727b;font-size:13px'>—</span>"
+            )
+            itens.append(f"<li><span>{_esc(o['nome'])}{marca_eu}</span>{acao}</li>")
+        else:
+            acao = (
+                f"<form method='post' action='/operadores/{_esc(o['nome'])}/reativar' style='margin:0'>"
+                f"<button class='btn-mini' type='submit' "
+                f"style='color:#7fb89a;border-color:#2f5a45'>Reativar</button></form>"
+            )
+            itens.append(f"<li class='inativo'><span>{_esc(o['nome'])} (desativado)</span>{acao}</li>")
+
+    corpo = f"""
+    <div class="cartao">
+      {erro_html}{aviso_html}
+      <ul class="lista-ops">{''.join(itens)}</ul>
+      <form method="post" action="/operadores/criar" style="margin-top:18px">
+        <label>Novo operador</label>
+        <input type="text" name="nome" placeholder="Nome" autocomplete="off" required>
+        <label>Senha</label>
+        <input type="password" name="senha" required>
+        <label>Repita a senha</label>
+        <input type="password" name="senha2" required>
+        <button type="submit">Cadastrar operador</button>
+      </form>
+    </div>
+    <div class="rodape"><a href="/painel">← Voltar ao Painel</a> &nbsp;·&nbsp;
+      <a href="/logout">Sair ({_esc(logado or '')})</a></div>"""
+    return _pagina_acesso(corpo, titulo="Operadores", sub="Quem pode operar esta máquina")
+
+
+@app.route("/operadores", methods=["GET"])
+def operadores_pagina():
+    return _pagina_operadores()
+
+
+@app.route("/operadores/criar", methods=["POST"])
+def operadores_criar():
+    nome = (request.form.get("nome") or "").strip()
+    senha = request.form.get("senha") or ""
+    senha2 = request.form.get("senha2") or ""
+    if senha != senha2:
+        return _pagina_operadores(erro="As duas senhas não são iguais.")
+    try:
+        operadores.criar(nome, senha)
+    except ValueError as e:
+        return _pagina_operadores(erro=str(e))
+    logger.info(f"OPERADORES | Cadastrado: {nome} (por {_operador_logado()})")
+    return _pagina_operadores(aviso=f"Operador “{nome}” cadastrado.")
+
+
+@app.route("/operadores/<nome>/desativar", methods=["POST"])
+def operadores_desativar(nome):
+    if nome == _operador_logado():
+        return _pagina_operadores(erro="Você não pode desativar a si mesmo enquanto está logado.")
+    if len(operadores.listar()) <= 1:
+        return _pagina_operadores(erro="É o último operador ativo — não dá para desativar (trancaria a base).")
+    operadores.desativar(nome)
+    logger.info(f"OPERADORES | Desativado: {nome} (por {_operador_logado()})")
+    return _pagina_operadores(aviso=f"Operador “{nome}” desativado.")
+
+
+@app.route("/operadores/<nome>/reativar", methods=["POST"])
+def operadores_reativar(nome):
+    operadores.reativar(nome)
+    logger.info(f"OPERADORES | Reativado: {nome} (por {_operador_logado()})")
+    return _pagina_operadores(aviso=f"Operador “{nome}” reativado.")
+
+
+@app.route("/historico", methods=["GET"])
+def historico():
+    """
+    Log de operações (governança) — quem fez o quê e quando. Só leitura, base +
+    login (o portão já barra remoto e exige operador). Mostra os eventos mais
+    recentes; ação automática do sistema (sem operador) aparece como “sistema”.
+    """
+    if not BANCO_DISPONIVEL:
+        corpo = "<div class='legenda'>Banco de dados indisponível.</div>"
+        return _pagina("Histórico", "painel", corpo, head_extra="")
+
+    try:
+        conn = bd.obter_conexao()
+        eventos = bd.listar_eventos(conn, limite=300)
+        conn.close()
+    except Exception as e:
+        logger.warning(f"HISTORICO | Falha ao ler eventos: {e}")
+        corpo = f"<div class='legenda'>Não foi possível ler o histórico: {_esc(e)}</div>"
+        return _pagina("Histórico", "painel", corpo, head_extra="")
+
+    td = "padding:8px;border-bottom:1px solid #eee;vertical-align:top"
+    linhas = []
+    for ev in eventos:
+        quando = _esc(ev.get("criado_em", ""))
+        quem = ev.get("operador")
+        quem_html = (f"<b>{_esc(quem)}</b>" if quem
+                     else "<span style='color:#adb5bd'>sistema</span>")
+        tipo = _esc((ev.get("tipo") or "").replace("_", " "))
+        desc = _esc(ev.get("descricao", ""))
+        linhas.append(
+            f"<tr><td style='{td};white-space:nowrap;color:#6c757d'>{quando}</td>"
+            f"<td style='{td}'>{quem_html}</td>"
+            f"<td style='{td};font-size:0.85em;color:#6c757d'>{tipo}</td>"
+            f"<td style='{td}'>{desc}</td></tr>"
+        )
+
+    if not linhas:
+        corpo = "<div class='legenda'>Nenhum evento registrado ainda.</div>"
+    else:
+        corpo = (
+            "<div class='legenda'>Log de operações (mais recentes primeiro). "
+            "“sistema” = ação automática (porteiro, cópia, auditoria, vigias); "
+            "um nome = operador que fez a ação na base.</div>"
+            "<table style='width:100%;border-collapse:collapse;font-size:0.9em'>"
+            "<thead><tr style='text-align:left;border-bottom:2px solid #dee2e6'>"
+            "<th style='padding:8px'>Quando</th><th style='padding:8px'>Quem</th>"
+            "<th style='padding:8px'>Tipo</th><th style='padding:8px'>O quê</th></tr></thead>"
+            "<tbody>" + "".join(linhas) + "</tbody></table>"
+        )
+    return _pagina("Histórico", "painel", corpo, head_extra="")
 
 
 # ── MULTI-TIPO (Nova Ficha v2, Fatia 5) ──────────────────────────────────────
@@ -639,12 +999,14 @@ def _processar_e_salvar_formulario(dados_recebidos, origem="FORMS",
         "nome_audio":       nome_audio_norm,
         "entrega_id":       entrega_id,
         "data_gravacao":    dados_recebidos.get("data_gravacao", "").strip(),
-        # "Quem preencheu?" (ficha remota): se o profissional marcou "Eu mesmo"
-        # (preenchido_por=proprio), o operador é o próprio nome — sem campo redundante.
-        # Senão, vale o que foi digitado (ou o operador da base, que manda texto livre).
+        # "Quem preencheu?": se o profissional marcou "Eu mesmo" (preenchido_por=
+        # proprio), o operador é o próprio nome. Senão, vale o que foi digitado; e,
+        # quando preenchido na BASE por um operador logado (login da Camada 5), cai
+        # automaticamente no nome dele — sem digitar. Remoto sem login fica None.
         "operador":         (nome_normalizado
                              if dados_recebidos.get("preenchido_por") == "proprio"
-                             else (dados_recebidos.get("operador", "").strip() or None)),
+                             else (dados_recebidos.get("operador", "").strip()
+                                   or (_operador_logado() if _host_local() else None))),
         # Campos editoriais (opcionais — não bloqueiam validação nem matching)
         "modelo_camera":    dados_recebidos.get("modelo_camera", "").strip() or None,
         "tipo_conteudo":    dados_recebidos.get("tipo_conteudo", "").strip().upper() or None,
@@ -7317,6 +7679,20 @@ def _pagina_painel(aviso=None, erro=None, resultado_teste=None):
         "⬅ Voltar ao saguão</a>"
         "</div>"
     )
+
+    # ── Operador logado (login da Camada 5) ──────────────────────────────────
+    _logado = _operador_logado()
+    if _logado:
+        partes.append(
+            "<div class='painel-secao' style='display:flex;align-items:center;"
+            "justify-content:space-between;gap:14px;flex-wrap:wrap'>"
+            f"<div>Operando como <b>{_esc(_logado)}</b></div>"
+            "<div style='display:flex;gap:10px'>"
+            "<a class='btn btn-secund' href='/historico'>Histórico</a>"
+            "<a class='btn btn-secund' href='/operadores'>Operadores</a>"
+            "<a class='btn btn-secund' href='/logout'>Sair</a>"
+            "</div></div>"
+        )
 
     # ── Projeto ativo ────────────────────────────────────────────────────────
     partes.append(

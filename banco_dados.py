@@ -26,6 +26,7 @@ Pré-requisitos:
 import sqlite3
 import os
 import json
+import threading
 import unicodedata
 from datetime import datetime
 
@@ -503,6 +504,12 @@ def inicializar_banco():
                 -- Ex: '{"score": 5, "criterios": {"camera": 3, "data": 2}}'
                 dados_json      TEXT,
 
+                -- Operador que causou o evento (login da Camada 5). NULL = ação
+                -- AUTOMÁTICA do sistema (porteiro/transferência/auditoria/vigias),
+                -- que rodam sem operador. Preenchido nas ações feitas na base por
+                -- um operador logado (governança: quem fez o quê).
+                operador        TEXT,
+
                 -- Timestamp de quando o evento ocorreu (sempre gravado, nunca editado)
                 criado_em       TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
             );
@@ -673,12 +680,35 @@ def inicializar_banco():
     # se NÃO deve acionar o Parashoot (material recebido = sem cartão físico).
     migrar_schema_cartoes(conn)
 
+    # Login da Camada 5: coluna `operador` na tabela `eventos` (quem fez a ação).
+    migrar_schema_eventos(conn)
+
     return conn
 
 
 # ── REGISTRO DE EVENTOS ───────────────────────────────────────────────────────
+#
+# Contexto do operador (login da Camada 5). O Flask, a cada requisição, deixa aqui
+# o nome do operador logado; assim qualquer registrar_evento disparado DENTRO da
+# ação (mesmo nas funções fundas deste módulo) é carimbado com quem fez — sem
+# precisar passar o operador por toda chamada. Os processos automáticos (porteiro,
+# transferência, auditoria, vigias) nunca definem o contexto → operador fica NULL
+# (= ação do sistema). É thread-local porque o Flask atende em várias threads.
+_ctx_operador = threading.local()
 
-def registrar_evento(conn, tipo, descricao, cartao_id=None, formulario_id=None, dados=None):
+
+def definir_operador_contexto(nome):
+    """Marca quem é o operador desta thread/requisição (chamado pelo Flask)."""
+    _ctx_operador.operador = (nome or None)
+
+
+def _operador_contexto():
+    """Operador da thread atual, ou None (ação automática do sistema)."""
+    return getattr(_ctx_operador, "operador", None)
+
+
+def registrar_evento(conn, tipo, descricao, cartao_id=None, formulario_id=None,
+                     dados=None, operador=None):
     """
     Insere um novo evento na tabela de auditoria.
 
@@ -713,13 +743,29 @@ def registrar_evento(conn, tipo, descricao, cartao_id=None, formulario_id=None, 
 
     timestamp_agora = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
-    cursor = conn.execute(
-        """
-        INSERT INTO eventos (tipo, cartao_id, formulario_id, descricao, dados_json, criado_em)
-        VALUES (?, ?, ?, ?, ?, ?)
-        """,
-        (tipo, cartao_id, formulario_id, descricao, dados_json, timestamp_agora)
-    )
+    # Quem fez: o explícito vence; senão, o operador do contexto (Flask); senão None
+    # (= ação automática do sistema). Nunca quebra se a coluna ainda não existir num
+    # banco muito antigo — cai no formato sem operador.
+    quem = operador if operador is not None else _operador_contexto()
+
+    try:
+        cursor = conn.execute(
+            """
+            INSERT INTO eventos (tipo, cartao_id, formulario_id, descricao, dados_json, operador, criado_em)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (tipo, cartao_id, formulario_id, descricao, dados_json, quem, timestamp_agora)
+        )
+    except sqlite3.OperationalError:
+        # Banco ainda sem a coluna `operador` (migração não rodou) — grava sem ela
+        # para nunca derrubar uma ação por causa do log.
+        cursor = conn.execute(
+            """
+            INSERT INTO eventos (tipo, cartao_id, formulario_id, descricao, dados_json, criado_em)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (tipo, cartao_id, formulario_id, descricao, dados_json, timestamp_agora)
+        )
 
     conn.commit()
 
@@ -4472,6 +4518,38 @@ def migrar_schema_cartoes(conn):
             "ALTER TABLE cartoes ADD COLUMN transcricao_tentada_em TEXT"
         )
         conn.commit()
+
+
+def migrar_schema_eventos(conn):
+    """
+    Adiciona a coluna `operador` à tabela `eventos` em bancos já existentes
+    (login da Camada 5 — governança: quem fez cada ação). NULL = ação automática
+    do sistema. Bancos novos já nascem com a coluna pelo DDL de inicializar_banco().
+    Idempotente e não-destrutivo (só ADD COLUMN).
+    """
+    colunas_existentes = {row[1] for row in conn.execute("PRAGMA table_info(eventos)")}
+    if "operador" not in colunas_existentes:
+        conn.execute("ALTER TABLE eventos ADD COLUMN operador TEXT")
+        conn.commit()
+
+
+def listar_eventos(conn, limite=200):
+    """
+    Lê os eventos mais recentes do log (tela /historico). Append-only, só leitura.
+    Devolve lista de dicts {id, tipo, descricao, operador, cartao_id, formulario_id,
+    criado_em}, do mais novo para o mais antigo.
+    """
+    cur = conn.execute(
+        """
+        SELECT id, tipo, descricao, operador, cartao_id, formulario_id, criado_em
+        FROM eventos
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (int(limite),),
+    )
+    cols = [d[0] for d in cur.description]
+    return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
 def salvar_transcricoes_arquivos(conn, cartao_id, resultados):
