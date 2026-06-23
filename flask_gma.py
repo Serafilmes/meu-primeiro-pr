@@ -7003,20 +7003,10 @@ def _painel_raiz():
 
 
 def _painel_criar_sinal(nome):
-    """Cria um arquivo-sinal vazio que o maestro (inicializar_gma.py) observa."""
+    """Cria um arquivo-sinal que o saguão (saguao.py) observa — hoje só .gma_encerrar."""
     caminho = os.path.join(_painel_raiz(), nome)
     with open(caminho, "w", encoding="utf-8") as f:
         f.write(datetime.now().isoformat())
-
-
-def _maestro_rodando():
-    """True se o inicializar_gma.py (o maestro) está no ar — só ele honra os sinais."""
-    try:
-        r = subprocess.run(["pgrep", "-f", "inicializar_gma.py"],
-                           capture_output=True, text=True, timeout=5)
-        return r.returncode == 0 and r.stdout.strip() != ""
-    except Exception:
-        return False
 
 
 def _saguao_rodando():
@@ -7293,14 +7283,8 @@ def _conexoes_cockpit():
     ]
 
 
-def _pagina_painel(aviso=None, erro=None, resultado_teste=None, recarregar=False):
-    """
-    Renderiza o cockpit do Painel de Controle.
-    recarregar=True injeta um auto-recarregamento: depois de uma troca/reinício,
-    o Flask sai do ar por alguns segundos; o script espera o servidor CAIR e
-    VOLTAR e só então recarrega a tela com o estado novo — assim o operador
-    nunca fica olhando a página velha (que parecia dizer "maestro não rodando").
-    """
+def _pagina_painel(aviso=None, erro=None, resultado_teste=None):
+    """Renderiza o cockpit do Painel de Controle."""
     if not PAINEL_DISPONIVEL:
         return _pagina("Painel de Controle", "painel",
                        "<div class='painel-secao'>Painel indisponível (painel_config.py não carregou).</div>",
@@ -7490,58 +7474,14 @@ def _pagina_painel(aviso=None, erro=None, resultado_teste=None, recarregar=False
         "</div>"
     )
 
-    script_recarregar = ""
-    if recarregar:
-        # Espera o servidor CAIR (reinício em curso) e VOLTAR, então recarrega.
-        # Só recarrega após o ciclo cair→voltar — nunca antes da hora.
-        script_recarregar = """
-<script>
-(function(){
-  var n = 0, MAX = 90, caiu = false;
-  function ping(){ return fetch(window.location.href, {credentials:'same-origin', cache:'no-store'}); }
-  function ciclo(){
-    n++;
-    ping().then(function(){
-      if (caiu) { window.location.reload(); return; }   // caiu e voltou → recarrega
-      if (n < MAX) setTimeout(ciclo, 800);              // ainda no ar (reinício não começou)
-    }).catch(function(){
-      caiu = true;                                       // servidor fora do ar = reiniciando
-      if (n < MAX) setTimeout(ciclo, 800);
-    });
-  }
-  setTimeout(ciclo, 1200);
-})();
-</script>"""
-
     return _pagina("Painel de Controle", "painel", "".join(partes),
-                   head_extra=f"<style>{PAINEL_CSS}</style>{script_recarregar}")
+                   head_extra=f"<style>{PAINEL_CSS}</style>")
 
 
 @app.route("/painel", methods=["GET"])
 def painel_cockpit():
     """Cockpit do operador (só base). Remoto recebe 403 pelo portão existente."""
     return _pagina_painel()
-
-
-@app.route("/painel/trocar", methods=["POST"])
-def painel_trocar():
-    """Troca o projeto ativo e dispara o reinício guiado."""
-    slug = (request.form.get("slug") or "").strip()
-    try:
-        painel_config.definir_ativo(slug)
-        _painel_criar_sinal(".gma_reiniciar")
-        logger.info(f"PAINEL | Projeto ativo trocado para '{slug}' + reinício solicitado")
-        if _maestro_rodando():
-            aviso = ("Trocando de projeto… o sistema está reiniciando no projeto escolhido. "
-                     "Esta tela recarrega sozinha em alguns segundos.")
-            return _pagina_painel(aviso=aviso, recarregar=True)
-        else:
-            aviso = ("Projeto escolhido salvo. O maestro não está rodando — ligue o sistema "
-                     "com “Iniciar GMA” para subir já no projeto novo.")
-            return _pagina_painel(aviso=aviso)
-    except Exception as e:
-        logger.warning(f"PAINEL | Falha ao trocar de projeto: {e}")
-        return _pagina_painel(erro=f"Não deu para trocar de projeto: {e}")
 
 
 @app.route("/painel/novo", methods=["POST"])
@@ -7703,19 +7643,6 @@ def painel_testar(chave):
     ok, msg = _testar_conexao(chave)
     logger.info(f"PAINEL | Teste '{chave}': {'OK' if ok else 'FALHA'} — {msg}")
     return _pagina_painel(resultado_teste=(chave, ok, msg))
-
-
-@app.route("/painel/reiniciar", methods=["POST"])
-def painel_reiniciar():
-    """Reinicia o sistema (sem trocar de projeto)."""
-    _painel_criar_sinal(".gma_reiniciar")
-    logger.info("PAINEL | Reinício solicitado")
-    if _maestro_rodando():
-        aviso = "Reiniciando o sistema… esta tela recarrega sozinha em alguns segundos."
-        return _pagina_painel(aviso=aviso, recarregar=True)
-    else:
-        aviso = "O maestro não está rodando — não há o que reiniciar. Use “Iniciar GMA” para ligar."
-        return _pagina_painel(aviso=aviso)
 
 
 @app.route("/painel/encerrar", methods=["POST"])

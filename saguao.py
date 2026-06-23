@@ -39,6 +39,7 @@ do projeto entra na Fatia 2.
 
 import fcntl
 import html
+import json
 import os
 import signal
 import subprocess
@@ -94,6 +95,36 @@ def projeto_rodando():
     """Retorna o slug do projeto rodando agora, ou None se o saguão está ocioso."""
     with _trava_sessao:
         return _sessao["slug"]
+
+
+# ── PROGRESSO DA ENTRADA (para a tela "subindo…") ───────────────────────────────
+#
+# Subir uma sessão leva alguns segundos (o subir_todos espera o Flask responder).
+# Em vez de bloquear o navegador nesse tempo, o saguão dispara a subida em SEGUNDO
+# PLANO e responde na hora com uma tela de espera, que acompanha o progresso por
+# aqui e redireciona para o projeto assim que o Flask está no ar.
+#   fase "subindo" → ainda ligando · "pronto" → redireciona · "erro" → mostra o aviso.
+_entrada = {"slug": None, "fase": None, "erro": None}
+_trava_entrada = threading.Lock()
+
+
+def _subir_em_segundo_plano(slug):
+    """
+    Sobe a sessão do projeto FORA da thread da requisição e registra o resultado
+    para a tela de espera acompanhar. O guard `_entrada["slug"] == slug` evita que
+    uma subida antiga, terminando atrasada, sobrescreva uma entrada mais recente.
+    """
+    try:
+        entrar_no_projeto(slug)
+        with _trava_entrada:
+            if _entrada["slug"] == slug:
+                _entrada["fase"] = "pronto"
+                _entrada["erro"] = None
+    except Exception as erro:
+        with _trava_entrada:
+            if _entrada["slug"] == slug:
+                _entrada["fase"] = "erro"
+                _entrada["erro"] = str(erro)
 
 
 # ── SUBIR / DESCER A SESSÃO DO PROJETO (nível 2) ────────────────────────────────
@@ -207,7 +238,7 @@ def criar_projeto_novo(nome):
 
 # ── RENDERIZAÇÃO DA TELA ─────────────────────────────────────────────────────────
 
-def _pagina(corpo_html):
+def _pagina(corpo_html, sub="Em qual projeto você quer entrar?"):
     """Embrulha o corpo numa página HTML completa, com o estilo do GMA."""
     return f"""<!DOCTYPE html>
 <html lang="pt-br">
@@ -252,12 +283,21 @@ def _pagina(corpo_html):
     .rodape {{ margin-top: 36px; color: #5c626b; font-size: 12px; text-align: center; line-height: 1.6; }}
     .aviso {{ width: 100%; max-width: 560px; background: #1f2530; border: 1px solid #33405a;
               border-radius: 10px; padding: 12px 16px; margin-bottom: 20px; font-size: 14px; color: #b9c4d6; }}
+    .subindo {{ width: 100%; max-width: 560px; text-align: center; padding: 36px 20px 12px; }}
+    .spinner {{ width: 46px; height: 46px; margin: 0 auto 22px; border-radius: 50%;
+                border: 4px solid #2a2e37; border-top-color: {VERDE_GMA};
+                animation: girar .9s linear infinite; }}
+    @keyframes girar {{ to {{ transform: rotate(360deg); }} }}
+    .subindo .nome {{ font-size: 18px; font-weight: 600; }}
+    .subindo .sub2 {{ color: #9aa0a8; font-size: 14px; margin-top: 8px; }}
+    .voltar {{ color: #80868f; font-size: 13px; text-decoration: none; }}
+    .voltar:hover {{ color: #b9c4d6; }}
   </style>
 </head>
 <body>
   <div class="marca">GMA</div>
   <h1>Saguão</h1>
-  <div class="sub">Em qual projeto você quer entrar?</div>
+  <div class="sub">{html.escape(sub)}</div>
   {corpo_html}
   <div class="rodape">
     O saguão fica sempre ligado nesta porta ({PORTA_SAGUAO}).<br>
@@ -322,6 +362,47 @@ def _corpo_lobby(aviso=None):
     return "".join(partes)
 
 
+def _pagina_subindo(slug):
+    """
+    Tela de espera enquanto a sessão do projeto sobe. Mostra um spinner e faz poll
+    do progresso (/entrando-status); ao ficar "pronto", redireciona para o Flask do
+    projeto; se der "erro", mostra o aviso aqui mesmo (nunca uma tela morta).
+    """
+    estado = painel_config.carregar_estado()
+    cfg = estado.get("projetos", {}).get(slug, {})
+    nome = html.escape(cfg.get("nome", slug or "projeto"))
+    corpo = f"""
+    <div class='subindo'>
+      <div class='spinner'></div>
+      <div class='nome'>Subindo a sessão de {nome}…</div>
+      <div class='sub2'>Ligando o Flask e os processos do projeto. Leva alguns segundos.</div>
+      <div id='erro' class='aviso' style='display:none; margin-top:22px'></div>
+      <div style='margin-top:26px'><a class='voltar' href='/'>⬅ Voltar ao saguão</a></div>
+    </div>
+    <script>
+    (function() {{
+      function passo() {{
+        fetch('/entrando-status', {{cache: 'no-store'}})
+          .then(function(r) {{ return r.json(); }})
+          .then(function(s) {{
+            if (s.fase === 'pronto') {{ window.location = s.destino; return; }}
+            if (s.fase === 'erro') {{
+              var e = document.getElementById('erro');
+              e.style.display = 'block';
+              e.textContent = 'Não deu certo: ' + (s.erro || 'erro desconhecido') +
+                              '. Volte ao saguão e tente de novo.';
+              return;
+            }}
+            setTimeout(passo, 800);
+          }})
+          .catch(function() {{ setTimeout(passo, 1200); }});
+      }}
+      setTimeout(passo, 900);
+    }})();
+    </script>"""
+    return _pagina(corpo, sub="Preparando o projeto…")
+
+
 # ── SERVIDOR HTTP ────────────────────────────────────────────────────────────────
 
 class SaguaoHandler(BaseHTTPRequestHandler):
@@ -358,6 +439,15 @@ class SaguaoHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path in ("/", "/saguao"):
             self._responder(_pagina(_corpo_lobby()))
+        elif self.path == "/entrando-status":
+            # JSON leve que a tela de espera consulta a cada ~1s. Lê só o progresso
+            # da entrada (lock próprio) — nunca trava esperando a subida terminar.
+            with _trava_entrada:
+                est = dict(_entrada)
+            porta = (painel_config.carregar_estado().get("porta") or "5050")
+            payload = {"fase": est["fase"], "erro": est["erro"],
+                       "destino": f"http://127.0.0.1:{porta}/"}
+            self._responder(json.dumps(payload), tipo="application/json; charset=utf-8")
         else:
             self._responder(_pagina("<div class='aviso'>Página não encontrada.</div>"), status=404)
 
@@ -366,11 +456,21 @@ class SaguaoHandler(BaseHTTPRequestHandler):
         try:
             if self.path == "/entrar":
                 slug = (dados.get("slug") or "").strip()
-                entrar_no_projeto(slug)
-                # Leva o operador para dentro do projeto (o Flask já subiu — o
-                # subir_todos espera o Flask responder antes de retornar).
-                porta = (painel_config.carregar_estado().get("porta") or "5050")
-                self._redirecionar(f"http://127.0.0.1:{porta}/")
+                # Já é o projeto que está rodando? Vai direto, sem tela de espera.
+                if projeto_rodando() == slug:
+                    porta = (painel_config.carregar_estado().get("porta") or "5050")
+                    self._redirecionar(f"http://127.0.0.1:{porta}/")
+                    return
+                # Marca "subindo" e dispara a subida em SEGUNDO PLANO; respondemos na
+                # hora com a tela de espera, que acompanha o progresso e redireciona
+                # ao projeto assim que o Flask responde (em vez de a tela congelar).
+                with _trava_entrada:
+                    _entrada["slug"] = slug
+                    _entrada["fase"] = "subindo"
+                    _entrada["erro"] = None
+                threading.Thread(target=_subir_em_segundo_plano,
+                                 args=(slug,), daemon=True).start()
+                self._responder(_pagina_subindo(slug))
                 return
             if self.path == "/sair":
                 voltar_ao_saguao()

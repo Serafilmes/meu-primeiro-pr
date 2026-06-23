@@ -45,9 +45,8 @@ echo ""
 echo "[NGROK] Verificando se o Flask GMA esta rodando na porta 5050..."
 if ! curl -s --max-time 2 http://127.0.0.1:5050/status > /dev/null 2>&1; then
     echo "[NGROK] AVISO: Flask nao respondeu em http://127.0.0.1:5050"
-    echo "[NGROK] Inicie o GMA primeiro:"
-    echo "[NGROK]   python3 /Users/serafa/GMA/inicializar_gma.py"
-    echo "[NGROK] Em seguida rode este script em outro terminal."
+    echo "[NGROK] Inicie o GMA primeiro (atalho 'Iniciar GMA' ou: python3 /Users/serafa/GMA/saguao.py)"
+    echo "[NGROK] e entre num projeto pelo saguão. Em seguida rode este script em outro terminal."
     echo ""
     exit 1
 fi

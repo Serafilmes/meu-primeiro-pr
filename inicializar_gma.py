@@ -109,12 +109,11 @@ SENTINELA = os.path.join(RAIZ_GMA, ".gma_ativo")
 TRAVA_MAESTRO = os.path.join(RAIZ_GMA, ".gma_maestro.lock")
 _trava_handle = None  # mantém o arquivo aberto pela vida do processo (segura o lock)
 
-# Sinais do Painel de Controle (Camada 5). O Flask cria estes arquivos quando o
-# operador clica em "Trocar projeto" / "Reiniciar" / "Encerrar". O maestro vigia
-# o laço de espera e age:
-#   .gma_reiniciar → desce todos os processos e sobe de novo no projeto escolhido
-#   .gma_encerrar  → desce tudo e finaliza o sistema (botão "Encerrar")
-SINAL_REINICIAR = os.path.join(RAIZ_GMA, ".gma_reiniciar")
+# Sinal de encerrar (Camada 5). O Painel (Flask) cria este arquivo quando o
+# operador clica em "Desligar o GMA"; quem comanda a sessão (hoje o SAGUÃO,
+# saguao.py) vigia o arquivo e desce tudo de forma limpa.
+# (A troca/reinício de projeto deixou de usar sinal: no modelo de 2 níveis o
+#  saguão sobe e desce a sessão direto — ver saguao.py.)
 SINAL_ENCERRAR = os.path.join(RAIZ_GMA, ".gma_encerrar")
 
 # Caminhos dos scripts que serão iniciados
@@ -664,13 +663,12 @@ def descer_todos(processos):
 
 
 def limpar_sinais():
-    """Remove os sinais do painel (caso tenham sobrado de uma sessão anterior)."""
-    for caminho in (SINAL_REINICIAR, SINAL_ENCERRAR):
-        try:
-            if os.path.isfile(caminho):
-                os.remove(caminho)
-        except OSError:
-            pass
+    """Remove o sinal de encerrar (caso tenha sobrado de uma sessão anterior)."""
+    try:
+        if os.path.isfile(SINAL_ENCERRAR):
+            os.remove(SINAL_ENCERRAR)
+    except OSError:
+        pass
 
 
 def main():
@@ -680,9 +678,13 @@ def main():
     1. Exibe o cabeçalho do GMA e aplica o projeto ativo (Painel de Controle).
     2. Cria o sentinela .gma_ativo.
     3. Sobe os seis processos no projeto ativo.
-    4. Entra em modo de espera, mostrando os logs e vigiando os sinais do painel
-       (.gma_reiniciar → reinicia no projeto escolhido; .gma_encerrar → encerra).
+    4. Entra em modo de espera, mostrando os logs e vigiando o sinal de encerrar
+       do painel (.gma_encerrar → desce tudo e finaliza).
     5. Ao receber Ctrl+C ou o sinal de encerrar: encerra tudo de forma limpa.
+
+    Observação: hoje o ponto de entrada do GMA é o saguão (saguao.py), que sobe e
+    desce a sessão do projeto. Este main() continua válido como arranque direto de
+    emergência (um projeto, sem troca ao vivo), mas não é o caminho normal.
     """
 
     # ── Trava de instância única (ANTES de tudo) ─────────────────────────────
@@ -755,11 +757,11 @@ def main():
     # Sobe os processos no projeto ativo
     processos = subir_todos()
     log("sistema", "Sistema GMA ativo. Ctrl+C encerra; o Painel de Controle pode "
-                   "reiniciar/trocar de projeto/encerrar.")
+                   "desligar o sistema.")
     print()
 
-    # ── Loop de espera + vigia dos sinais do painel ───────────────────────────
-    # O processo principal fica vivo aqui. Além do Ctrl+C, ele observa os sinais
+    # ── Loop de espera + vigia do sinal de encerrar ───────────────────────────
+    # O processo principal fica vivo aqui. Além do Ctrl+C, ele observa o sinal
     # criados pelo Flask quando o operador usa o Painel de Controle.
     try:
         while True:
@@ -777,45 +779,6 @@ def main():
                 log("sistema", "Sistema GMA encerrado pelo painel.")
                 print()
                 return
-
-            # Sinal de REINICIAR (botão "Trocar projeto" / "Reiniciar" no painel)
-            if os.path.isfile(SINAL_REINICIAR):
-                os.remove(SINAL_REINICIAR)
-                print()
-                log("sistema", "Sinal de REINICIAR recebido pelo painel. Reiniciando...")
-
-                # ── BLINDAGEM: a troca de projeto NUNCA pode derrubar o maestro ──
-                # Se uma etapa falhar (projeto com caminho ruim, porta presa etc.),
-                # registramos o aviso e SEGUIMOS DE PÉ — o operador continua podendo
-                # escolher outro projeto pelo painel. Antes, uma exceção aqui matava
-                # o maestro e deixava o Flask órfão vivo: a tela respondia mas dizia
-                # "o maestro não está rodando". É também o 1º tijolo do modelo de
-                # 2 níveis (o "saguão" do nível 1 não cai quando o projeto troca).
-                try:
-                    descer_todos(processos)
-                except Exception as erro:
-                    log("sistema", f"AVISO: falha ao descer os processos ({erro}).")
-
-                # Re-aplica o projeto ativo FORÇANDO (a escolha do operador vence).
-                try:
-                    slug, config = painel_config.aplicar_ao_ambiente(os.environ, forcar=True)
-                    log("sistema", f"Reiniciando no projeto: {config.get('nome', slug)} "
-                                   f"(banco: {os.environ.get('GMA_DB')})")
-                except Exception as erro:
-                    log("sistema", f"AVISO: falha ao reaplicar o projeto ({erro}).")
-
-                time.sleep(2)  # respiro para as portas/arquivos liberarem
-
-                try:
-                    processos = subir_todos()
-                    log("sistema", "Sistema GMA reiniciado.")
-                except Exception as erro:
-                    # A subida falhou — o maestro NÃO morre. Sem isto, sobraria um
-                    # Flask órfão e o painel acusaria "maestro não está rodando".
-                    processos = {}
-                    log("sistema", f"ERRO ao subir o projeto ({erro}). O maestro segue "
-                                   f"de pé — escolha outro projeto no painel ou tente de novo.")
-                print()
 
     except KeyboardInterrupt:
         # Ctrl+C recebido — encerra tudo de forma limpa
