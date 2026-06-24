@@ -187,6 +187,7 @@ Fluxo **totalmente automático:**
 **Fechado na s54 (build de design):**
 - **Glifo do símbolo:** infinito **cruzado** (a linha passa por si mesma — lê como ∞ até pequeno), monoline, **espessura média** (legível até 16px do ícone). Path canônico no doc.
 - **Estado trabalhando:** **"forma e dissolve"** — o laço se desenha do zero, fica inteiro aceso por um instante (o "selo") e dissolve pelo mesmo caminho; ritmo lento/espacial (~6s). Descartadas as animações de "dados correndo" (fluxo/pacotes/varredura — trânsito demais).
+- **Paleta completa** (`marca/6floor_paleta.css`): sistema de cor do mundo escuro, **um acento só** — o teal é a identidade, vermelho/âmbar entram só para alerta. Famílias: marca (teal/forte/claro/trilho), fundos sala-de-controle (4 profundidades, camadas sem sombra), borda + 3 níveis de texto, estados (ok=teal, aviso, erro). Variáveis CSS para usar ao aplicar nas telas. Tabela completa no doc.
 
 **Identidade do sistema (decidida na s53):**
 - **Nome:** **6floor** (minúsculas) — atemporal e pessoal: pra fora soa estrutura/prédio sólido; pra dentro lembra que a IA mora no 6º andar. Foneticamente embarcado pelo idealizador. (O nome de marca não é literal quanto à contagem de andares.)
@@ -194,7 +195,7 @@ Fluxo **totalmente automático:**
 - **Acento:** **teal** (`#2BB58C` / `#1D9E75`) — "sala de controle", calmo e atemporal.
 - **Símbolo:** os dois "o" de *floor* viram um **infinito** (∞ monoline, estilo da fonte). Conceito de "olhar/vigilância" fica nas entrelinhas. **Estado vivo:** em repouso = ∞ calmo; **trabalhando** = "forma e dissolve" (s54 — o laço se desenha, fica inteiro aceso e dissolve, lento/espacial), indicador de status que ecoa as barras de progresso por andar e o andar 8/P&D, permanente. (A ideia inicial do "cometa que percorre o laço" foi descartada na s54 por ter trânsito demais.)
 - **Mundo visual:** ferramenta séria de logagem/DIT moderna (linhagem Hedge/Silverstack + Frame.io/Linear) — fundo escuro, um acento só; ícone do app legível até 16px.
-- Falta (build futuro): ícone do app real (tamanhos do macOS), paleta completa, grid/construção do glifo, aplicar a marca nas telas do Flask, lockup em contornos (texto→paths) e materiais de apresentação.
+- Falta (build futuro): ícone do app real (tamanhos do macOS), grid/construção do glifo, aplicar a marca nas telas do Flask, lockup em contornos (texto→paths) e materiais de apresentação.
 
 ### Camada 8 — P&D · Pesquisa & Desenvolvimento `[Aberta — andar permanente]`
 A **cobertura** do prédio: não é um elo da esteira de mídia (não processa cartão), e sim o andar que **olha por cima de todos os outros**. Duas direções:
@@ -232,7 +233,7 @@ Diferente das camadas 1–7, **não entrega uma peça e fecha**: é um andar **p
 ├── logs/                    ← porteiro · leitor · flask · matcher · transferencia · copiador
 ├── TESTE LOGAGEM/           ← destino de teste local
 ├── _arquivo/                ← documento_mestre_GMA.md (congelado, referência histórica)
-├── marca/                   ← [C7] arquivos da marca: 6floor_simbolo.svg · _trabalhando.svg · _lockup.svg
+├── marca/                   ← [C7] arquivos da marca: 6floor_simbolo.svg · _trabalhando.svg · _lockup.svg · 6floor_paleta.css
 ├── desenho_camada7_marca_GMA.md ← [C7] fonte de verdade da marca (decisões + path canônico + keyframes)
 ├── organograma_GMA.md       ← mapa visual do projeto
 ├── contexto_atual_GMA.md    ← estado atual + próximos passos (CARREGAR SEMPRE)

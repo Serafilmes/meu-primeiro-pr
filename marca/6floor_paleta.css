@@ -1,0 +1,32 @@
+/* 6floor — paleta da marca (Camada 7, s54)
+   Variáveis de cor do mundo escuro "sala de controle".
+   Fonte de verdade: desenho_camada7_marca_GMA.md.
+   Use estas variáveis ao aplicar a marca nas telas (Flask): nunca hex solto. */
+
+:root {
+  /* Tipografia */
+  --6f-fonte: 'Space Grotesk', system-ui, sans-serif;
+
+  /* MARCA — o único acento */
+  --6f-teal:        #2BB58C;   /* acento principal */
+  --6f-teal-forte:  #1D9E75;   /* pressionado / borda do acento */
+  --6f-teal-claro:  #3DD3A6;   /* realce / hover sobre o escuro */
+  --6f-teal-trilho: #132F26;   /* teal apagado: trilho do infinito, fundos sutis */
+
+  /* FUNDOS — sala de controle (do mais fundo ao mais alto) */
+  --6f-bg-base:       #0B100E; /* fundo do app */
+  --6f-bg-superficie: #0E1513; /* painéis */
+  --6f-bg-elevado:    #131C19; /* cartões */
+  --6f-bg-hover:      #1A2521; /* item ativo / hover */
+
+  /* LINHAS E TEXTO */
+  --6f-borda:    #243430;      /* linhas / separadores */
+  --6f-texto:    #EAF0EE;      /* texto primário */
+  --6f-texto-2:  #9DB0AA;      /* texto secundário */
+  --6f-texto-3:  #5E726C;      /* texto terciário / dicas */
+
+  /* ESTADOS — só para alerta (ok = a própria marca) */
+  --6f-ok:    #2BB58C;
+  --6f-aviso: #E0A33B;
+  --6f-erro:  #E5645B;
+}

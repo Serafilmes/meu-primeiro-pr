@@ -39,6 +39,48 @@
 - **Um acento só.** Nada de segunda cor decorativa.
 - (Alternativas mostradas e descartadas na s53: ciano e âmbar.)
 
+### Paleta completa (fechada na s54) — `marca/6floor_paleta.css`
+
+Sistema de cor do mundo escuro. **Regra:** o teal é o único acento de identidade;
+vermelho e âmbar entram **só para alerta**, nunca como decoração. Ao aplicar nas
+telas, usar as variáveis CSS — nunca hex solto.
+
+**Marca (o único acento)**
+| token | hex | uso |
+|---|---|---|
+| `--6f-teal` | `#2BB58C` | acento principal |
+| `--6f-teal-forte` | `#1D9E75` | pressionado / borda do acento |
+| `--6f-teal-claro` | `#3DD3A6` | realce / hover sobre o escuro |
+| `--6f-teal-trilho` | `#132F26` | teal apagado: trilho do infinito, fundos sutis |
+
+**Fundos (sala de controle — do mais fundo ao mais alto)**
+| token | hex | uso |
+|---|---|---|
+| `--6f-bg-base` | `#0B100E` | fundo do app |
+| `--6f-bg-superficie` | `#0E1513` | painéis |
+| `--6f-bg-elevado` | `#131C19` | cartões |
+| `--6f-bg-hover` | `#1A2521` | item ativo / hover |
+
+(O degrau de fundos cria "camadas" numa tela escura **sem usar sombra**.)
+
+**Linhas e texto**
+| token | hex | uso |
+|---|---|---|
+| `--6f-borda` | `#243430` | linhas / separadores |
+| `--6f-texto` | `#EAF0EE` | texto primário |
+| `--6f-texto-2` | `#9DB0AA` | texto secundário |
+| `--6f-texto-3` | `#5E726C` | texto terciário / dicas |
+
+**Estados (só para alerta — ok = a própria marca)**
+| token | hex | uso |
+|---|---|---|
+| `--6f-ok` | `#2BB58C` | saúde / sucesso (= teal) |
+| `--6f-aviso` | `#E0A33B` | âmbar |
+| `--6f-erro` | `#E5645B` | vermelho |
+
+Conversa direto com o que já existe: a bolinha 🟢/🔴/🟡 do Sheets no Painel e as
+barras de progresso por andar.
+
 ## 4. O símbolo — o infinito que vira status
 
 Os dois "o" de *floor* viram um **infinito (∞) monoline**, no estilo da fonte.
