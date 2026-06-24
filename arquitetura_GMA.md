@@ -86,7 +86,7 @@ ZONA 3 — NUVEM/ENTREGA
 
 ---
 
-## 7. As 7 camadas do roadmap
+## 7. As camadas do roadmap (1–7 operacionais + 8 P&D)
 
 ### Camada 1 — Check-in e identificação ✅
 Processos: `porteiro.py` · `leitor_midia.py` · `matcher.py` · `flask_gma.py`
@@ -181,9 +181,21 @@ Fluxo **totalmente automático:**
 - A transcrição nasce colada à entrega de áudio (`entrega_id`); só o texto/resumo vai para a planilha, nunca o arquivo.
 - Sempre assíncrono, depois do evento, nunca no ciclo crítico.
 
-### Camada 7 — Marca & Design `[Planejada — sem prazo de data]`
-- Logo, paleta, tipografia, grid
-- Layouts de interface e materiais de apresentação
+### Camada 7 — Marca & Design `[Iniciada — identidade definida (s53)]`
+**Identidade do sistema (decidida na s53, sem código):**
+- **Nome:** **6floor** (minúsculas) — atemporal e pessoal: pra fora soa estrutura/prédio sólido; pra dentro lembra que a IA mora no 6º andar. Foneticamente embarcado pelo idealizador. (O nome de marca não é literal quanto à contagem de andares.)
+- **Tipografia:** **Space Grotesk** (proporcional nascida da monoespaçada Space Mono — moderna, com personalidade). "l" reto mantido. Escolha do idealizador.
+- **Acento:** **teal** (`#2BB58C` / `#1D9E75`) — "sala de controle", calmo e atemporal.
+- **Símbolo:** os dois "o" de *floor* viram um **infinito** (∞ monoline, estilo da fonte). Conceito de "olhar/vigilância" fica nas entrelinhas. **Estado vivo:** em repouso = ∞ calmo; **trabalhando** = um cometa percorre o infinito (vira indicador de status, ecoando as barras de progresso por andar e o andar 8/P&D, permanente).
+- **Mundo visual:** ferramenta séria de logagem/DIT moderna (linhagem Hedge/Silverstack + Frame.io/Linear) — fundo escuro, um acento só; ícone do app legível até 16px.
+- Falta (build futuro): refino fino do glifo do símbolo, paleta completa, grid, layouts de interface e materiais de apresentação.
+
+### Camada 8 — P&D · Pesquisa & Desenvolvimento `[Aberta — andar permanente]`
+A **cobertura** do prédio: não é um elo da esteira de mídia (não processa cartão), e sim o andar que **olha por cima de todos os outros**. Duas direções:
+- **Pra fora:** vigia, pesquisa e testa as melhores **ferramentas e processos** — o que pode melhorar o sistema (custo, velocidade, segurança, qualidade) e o que já existe lá fora que valha adotar.
+- **Pra dentro:** zela pelo **pleno funcionamento** do sistema — saúde dos processos, regressões, dívidas técnicas, "o que pede atenção agora".
+
+Diferente das camadas 1–7, **não entrega uma peça e fecha**: é um andar **permanente**, sempre aberto (por isso não tem barra de progresso). Aberta na s52 como anúncio/identidade; sem agente nem código próprio por enquanto. Próximo possível: criar o agente de pesquisa (nome a definir) com um ritual de varredura periódica.
 
 ---
 

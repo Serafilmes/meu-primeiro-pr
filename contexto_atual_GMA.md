@@ -1,7 +1,7 @@
 # Contexto Atual — Sistema GMA
 ## Estado vivo do projeto (carregar em TODA sessão junto com `arquitetura_GMA.md`)
 
-> Última atualização: 2026-06-22 (sessão 51)
+> Última atualização: 2026-06-24 (sessão 53 — Camada 7 · identidade do 6floor definida)
 > Para detalhes técnicos históricos, ver `historico_GMA.md` (não carregar por padrão).
 
 ---
@@ -16,11 +16,33 @@
 | 4 | Auditoria + liberação do cartão | ✅ Concluída — ciclo integrado testado; **audita material RECEBIDO sem acionar o Parashoot** (não há cartão pra ejetar) (s43) |
 | 5 | Plataforma profissional + multi-máquina | 🔧 Em construção — **Painel Fatia 1 ✅ (s37)**; **s40:** Pasta de recebidos, trava de instância e ngrok automático; **s42:** **SAGUÃO DE 2 NÍVEIS construído ✅** (`saguao.py` — térreo na 5055 que nunca cai; entrar/voltar sobe/desce a sessão do projeto sem reinício; substitui o reinício-na-troca da s41) ([[saguao-dois-niveis]]); **s50:** **saguão "fechado"** — removido o mecanismo de reinício antigo (código morto: `.gma_reiniciar` + rotas `/painel/trocar`+`/painel/reiniciar` + `_maestro_rodando`) e adicionado **feedback "subindo…"** no Entrar (tela de espera com spinner + poll, sobe em segundo plano, mostra erro sem travar); **s51:** **LOGIN DO OPERADOR ✅** — `operadores.py` (armazém GLOBAL, senha em hash pbkdf2); barreira na base (operação exige login, câmera remota intacta, à prova de tranca); telas `/login`·`/logout`·`/operadores`; carimba o log + "quem preencheu" + tela `/historico` |
 | 6 | IA assíncrona | 🟢 INICIADA — desenho das **3 camadas de IA** + agente `ia-gma` (s44); **1º TIJOLO (s45): transcrição de áudio (Whisper local) POR ARQUIVO** (`.venv_ia` + `transcritor.py`; `arquivos.transcricao`); **MISSÃO A — Fatia 1 ✅ (s47): busca textual mecânica na planilha** (sem IA/API; cruza transcrição + classificação + identificação; `banco_dados.buscar_na_planilha`); **TRANSCRIÇÃO AUTOMÁTICA ✅ (s48): vigia `vigia_transcricao.py`** (gatilho pós-cópia; carimbo `cartoes.transcricao_tentada_em` evita loop em cartão sem fala); **MISSÃO A — Fatia 2 ✅ (s49): busca CONVERSACIONAL (LLM)** — `assistente_ia.py` (tradutor+redator) põe o Claude (Haiku, `.venv_ia` via subprocesso) por cima da Fatia 1; 3 estados real/**simulado**/desligado, degrada sem chave; barra "🤖 Perguntar" na /planilha; **rodando em API SIMULADA (custo zero), chave adiada pelo idealizador**. Próximo: Missão A Fatia 2 com chave real · trilha de áudio dos vídeos ([[transcricao-audio-c6]], [[camada6-tres-camadas-ia]]) |
-| 7 | Marca e design | 📋 Planejada — foco desejado, **sem prazo de data** (s33) |
+| 7 | Marca e design | 🟢 INICIADA — **identidade definida (s53, sem código):** nome **6floor** (minúsculas); fonte **Space Grotesk**; acento **teal** (`#2BB58C`); símbolo = os dois "o" de *floor* viram um **infinito** (∞ monoline) que **vira status** quando o sistema trabalha (cometa percorre o laço); mundo escuro "sala de controle" (linhagem Hedge/Silverstack + Frame.io); ícone legível até 16px. Falta: refino do glifo, paleta completa, grid, layouts/materiais. **Sem prazo de data** (s33) |
+| 8 | P&D · Pesquisa & Desenvolvimento | ♾️ ABERTA — andar **permanente** (s52): a **cobertura** do prédio. Diferente das camadas 1–7, não é elo da esteira de mídia (não processa cartão). Olha **pra fora** (vigia/pesquisa/testa as melhores ferramentas e processos) e **pra dentro** (zela pelo pleno funcionamento do sistema). Não entrega uma peça e fecha — acompanha sempre. Anunciada na s52; sem agente/código próprio ainda |
 
 ---
 
 ## O que acabou de ser feito (sessões recentes)
+
+### ✅ Sessão 53 (IDENTIDADE) — CAMADA 7 INICIADA: a marca do 6floor (nome + fonte + cor + símbolo)
+**Arquivos:** `organograma_GMA.md`, `contexto_atual_GMA.md`, `arquitetura_GMA.md` (só mapas). Sessão de design/identidade conduzida pelo orquestrador. **Sem código.**
+> O idealizador escolheu avançar a **Camada 7** (recomendação minha: como o teste multi-máquina exige bancada física, a C7 rende entregável de mesa). Conversa longa de marca, com vários rascunhos visuais até convergir.
+
+- **🏷️ NOME — 6floor (confirmado):** o "6" veio da faísca de que a IA mora no 6º andar; foneticamente embarcado. Reenquadre que assumimos: pra fora soa **estrutura/prédio sólido** (não "IA"), pra dentro guarda o sentido pessoal. Minúsculas (mais fluido). Risco discutido: mistura "6"(pt) + "floor"(en) — fica como estilização.
+- **🔤 FONTE — Space Grotesk (escolha do idealizador):** ele bateu o martelo nela depois de comparar com IBM Plex Mono / Archivo / Sora / JetBrains Mono. Eu havia recomendado uma mono (Plex/JetBrains) pela credibilidade de "ferramenta séria" e por resolver o "l↔1"; ele preferiu a Space Grotesk pela cara. **"l" reto mantido** (aceita a leve ambiguidade; o rabinho discreto fica disponível se ele quiser depois).
+- **🎨 ACENTO — teal (`#2BB58C`/`#1D9E75`):** "sala de controle", calmo, atemporal. (Alternativas mostradas: ciano e âmbar.)
+- **♾️ SÍMBOLO — o infinito que vira status:** os dois "o" de *floor* viram um **∞ monoline** no estilo da fonte. O conceito de "olhar/vigilância" (ideia inicial dele) ficou **nas entrelinhas** (as pupilas literais não funcionaram — abandonadas). **Estado vivo:** repouso = ∞ calmo; **trabalhando = um cometa percorre o infinito** → indicador de status, que ecoa as barras de progresso por andar e o andar 8/P&D (permanente, ♾️). Caminho rejeitado: laço cruzado "fita/gravata" (destoava da tipografia) e anéis lado a lado (não liam como infinito).
+- **🖥️ MUNDO VISUAL:** ferramenta séria de logagem/DIT **moderna** — linhagem Hedge/Pomfort Silverstack/ShotPut + Frame.io/Linear. Fundo escuro, um acento só, ícone do app legível **até 16px**.
+- **🔶 FALTA (build futuro da C7):** refino fino do glifo do símbolo, paleta completa, grid, layouts de interface e materiais de apresentação. A barra de progresso do andar 7 saiu do zero.
+- **🔶 PRÓXIMO (escolha do idealizador):** seguir a C7 (aplicar a marca nas telas/ícone real) · **teste de multi-máquina** (gate protótipo→produto, exige bancada) · empacotar `.app` · ou Missão A Fatia 2 com chave real.
+
+### ✅ Sessão 52 (ANÚNCIO/IDENTIDADE) — ANDAR 8 ABERTO: P&D (Pesquisa & Desenvolvimento)
+**Arquivos:** `organograma_GMA.md`, `contexto_atual_GMA.md`, `arquitetura_GMA.md` (só mapas). Sessão breve, conduzida pelo orquestrador. **Sem código.**
+> O idealizador abriu uma sessão curta só para **anunciar um novo andar**: o **8 · P&D**, o andar de Pesquisa & Desenvolvimento, que fica atento às melhores ferramentas e processos e zela para que o sistema esteja em pleno funcionamento.
+
+- **🛰️ O que é o andar 8 (P&D):** a **cobertura** do prédio — diferente das camadas 1–7, **não é um elo da esteira de mídia** (não processa cartão). Olha em duas direções: **pra fora** (vigia/pesquisa/testa as melhores ferramentas e processos) e **pra dentro** (zela pelo pleno funcionamento — saúde dos processos, regressões, dívidas técnicas, "o que pede atenção agora").
+- **♾️ Andar permanente:** não entrega uma peça e fecha; fica **sempre aberto**. Por isso não tem barra de progresso como os outros — acompanha o tempo todo.
+- **📝 Registrado nos 3 mapas:** linha na tabela de camadas (contexto), bloco no prédio + cabeçalho (organograma), nova seção "Camada 8" (arquitetura).
+- **🔶 PRÓXIMO:** se/quando o idealizador quiser, criar o agente de pesquisa (nome a definir) e dar a ele um ritual (ex.: varredura periódica de ferramentas e dívidas técnicas). Por ora é **identidade** — o andar existe no mapa.
 
 ### ✅ Sessão 51 (BUILD) — LOGIN DO OPERADOR (C5): identidade + barreira + carimbo do log
 **Arquivos:** `operadores.py` (NOVO), `flask_gma.py`, `banco_dados.py`, `.gitignore` + `teste_login_operadores.py` (NOVO, 27 checagens) e `teste_carimbo_operador.py` (NOVO, 13). Feito direto (orquestrador). **Commitado e PUSH no `main`.**
