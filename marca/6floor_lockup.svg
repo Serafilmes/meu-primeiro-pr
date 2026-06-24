@@ -1,0 +1,16 @@
+<svg width="680" height="190" viewBox="0 0 680 190" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>6floor — lockup (palavra com o infinito no lugar dos dois "o")</title>
+  <desc>O nome 6floor em Space Grotesk: 6, f, l, depois o infinito monoline no lugar dos dois o, e r. Versão para fundo escuro.</desc>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&amp;display=swap');
+    .word { font-family:'Space Grotesk', sans-serif; font-weight:500; fill:#EAF0EE; }
+    .glyph { fill:none; stroke:#2BB58C; stroke-linecap:round; stroke-linejoin:round; }
+  </style>
+  <rect x="0" y="0" width="680" height="190" rx="22" fill="#0E1513"/>
+  <text x="246" y="118" class="word" font-size="76" letter-spacing="-1">6fl</text>
+  <g transform="translate(392,94) scale(0.45)">
+    <path class="glyph" vector-effect="non-scaling-stroke" stroke-width="7"
+      d="M0,0 C-32,-48 -106,-48 -106,0 C-106,48 -32,48 0,0 C32,-48 106,-48 106,0 C106,48 32,48 0,0 Z"/>
+  </g>
+  <text x="443" y="118" class="word" font-size="76" letter-spacing="-1">r</text>
+</svg>

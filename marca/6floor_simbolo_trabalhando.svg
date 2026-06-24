@@ -1,0 +1,15 @@
+<svg width="260" height="140" viewBox="0 0 260 140" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>6floor — símbolo trabalhando (forma e dissolve)</title>
+  <desc>O símbolo do 6floor no estado ativo: o laço do infinito se desenha do zero, fica inteiro aceso por um instante e dissolve pelo mesmo caminho, em ritmo calmo. Indicador de status.</desc>
+  <style>
+    .fantasma { fill:none; stroke:#2BB58C; stroke-opacity:0.10; stroke-linecap:round; stroke-linejoin:round; }
+    .forma { fill:none; stroke:#2BB58C; stroke-linecap:round; stroke-linejoin:round; stroke-dasharray:1000 1000; animation:forma 6s ease-in-out infinite; }
+    @keyframes forma { 0% { stroke-dashoffset:1000; } 46% { stroke-dashoffset:0; } 54% { stroke-dashoffset:0; } 100% { stroke-dashoffset:-1000; } }
+  </style>
+  <g transform="translate(130,70)">
+    <path class="fantasma" stroke-width="13"
+      d="M0,0 C-32,-48 -106,-48 -106,0 C-106,48 -32,48 0,0 C32,-48 106,-48 106,0 C106,48 32,48 0,0 Z"/>
+    <path class="forma" stroke-width="13" pathLength="1000"
+      d="M0,0 C-32,-48 -106,-48 -106,0 C-106,48 -32,48 0,0 C32,-48 106,-48 106,0 C106,48 32,48 0,0 Z"/>
+  </g>
+</svg>
