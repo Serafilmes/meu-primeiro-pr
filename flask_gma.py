@@ -2229,10 +2229,40 @@ def _pagina(titulo, aba, corpo, head_extra=""):
         .planilha-tabela td {{ padding:9px 12px; border-bottom:1px solid #f1f3f5; }}
         .planilha-tabela tr:hover td {{ background:#f8f9fa; }}
         .mono {{ font-family:ui-monospace,Menlo,monospace; font-size:0.92em; color:#495057; }}
+
+        /* ── TEMA ESCURO 6floor — escopado à tela Acompanhamento (Kanban) ──
+           Só vale em body.pag-kanban; as outras telas seguem claras até a sua
+           própria fatia. Overrides depois das regras claras p/ vencer por ordem. */
+        body.pag-kanban {{ background:var(--6f-bg-base); color:var(--6f-texto); }}
+        .pag-kanban .legenda {{ color:var(--6f-texto-2); }}
+        .pag-kanban .vazio, .pag-kanban .coluna-vazia {{ color:var(--6f-texto-3); }}
+        .pag-kanban .coluna {{ background:var(--6f-bg-superficie); }}
+        .pag-kanban .coluna-head {{ background:var(--6f-bg-elevado); color:var(--6f-texto);
+                                    border-bottom:1px solid var(--6f-borda); }}
+        .pag-kanban .contador {{ background:var(--6f-bg-hover); color:var(--6f-texto-2); }}
+        .pag-kanban .dia-head {{ color:var(--6f-texto-2); }}
+        .pag-kanban .dia-head::before {{ color:var(--6f-texto-3); }}
+        .pag-kanban .dia-cont {{ color:var(--6f-texto-3); }}
+        .pag-kanban .card-kanban {{ background:var(--6f-bg-elevado);
+                                    border:1px solid var(--6f-borda); box-shadow:none; }}
+        .pag-kanban .card-titulo {{ color:var(--6f-texto); }}
+        .pag-kanban .card-meta {{ color:var(--6f-texto-2); }}
+        /* Concluído = mundo de sucesso → tinta teal apagada, não verde claro */
+        .pag-kanban .bar-concluido {{ background:var(--6f-teal-trilho);
+                                      border:1px solid #2f5a45; }}
+        .pag-kanban .bar-titulo {{ color:var(--6f-texto); }}
+        .pag-kanban .bar-tipo {{ color:var(--6f-bg-base); background:var(--6f-teal); }}
+        .pag-kanban .bar-tam, .pag-kanban .bar-rodape {{ color:var(--6f-texto-2); }}
+        /* Post-it: nota discreta no escuro (nada de amarelo gritante) */
+        .pag-kanban .postit {{ background:var(--6f-bg-superficie); border:1px solid var(--6f-borda);
+                               color:var(--6f-texto); }}
+        .pag-kanban .postit::placeholder {{ color:var(--6f-texto-3); }}
+        .pag-kanban .btn-postit {{ background:var(--6f-teal); color:var(--6f-bg-base); }}
+        .pag-kanban .btn-descartar {{ color:var(--6f-erro); }}
     </style>
     {head_extra}
 </head>
-<body>
+<body class="pag-{aba}">
     <header>
         <h1>{_marca_lockup(24)}<span class="titulo-pagina">{_esc(titulo)}</span></h1>
         <span class="info">Atualizado: {hora}</span>
