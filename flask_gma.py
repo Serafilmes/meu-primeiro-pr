@@ -567,6 +567,57 @@ def _portao_de_acesso():
 _VERDE_GMA = "#1D9E75"
 
 
+# ── MARCA 6floor (Camada 7) ──────────────────────────────────────────────────
+# Identidade visual aplicada às telas. A fonte de verdade da paleta é
+# marca/6floor_paleta.css (s54); aqui as MESMAS cores viram um bloco :root que o
+# Flask injeta no <head>. Regra: nunca cravar hex novo nas telas — usar var(--6f-…).
+
+# Bloco :root com a paleta do 6floor, para embutir DENTRO de um <style> existente.
+# Espelha marca/6floor_paleta.css (mundo escuro "sala de controle", um acento só).
+MARCA_VARS = """
+    :root {
+      --6f-fonte: 'Space Grotesk', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      --6f-teal:#2BB58C; --6f-teal-forte:#1D9E75; --6f-teal-claro:#3DD3A6; --6f-teal-trilho:#132F26;
+      --6f-bg-base:#0B100E; --6f-bg-superficie:#0E1513; --6f-bg-elevado:#131C19; --6f-bg-hover:#1A2521;
+      --6f-borda:#243430; --6f-texto:#EAF0EE; --6f-texto-2:#9DB0AA; --6f-texto-3:#5E726C;
+      --6f-ok:#2BB58C; --6f-aviso:#E0A33B; --6f-erro:#E5645B;
+    }
+"""
+
+# Carrega a Space Grotesk (Google Fonts). Precisa de internet; sem ela, o stack da
+# fonte cai em system-ui — nada quebra (a fonte é cosmética, fora do ciclo crítico).
+MARCA_FONTE = (
+    '<link rel="preconnect" href="https://fonts.googleapis.com">'
+    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+    '<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">'
+)
+
+
+def _marca_simbolo(altura=22, cor="var(--6f-teal)"):
+    """O símbolo do 6floor (infinito monoline cruzado) inline, para o cabeçalho.
+    Path canônico da s54 (marca/6floor_simbolo.svg)."""
+    return (
+        f'<svg height="{altura}" viewBox="0 0 260 140" aria-hidden="true" '
+        f'style="vertical-align:middle;display:inline-block" xmlns="http://www.w3.org/2000/svg">'
+        f'<g transform="translate(130,70)">'
+        f'<path fill="none" stroke="{cor}" stroke-width="13" stroke-linecap="round" '
+        f'stroke-linejoin="round" '
+        f'd="M0,0 C-32,-48 -106,-48 -106,0 C-106,48 -32,48 0,0 '
+        f'C32,-48 106,-48 106,0 C106,48 32,48 0,0 Z"/>'
+        f'</g></svg>'
+    )
+
+
+def _marca_lockup(altura=22):
+    """Lockup do cabeçalho: o símbolo ∞ + a palavra 6floor (Space Grotesk)."""
+    return (
+        '<span class="marca-lockup">'
+        f'{_marca_simbolo(altura)}'
+        '<span class="marca-nome">6floor</span>'
+        '</span>'
+    )
+
+
 def _pagina_acesso(corpo, titulo="Entrar", sub=""):
     """Molde escuro e centrado para as telas de login/operadores (sem abas)."""
     sub_html = f"<div class='sub'>{_esc(sub)}</div>" if sub else ""
@@ -575,43 +626,47 @@ def _pagina_acesso(corpo, titulo="Entrar", sub=""):
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>GMA — {_esc(titulo)}</title>
+  <title>6floor — {_esc(titulo)}</title>
+  {MARCA_FONTE}
   <style>
+    {MARCA_VARS}
     * {{ box-sizing:border-box; }}
-    body {{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-            background:#0f1115; color:#e8eaed; margin:0; min-height:100vh;
+    body {{ font-family:var(--6f-fonte);
+            background:var(--6f-bg-base); color:var(--6f-texto); margin:0; min-height:100vh;
             display:flex; flex-direction:column; align-items:center; padding:48px 20px; }}
-    .marca {{ font-size:13px; letter-spacing:3px; color:{_VERDE_GMA};
-              text-transform:uppercase; font-weight:700; margin-bottom:6px; }}
+    .marca {{ margin-bottom:16px; }}
+    .marca-lockup {{ display:inline-flex; align-items:center; gap:9px; }}
+    .marca-nome {{ font-size:22px; font-weight:600; letter-spacing:0.3px; color:var(--6f-texto); }}
     h1 {{ font-size:24px; margin:0 0 4px; font-weight:600; }}
-    .sub {{ color:#9aa0a8; margin-bottom:28px; font-size:15px; text-align:center; }}
-    .cartao {{ width:100%; max-width:420px; background:#1a1d24; border:1px solid #2a2e37;
+    .sub {{ color:var(--6f-texto-2); margin-bottom:28px; font-size:15px; text-align:center; }}
+    .cartao {{ width:100%; max-width:420px; background:var(--6f-bg-elevado); border:1px solid var(--6f-borda);
                border-radius:12px; padding:24px; }}
-    label {{ display:block; font-size:13px; color:#9aa0a8; margin:14px 0 5px; }}
+    label {{ display:block; font-size:13px; color:var(--6f-texto-2); margin:14px 0 5px; }}
     input, select {{ width:100%; font-family:inherit; font-size:15px; padding:11px 13px;
-                     border-radius:9px; border:1px solid #2a2e37; background:#14171d; color:#e8eaed; }}
+                     border-radius:9px; border:1px solid var(--6f-borda); background:var(--6f-bg-superficie); color:var(--6f-texto); }}
+    input:focus, select:focus {{ outline:none; border-color:var(--6f-teal); }}
     button {{ font-family:inherit; font-size:15px; font-weight:600; cursor:pointer; border:none;
               border-radius:9px; padding:12px 20px; margin-top:20px; width:100%;
-              background:{_VERDE_GMA}; color:#07130d; transition:filter .12s; }}
-    button:hover {{ filter:brightness(1.1); }}
-    .erro {{ background:#3a1f22; border:1px solid #5a3330; color:#f2b8b5; border-radius:9px;
+              background:var(--6f-teal); color:var(--6f-bg-base); transition:filter .12s; }}
+    button:hover {{ filter:brightness(1.08); }}
+    .erro {{ background:#2a1a1c; border:1px solid #5a3330; color:#f2b8b5; border-radius:9px;
              padding:11px 14px; margin-bottom:16px; font-size:14px; }}
-    .ok {{ background:#16271f; border:1px solid #2f5a45; color:#a8e0c4; border-radius:9px;
+    .ok {{ background:var(--6f-teal-trilho); border:1px solid #2f5a45; color:#a8e0c4; border-radius:9px;
            padding:11px 14px; margin-bottom:16px; font-size:14px; }}
     .lista-ops {{ list-style:none; padding:0; margin:0; }}
     .lista-ops li {{ display:flex; justify-content:space-between; align-items:center;
-                     padding:11px 0; border-bottom:1px solid #2a2e37; }}
+                     padding:11px 0; border-bottom:1px solid var(--6f-borda); }}
     .lista-ops li:last-child {{ border-bottom:none; }}
-    .lista-ops .inativo {{ color:#6c727b; }}
+    .lista-ops .inativo {{ color:var(--6f-texto-3); }}
     .btn-mini {{ width:auto; margin:0; padding:6px 12px; font-size:13px; font-weight:600;
-                 background:transparent; color:#c2554f; border:1px solid #5a3330; }}
+                 background:transparent; color:var(--6f-erro); border:1px solid #5a3330; }}
     .rodape {{ margin-top:24px; font-size:13px; }}
-    .rodape a {{ color:#80868f; text-decoration:none; }}
-    .rodape a:hover {{ color:#b9c4d6; }}
+    .rodape a {{ color:var(--6f-texto-3); text-decoration:none; }}
+    .rodape a:hover {{ color:var(--6f-texto); }}
   </style>
 </head>
 <body>
-  <div class="marca">GMA</div>
+  <div class="marca">{_marca_lockup(26)}</div>
   <h1>{_esc(titulo)}</h1>
   {sub_html}
   {corpo}
@@ -1980,13 +2035,14 @@ def painel():
 # CSS da barra de abas — compartilhado pelas três telas (entra também no painel).
 # String normal (não f-string): as chaves { } abaixo são CSS literal.
 CSS_ABAS = """
-    .abas { display:flex; gap:4px; background:#16213e; padding:0 24px; }
+    .abas { display:flex; gap:4px; background:var(--6f-bg-superficie); padding:0 24px;
+            border-bottom:1px solid var(--6f-borda); }
     .aba {
-        padding:11px 20px; color:#aeb8d0; text-decoration:none;
+        padding:11px 20px; color:var(--6f-texto-2); text-decoration:none;
         font-size:0.9em; font-weight:600; border-bottom:3px solid transparent;
     }
-    .aba:hover { color:#ffffff; }
-    .aba.ativa { color:#ffffff; border-bottom-color:#27ae60; background:#1a1a2e; }
+    .aba:hover { color:var(--6f-texto); }
+    .aba.ativa { color:var(--6f-texto); border-bottom-color:var(--6f-teal); background:var(--6f-bg-hover); }
 """
 
 
@@ -2103,15 +2159,23 @@ def _pagina(titulo, aba, corpo, head_extra=""):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GMA — {titulo}</title>
+    <title>6floor — {titulo}</title>
+    {MARCA_FONTE}
     <style>
+        {MARCA_VARS}
         * {{ box-sizing:border-box; margin:0; padding:0; }}
-        body {{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+        body {{ font-family:var(--6f-fonte);
                 background:#f0f2f5; color:#1a1a1a; font-size:14px; }}
-        header {{ background:#1a1a2e; color:#fff; padding:14px 24px;
+        header {{ background:var(--6f-bg-base); color:var(--6f-texto); padding:14px 24px;
+                  border-bottom:1px solid var(--6f-borda);
                   display:flex; justify-content:space-between; align-items:center; }}
-        header h1 {{ font-size:1.2em; font-weight:600; letter-spacing:0.5px; }}
-        header .info {{ font-size:0.85em; opacity:0.75; }}
+        header h1 {{ font-size:1.2em; font-weight:600; letter-spacing:0.3px;
+                     display:flex; align-items:center; gap:12px; }}
+        header .marca-lockup {{ display:inline-flex; align-items:center; gap:9px; }}
+        header .marca-nome {{ color:var(--6f-texto); font-weight:600; }}
+        header .titulo-pagina {{ color:var(--6f-texto-2); font-weight:500; font-size:0.82em;
+                                 padding-left:12px; border-left:1px solid var(--6f-borda); }}
+        header .info {{ font-size:0.85em; color:var(--6f-texto-3); }}
         {CSS_ABAS}
         main {{ padding:20px 24px; max-width:1320px; margin:0 auto; }}
         .legenda {{ color:#6c757d; font-size:0.9em; margin-bottom:16px; line-height:1.5; }}
@@ -2170,7 +2234,7 @@ def _pagina(titulo, aba, corpo, head_extra=""):
 </head>
 <body>
     <header>
-        <h1>GMA — {titulo}</h1>
+        <h1>{_marca_lockup(24)}<span class="titulo-pagina">{_esc(titulo)}</span></h1>
         <span class="info">Atualizado: {hora}</span>
     </header>
     {barra_abas(aba) if _host_local() else ''}
