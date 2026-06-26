@@ -5170,7 +5170,7 @@ def _bloco_operador_ficha(d, eh_operador):
 
 def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
                 bloquear_criticos=False, mostrar_recentes=True,
-                chips_selecionados=None, textos_selecionados=None):
+                chips_selecionados=None, textos_selecionados=None, novo=False):
     """
     Monta o HTML do formulário de check-in.
 
@@ -5184,6 +5184,26 @@ def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
     d = dados or {}
     sug = _sugestoes_gabarito()
     editando = (modo == "editar")
+
+    # ── Tela de descanso da aba Posts (operador) ────────────────────────────
+    # Inverte o peso (s57): o RELATÓRIO dos Posts é a tela de descanso e criar
+    # vira um botão "+ Novo Post" (→ /ficha?novo=1). Só dispara no GET LIMPO do
+    # operador: a câmera remota (mostrar_recentes False), a edição, e o
+    # re-render após erro de envio (traz `erro`/`dados`) caem no formulário.
+    if mostrar_recentes and not editando and not novo and not erro and dados is None:
+        relatorio = _fichas_recentes_html()
+        if not relatorio:
+            relatorio = ('<p class="legenda" style="text-align:center;padding:28px 0">'
+                         'Nenhum Post ainda. Crie o primeiro com "+ Novo Post".</p>')
+        corpo_descanso = f"""
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px;flex-wrap:wrap">
+      <p class="legenda" style="margin:0;max-width:560px">Os Posts deste evento, agrupados por status. Crie um novo ou gerencie os existentes (editar, cancelar, restaurar).</p>
+      <a href="/ficha?novo=1" style="background:var(--6f-teal-forte);color:#fff;text-decoration:none;font-weight:600;padding:10px 22px;border-radius:8px;white-space:nowrap">+ Novo Post</a>
+    </div>
+    {relatorio}"""
+        head_extra_descanso = f"<style>{CSS_FICHA}</style>{JS_CHIPS}{JS_CHIP_NOVO}{JS_TEXTO_GRUPO}{JS_FICHA_TOGGLES}{JS_SHOWS_CASCATA}"
+        return _pagina("Posts", "ficha", corpo_descanso, head_extra_descanso)
+
     action = f"/ficha/{ficha_id}/editar" if editando else "/ficha"
     bloco_erro = f'<div class="erro-box">⚠️ {_esc(erro)}</div>' if erro else ""
 
@@ -5226,7 +5246,14 @@ def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
                                                      eh_operador=eh_operador,
                                                      textos_selecionados=textos_selecionados)
 
+    # Link de volta à tela de Posts (operador no modo formulário; não na edição,
+    # que tem seu próprio Cancelar, nem no remoto, que não vê a lista de Posts).
+    voltar_posts = ('<a class="btn-secundario" href="/ficha" '
+                    'style="display:inline-block;margin-bottom:14px">← Voltar aos Posts</a>'
+                    if (mostrar_recentes and not editando) else '')
+
     corpo = f"""
+    {voltar_posts}
     <p class="legenda">{legenda}</p>
     {bloco_erro}
     {aviso_trava}
@@ -5261,8 +5288,7 @@ def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
         <button type="submit" class="btn-enviar">{texto_botao}</button>
         {'<a class="btn-secundario" href="/ficha">Cancelar</a>' if editando else ''}
       </div>
-    </form>
-    {_fichas_recentes_html() if (mostrar_recentes and not editando) else ''}"""
+    </form>"""
 
     head_extra = f"<style>{CSS_FICHA}</style>{JS_CHIPS}{JS_CHIP_NOVO}{JS_TEXTO_GRUPO}{JS_FICHA_TOGGLES}{JS_SHOWS_CASCATA}"
     titulo = "Editar ficha" if editando else "Nova Ficha"
@@ -5328,7 +5354,8 @@ def ficha_formulario():
     acesso remoto (link público das câmeras) ela é omitida — o câmera só preenche
     uma ficha nova, nunca vê nem edita as fichas dos outros.
     """
-    return _html_ficha(mostrar_recentes=_host_local()), 200, {"Content-Type": "text/html; charset=utf-8"}
+    novo = bool(request.args.get("novo"))
+    return _html_ficha(mostrar_recentes=_host_local(), novo=novo), 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
 @app.route("/ficha", methods=["POST"])
@@ -5436,7 +5463,7 @@ def ficha_enviar():
     # recebe apenas "preencher outra ficha".
     if _host_local():
         botoes = """
-        <a class="btn-secundario" href="/ficha">Preencher outra ficha</a>
+        <a class="btn-secundario" href="/ficha?novo=1">Preencher outra ficha</a>
         <a class="btn-secundario" href="/kanban">Ver no Mural</a>
         <a class="btn-secundario" href="/planilha">Ver na Planilha</a>"""
     else:
