@@ -593,28 +593,45 @@ MARCA_FONTE = (
 )
 
 
-def _marca_simbolo(altura=22, cor="var(--6f-teal)"):
-    """O símbolo do 6floor (infinito monoline cruzado) inline, para o cabeçalho.
-    Path canônico da s54 (marca/6floor_simbolo.svg)."""
+def _marca_lockup(altura=20):
+    """Wordmark do 6floor como UMA imagem SVG (6fl + símbolo + r, num só <svg>) — à prova de
+    quebra de linha: não mistura texto HTML com <svg> inline, então nada empilha. O texto usa
+    a fonte da página (Space Grotesk); `altura` = altura do lockup em px."""
+    p = ("M0,0 C0,-27.6 -22.4,-50 -50,-50 C-77.6,-50 -100,-27.6 -100,0 "
+         "C-100,27.6 -77.6,50 -50,50 C-22.4,50 0,27.6 0,0 "
+         "C0,-27.6 22.4,-50 50,-50 C77.6,-50 100,-27.6 100,0 "
+         "C100,27.6 77.6,50 50,50 C22.4,50 0,27.6 0,0 Z")
+    txt = ("font-family:var(--6f-fonte);font-weight:600;font-size:56px;"
+           "letter-spacing:-1px;fill:var(--6f-texto)")
     return (
-        f'<svg height="{altura}" viewBox="0 0 260 140" aria-hidden="true" '
-        f'style="vertical-align:middle;display:inline-block" xmlns="http://www.w3.org/2000/svg">'
-        f'<g transform="translate(130,70)">'
-        f'<path fill="none" stroke="{cor}" stroke-width="13" stroke-linecap="round" '
-        f'stroke-linejoin="round" '
-        f'd="M0,0 C-32,-48 -106,-48 -106,0 C-106,48 -32,48 0,0 '
-        f'C32,-48 106,-48 106,0 C106,48 32,48 0,0 Z"/>'
-        f'</g></svg>'
+        f'<svg height="{altura}" viewBox="0 6 178 60" role="img" '
+        'style="display:inline-block;vertical-align:middle" xmlns="http://www.w3.org/2000/svg">'
+        '<title>6floor</title>'
+        f'<text x="8" y="56" textLength="72" lengthAdjust="spacing" style="{txt}">6fl</text>'
+        '<g transform="translate(112.8,41.6) scale(0.288)">'
+        f'<path fill="none" stroke="var(--6f-teal)" stroke-width="24" stroke-linecap="round" '
+        f'stroke-linejoin="round" d="{p}"/>'
+        '</g>'
+        f'<text x="145.6" y="56" textLength="24" lengthAdjust="spacing" style="{txt}">r</text>'
+        '</svg>'
     )
 
 
-def _marca_lockup(altura=22):
-    """Lockup do cabeçalho: o símbolo ∞ + a palavra 6floor (Space Grotesk)."""
+def _marca_icone(altura=24, cor="var(--6f-teal)"):
+    """Só o símbolo (os dois "o" / ∞), em tamanho fixo — a opção de marca SEM a palavra.
+    Para favicon, selos compactos, cabeçalho recolhido. Mesmo glifo do wordmark."""
     return (
-        '<span class="marca-lockup">'
-        f'{_marca_simbolo(altura)}'
-        '<span class="marca-nome">6floor</span>'
-        '</span>'
+        f'<svg height="{altura}" viewBox="0 0 224 124" role="img" '
+        'style="vertical-align:middle;display:inline-block" xmlns="http://www.w3.org/2000/svg">'
+        '<title>6floor</title>'
+        '<g transform="translate(112,62)">'
+        f'<path fill="none" stroke="{cor}" stroke-width="24" stroke-linecap="round" '
+        'stroke-linejoin="round" '
+        'd="M0,0 C0,-27.6 -22.4,-50 -50,-50 C-77.6,-50 -100,-27.6 -100,0 '
+        'C-100,27.6 -77.6,50 -50,50 C-22.4,50 0,27.6 0,0 '
+        'C0,-27.6 22.4,-50 50,-50 C77.6,-50 100,-27.6 100,0 '
+        'C100,27.6 77.6,50 50,50 C22.4,50 0,27.6 0,0 Z"/>'
+        '</g></svg>'
     )
 
 
@@ -635,8 +652,6 @@ def _pagina_acesso(corpo, titulo="Entrar", sub=""):
             background:var(--6f-bg-base); color:var(--6f-texto); margin:0; min-height:100vh;
             display:flex; flex-direction:column; align-items:center; padding:48px 20px; }}
     .marca {{ margin-bottom:16px; }}
-    .marca-lockup {{ display:inline-flex; align-items:center; gap:9px; }}
-    .marca-nome {{ font-size:22px; font-weight:600; letter-spacing:0.3px; color:var(--6f-texto); }}
     h1 {{ font-size:24px; margin:0 0 4px; font-weight:600; }}
     .sub {{ color:var(--6f-texto-2); margin-bottom:28px; font-size:15px; text-align:center; }}
     .cartao {{ width:100%; max-width:420px; background:var(--6f-bg-elevado); border:1px solid var(--6f-borda);
@@ -2171,8 +2186,6 @@ def _pagina(titulo, aba, corpo, head_extra=""):
                   display:flex; justify-content:space-between; align-items:center; }}
         header h1 {{ font-size:1.2em; font-weight:600; letter-spacing:0.3px;
                      display:flex; align-items:center; gap:12px; }}
-        header .marca-lockup {{ display:inline-flex; align-items:center; gap:9px; }}
-        header .marca-nome {{ color:var(--6f-texto); font-weight:600; }}
         header .titulo-pagina {{ color:var(--6f-texto-2); font-weight:500; font-size:0.82em;
                                  padding-left:12px; border-left:1px solid var(--6f-borda); }}
         header .info {{ font-size:0.85em; color:var(--6f-texto-3); }}
@@ -2264,7 +2277,7 @@ def _pagina(titulo, aba, corpo, head_extra=""):
 </head>
 <body class="pag-{aba}">
     <header>
-        <h1>{_marca_lockup(24)}<span class="titulo-pagina">{_esc(titulo)}</span></h1>
+        <h1>{_marca_lockup(20)}<span class="titulo-pagina">{_esc(titulo)}</span></h1>
         <span class="info">Atualizado: {hora}</span>
     </header>
     {barra_abas(aba) if _host_local() else ''}

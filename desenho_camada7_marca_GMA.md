@@ -8,7 +8,8 @@
 > `marca/6floor_lockup.svg`.
 >
 > Histórico: identidade decidida na **s53** (sem código); glifo + animação fechados e
-> salvos na **s54**.
+> salvos na **s54**; glifo **afinado na s56** — saiu do infinito cruzado para **dois "o"
+> encostados** (mais unidade com a fonte) e o lockup ficou **fluido na palavra**.
 
 ---
 
@@ -85,18 +86,26 @@ barras de progresso por andar.
 
 Os dois "o" de *floor* viram um **infinito (∞) monoline**, no estilo da fonte.
 
-### Forma (o glifo) — fechado na s54
-- **Infinito CRUZADO:** a linha passa por si mesma no meio (como o ∞ tipográfico). É o que faz
-  ele ler como infinito mesmo pequeno.
-- **Espessura: MÉDIA.** Afina o suficiente pra ganhar elegância/precisão **e** ainda sobreviver
-  no 16px do ícone. (Espessa demais pesa; fina demais some no 16px.)
-- **Legível até 16px** — o "chão" do ícone do app; a espessura tem que aguentar esse tamanho.
+### Forma (o glifo) — afinado na s56 (era cruzado na s54)
+- **DOIS "o" ENCOSTADOS (infinito insinuado):** dois círculos do tamanho do "o" da Space Grotesk,
+  ligados por uma linha contínua que só se **toca** no meio (não cruza por cima de si mesma). O
+  infinito fica **sugerido** — a leitura primeira é "os dois o de *floor* fundidos", o que dá a
+  **unidade com a fonte** que o pedido da s56 buscava. (O ∞ cruzado da s54 ficava "da cara" demais
+  como símbolo avulso; ver caminhos rejeitados.)
+- **Espessura casada com a fonte:** o traço tem o mesmo peso da haste das letras (razão
+  traço/diâmetro ≈ 0,22, a mesma do "o" da Space Grotesk). É o que faz a "tinta" do símbolo bater
+  com a da palavra.
+- **Assentado na altura do "o"** (x-height) — no lockup o símbolo senta exatamente onde os dois "o"
+  sentariam, não flutua.
+- **Legível até 16px** — o "chão" do ícone do app.
 - **Cantos arredondados** (`stroke-linecap`/`linejoin: round`).
 
-Path canônico (centrado em 0,0; vão ±106 em x, ±48 em y; stroke-width 13 = peso médio):
+Path canônico (centrado em 0,0; dois círculos tangentes de raio 50 → vão ±100 em x, ±50 em y;
+stroke-width 24 no símbolo cheio = razão ≈ 0,22). É o **mesmo path** nos três SVGs; o lockup o usa
+em `scale(0.369)` com `vector-effect:non-scaling-stroke` stroke 8 (peso do "o" da fonte):
 
 ```
-M0,0 C-32,-48 -106,-48 -106,0 C-106,48 -32,48 0,0 C32,-48 106,-48 106,0 C106,48 32,48 0,0 Z
+M0,0 C0,-27.6 -22.4,-50 -50,-50 C-77.6,-50 -100,-27.6 -100,0 C-100,27.6 -77.6,50 -50,50 C-22.4,50 0,27.6 0,0 C0,-27.6 22.4,-50 50,-50 C77.6,-50 100,-27.6 100,0 C100,27.6 77.6,50 50,50 C22.4,50 0,27.6 0,0 Z
 ```
 
 ### Estado vivo — repouso × trabalhando
@@ -104,6 +113,8 @@ M0,0 C-32,-48 -106,-48 -106,0 C-106,48 -32,48 0,0 C32,-48 106,-48 106,0 C106,48 
 - **Trabalhando:** **"forma e dissolve"** — o laço se desenha do zero, fica **inteiro aceso por
   um instante** (o "selo" da marca) e dissolve pelo mesmo caminho. Ritmo **lento e espacial**
   (~6s, `ease-in-out`), pra gerar calma — "o sistema trabalha em silêncio", não corre.
+  Como o traço é uma linha contínua, ele **contorna um "o" e depois o outro** (esquerdo → direito):
+  o desenho **forma um laço por vez**, e parece a palavra se formando (decisão da s56).
 - O símbolo **vira indicador de status**: ecoa as barras de progresso por andar e o andar 8/P&D
   (permanente, ♾️).
 
@@ -124,7 +135,11 @@ animation: forma 6s ease-in-out infinite;
 - **Pupilas literais / "olhar":** a ideia inicial era vigilância/olho; as pupilas literais não
   funcionaram. O sentido de "olhar" ficou só **nas entrelinhas**.
 - **Laço cruzado "fita/gravata":** destoava da tipografia.
-- **Anéis lado a lado:** não liam como infinito (pareciam dois "o" soltos).
+- **Infinito CRUZADO (o glifo da s54):** era correto, mas lia "da cara" demais como um ∞ avulso
+  colado no meio da palavra. Na s56 o idealizador pediu **menos infinito, mais os dois "o"** → daí
+  a forma encostada (tangente) atual. O cruzado fica como registro, não como caminho a seguir.
+- **Anéis lado a lado:** não liam como infinito (pareciam dois "o" soltos). Diferente dos "dois o
+  encostados" atuais, que se **tocam** por uma linha contínua — aí a leitura de infinito acontece.
 - **Animações agitadas (fluxo de pontos / pacotes / varredura):** "informação correndo" tinha
   **trânsito demais**; o idealizador pediu algo mais espacial e calmo → daí a "forma e dissolve".
 
@@ -152,3 +167,18 @@ Frame.io / Linear. Fundo escuro, um acento só, ícone do app legível **até 16
   contornos" está na lista do que falta.
 - O símbolo sozinho é fundo **transparente** (reutilizável); o lockup vem sobre painel escuro
   porque o mundo da marca é escuro.
+
+### Wordmark nas telas do Flask (s56, 2ª parte)
+
+- **Decisão:** nas telas usa-se o **wordmark integrado "6fl∞r"** (o símbolo é o "oo" da palavra),
+  no login E no cabeçalho/abas — **não** o mark separado seguido de "6floor".
+- **Como é feito (importante):** o wordmark é **UMA imagem `<svg>` única** (`_marca_lockup` no
+  `flask_gma.py`) — os textos "6fl" e "r" e o glifo desenhados dentro do mesmo svg, com
+  `textLength` pra a largura ser estável mesmo sem a fonte carregada.
+- **Por que svg único, e não texto HTML + svg inline:** a versão "texto + `<svg>` no meio"
+  **empilhava** ("6fl" / ∞ / "r" em 3 linhas) porque o ambiente aplica um reset
+  **`svg{display:block}`** que torna o símbolo um bloco. Como imagem única isso é impossível —
+  não há fluxo de texto pra quebrar. (Lição: ao embutir um glifo no meio de palavra em HTML,
+  preferir o svg único, ou forçar `display:inline-block` **inline** no próprio elemento.)
+- **Opção só-símbolo:** `_marca_icone(altura)` rende **só o ∞**, sem a palavra (favicon, cabeçalho
+  recolhido, selos). Mesmo glifo. Onde aplicar ainda será definido.

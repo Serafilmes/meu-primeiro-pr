@@ -1,8 +1,8 @@
-<svg width="260" height="140" viewBox="0 0 260 140" role="img" xmlns="http://www.w3.org/2000/svg">
-  <title>6floor — símbolo (infinito em repouso)</title>
-  <desc>O símbolo do 6floor: um infinito monoline cruzado, traço teal, fundo transparente. Base do ícone do app.</desc>
-  <g transform="translate(130,70)">
-    <path fill="none" stroke="#2BB58C" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"
-      d="M0,0 C-32,-48 -106,-48 -106,0 C-106,48 -32,48 0,0 C32,-48 106,-48 106,0 C106,48 32,48 0,0 Z"/>
+<svg width="264" height="144" viewBox="0 0 264 144" role="img" xmlns="http://www.w3.org/2000/svg">
+  <title>6floor — símbolo (dois "o" encostados, infinito insinuado, em repouso)</title>
+  <desc>O símbolo do 6floor: dois "o" monoline encostados que costuram um infinito, traço teal, fundo transparente. Base do ícone do app.</desc>
+  <g transform="translate(132,72)">
+    <path fill="none" stroke="#2BB58C" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"
+      d="M0,0 C0,-27.6 -22.4,-50 -50,-50 C-77.6,-50 -100,-27.6 -100,0 C-100,27.6 -77.6,50 -50,50 C-22.4,50 0,27.6 0,0 C0,-27.6 22.4,-50 50,-50 C77.6,-50 100,-27.6 100,0 C100,27.6 77.6,50 50,50 C22.4,50 0,27.6 0,0 Z"/>
   </g>
 </svg>
