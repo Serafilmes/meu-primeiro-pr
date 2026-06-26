@@ -817,7 +817,7 @@ def _pagina_operadores(aviso=None, erro=None):
         <button type="submit">Cadastrar operador</button>
       </form>
     </div>
-    <div class="rodape"><a href="/painel">← Voltar ao Painel</a> &nbsp;·&nbsp;
+    <div class="rodape"><a href="/painel">← Voltar ao Sistema</a> &nbsp;·&nbsp;
       <a href="/logout">Sair ({_esc(logado or '')})</a></div>"""
     return _pagina_acesso(corpo, titulo="Operadores", sub="Quem pode operar esta máquina")
 
@@ -2063,18 +2063,22 @@ CSS_ABAS = """
 
 def barra_abas(ativa):
     """Barra de navegação entre as telas.
-    'ativa' = ficha|operacao|kanban|planilha|molde|profissionais|listas|painel"""
+    'ativa' = ficha|operacao|kanban|planilha|molde|profissionais|listas|painel
+    Chave interna → rótulo visível (s57): ficha→Posts · operacao→Match ·
+    kanban→Mural · planilha→Entrega · profissionais→Cadastros ·
+    listas→Programação · painel→Sistema. As URLs/chaves seguem as antigas DE
+    PROPÓSITO (risco zero) — só o rótulo mudou."""
     def classe(nome):
         return "aba ativa" if nome == ativa else "aba"
     return f"""
     <nav class="abas">
-        <a class="{classe('ficha')}" href="/ficha">Nova Ficha</a>
-        <a class="{classe('operacao')}" href="/">Operação</a>
-        <a class="{classe('kanban')}" href="/kanban">Acompanhamento</a>
-        <a class="{classe('planilha')}" href="/planilha">Planilha de Entrega</a>
-        <a class="{classe('profissionais')}" href="/profissionais">Profissionais</a>
-        <a class="{classe('listas')}" href="/listas">Listas</a>
-        <a class="{classe('painel')}" href="/painel">⚙ Painel</a>
+        <a class="{classe('ficha')}" href="/ficha">Posts</a>
+        <a class="{classe('operacao')}" href="/">Match</a>
+        <a class="{classe('kanban')}" href="/kanban">Mural</a>
+        <a class="{classe('planilha')}" href="/planilha">Entrega</a>
+        <a class="{classe('profissionais')}" href="/profissionais">Cadastros</a>
+        <a class="{classe('listas')}" href="/listas">Programação</a>
+        <a class="{classe('painel')}" href="/painel">Sistema</a>
     </nav>"""
 
 
@@ -2632,7 +2636,7 @@ def kanban():
     """
     if not BANCO_DISPONIVEL:
         corpo = "<p class='vazio'>Banco de dados indisponível.</p>"
-        return _pagina("Acompanhamento", "kanban", corpo), 200, {"Content-Type": "text/html; charset=utf-8"}
+        return _pagina("Mural", "kanban", corpo), 200, {"Content-Type": "text/html; charset=utf-8"}
 
     try:
         conn = bd.obter_conexao()
@@ -2687,7 +2691,7 @@ def kanban():
         setInterval(vivo, 1000);
       });
     </script>"""
-    return _pagina("Acompanhamento", "kanban", corpo, head_extra), 200, {"Content-Type": "text/html; charset=utf-8"}
+    return _pagina("Mural", "kanban", corpo, head_extra), 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
 @app.route("/kanban/board", methods=["GET"])
@@ -3256,7 +3260,7 @@ def planilha():
     """
     if not BANCO_DISPONIVEL:
         corpo = "<p class='vazio'>Banco de dados indisponível.</p>"
-        return _pagina("Planilha de Entrega", "planilha", corpo), 200, {"Content-Type": "text/html; charset=utf-8"}
+        return _pagina("Entrega", "planilha", corpo), 200, {"Content-Type": "text/html; charset=utf-8"}
 
     colunas = _colunas_visiveis()
     n_cols = len(colunas) or 1
@@ -3489,7 +3493,7 @@ Múltiplas palavras = AND. Exemplo: sunset volkswagen">
         });
       });
     </script>"""
-    return _pagina("Planilha de Entrega", "planilha", corpo, head_extra), 200, {"Content-Type": "text/html; charset=utf-8"}
+    return _pagina("Entrega", "planilha", corpo, head_extra), 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
 # ── ROTA: MOLDE DA PLANILHA (/molde) ─────────────────────────────────────────
@@ -3602,10 +3606,10 @@ def molde_planilha():
     corpo = f"""
     <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px">
       <div style="flex:1">
-        <h2 style="margin:0;font-size:1.1em">Configurar colunas da Planilha de Entrega</h2>
+        <h2 style="margin:0;font-size:1.1em">Configurar colunas da planilha</h2>
         <p style="margin:4px 0 0 0;font-size:0.85em;color:#6c757d">
           Ligue/desligue as colunas. As colunas de classificação vêm dos grupos
-          cadastrados na aba <a href="/listas" style="color:#1D9E75">Listas</a> —
+          cadastrados na aba <a href="/listas" style="color:#1D9E75">Programação</a> —
           para criar ou remover uma, mexa nos grupos lá.
         </p>
       </div>
@@ -4421,7 +4425,7 @@ def _bloco_tipo_nome_ficha(d, trava, profissionais):
           <!-- Aviso quando o tipo está marcado mas não há profissionais cadastrados -->
           <p class="aviso-sem-cadastro" id="aviso_sem_prof" style="display:none">
             Nenhum profissional cadastrado para este tipo.
-            Cadastre em <a href="/profissionais">Profissionais</a>.
+            Cadastre em <a href="/profissionais">Cadastros</a>.
           </p>
         </div>
 
@@ -5433,7 +5437,7 @@ def ficha_enviar():
     if _host_local():
         botoes = """
         <a class="btn-secundario" href="/ficha">Preencher outra ficha</a>
-        <a class="btn-secundario" href="/kanban">Ver no Acompanhamento</a>
+        <a class="btn-secundario" href="/kanban">Ver no Mural</a>
         <a class="btn-secundario" href="/planilha">Ver na Planilha</a>"""
     else:
         botoes = '<a class="btn-secundario" href="/ficha">Preencher outra ficha</a>'
@@ -6603,7 +6607,7 @@ def _pagina_profissionais(
         </div>
     </div>"""
 
-    return _pagina("Profissionais", "profissionais", corpo)
+    return _pagina("Cadastros", "profissionais", corpo)
 
 
 # ── ROTA: GESTÃO DE LISTAS DE CONTEXTO ───────────────────────────────────────
@@ -7370,7 +7374,7 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
         </div><!-- fim da coluna de formulários -->
     </div>"""
 
-    return _pagina("Listas de Contexto", "listas", corpo, JS_LISTAS_COLAPSAR)
+    return _pagina("Programação", "listas", corpo, JS_LISTAS_COLAPSAR)
 
 
 # ── TRATAMENTO DE ERROS GLOBAIS ───────────────────────────────────────────────
@@ -7755,7 +7759,7 @@ def _conexoes_cockpit():
 def _pagina_painel(aviso=None, erro=None, resultado_teste=None):
     """Renderiza o cockpit do Painel de Controle."""
     if not PAINEL_DISPONIVEL:
-        return _pagina("Painel de Controle", "painel",
+        return _pagina("Sistema", "painel",
                        "<div class='painel-secao'>Painel indisponível (painel_config.py não carregou).</div>",
                        head_extra=f"<style>{PAINEL_CSS}</style>")
 
@@ -7957,7 +7961,7 @@ def _pagina_painel(aviso=None, erro=None, resultado_teste=None):
         "</div>"
     )
 
-    return _pagina("Painel de Controle", "painel", "".join(partes),
+    return _pagina("Sistema", "painel", "".join(partes),
                    head_extra=f"<style>{PAINEL_CSS}</style>")
 
 
