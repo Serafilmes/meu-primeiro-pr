@@ -880,19 +880,19 @@ def historico():
         corpo = f"<div class='legenda'>Não foi possível ler o histórico: {_esc(e)}</div>"
         return _pagina("Histórico", "painel", corpo, head_extra="")
 
-    td = "padding:8px;border-bottom:1px solid #eee;vertical-align:top"
+    td = "padding:8px;border-bottom:1px solid var(--6f-borda);vertical-align:top"
     linhas = []
     for ev in eventos:
         quando = _esc(ev.get("criado_em", ""))
         quem = ev.get("operador")
         quem_html = (f"<b>{_esc(quem)}</b>" if quem
-                     else "<span style='color:#adb5bd'>sistema</span>")
+                     else "<span style='color:var(--6f-texto-3)'>sistema</span>")
         tipo = _esc((ev.get("tipo") or "").replace("_", " "))
         desc = _esc(ev.get("descricao", ""))
         linhas.append(
-            f"<tr><td style='{td};white-space:nowrap;color:#6c757d'>{quando}</td>"
+            f"<tr><td style='{td};white-space:nowrap;color:var(--6f-texto-2)'>{quando}</td>"
             f"<td style='{td}'>{quem_html}</td>"
-            f"<td style='{td};font-size:0.85em;color:#6c757d'>{tipo}</td>"
+            f"<td style='{td};font-size:0.85em;color:var(--6f-texto-2)'>{tipo}</td>"
             f"<td style='{td}'>{desc}</td></tr>"
         )
 
@@ -904,7 +904,7 @@ def historico():
             "“sistema” = ação automática (porteiro, cópia, auditoria, vigias); "
             "um nome = operador que fez a ação na base.</div>"
             "<table style='width:100%;border-collapse:collapse;font-size:0.9em'>"
-            "<thead><tr style='text-align:left;border-bottom:2px solid #dee2e6'>"
+            "<thead><tr style='text-align:left;border-bottom:2px solid var(--6f-borda)'>"
             "<th style='padding:8px'>Quando</th><th style='padding:8px'>Quem</th>"
             "<th style='padding:8px'>Tipo</th><th style='padding:8px'>O quê</th></tr></thead>"
             "<tbody>" + "".join(linhas) + "</tbody></table>"
@@ -2276,6 +2276,53 @@ def _pagina(titulo, aba, corpo, head_extra=""):
         .pag-kanban .postit::placeholder {{ color:var(--6f-texto-3); }}
         .pag-kanban .btn-postit {{ background:var(--6f-teal); color:var(--6f-bg-base); }}
         .pag-kanban .btn-descartar {{ color:var(--6f-erro); }}
+
+        /* ── TEMA ESCURO 6floor — escopado à tela Entrega (Planilha) ──
+           Mesmo padrão do Kanban: só vale em body.pag-planilha; as demais telas
+           seguem claras. A barra de busca e a caixa da IA usam estilo inline (já
+           convertido para var(--6f-…) na rota), então aqui basta a tabela + o que
+           o inline não alcança (placeholders). */
+        body.pag-planilha {{ background:var(--6f-bg-base); color:var(--6f-texto); }}
+        .pag-planilha .legenda {{ color:var(--6f-texto-2); }}
+        .pag-planilha .vazio {{ color:var(--6f-texto-3); }}
+        .pag-planilha .filtro {{ background:var(--6f-bg-elevado); border:1px solid var(--6f-borda);
+                                 color:var(--6f-texto); }}
+        .pag-planilha .filtro::placeholder {{ color:var(--6f-texto-3); }}
+        .pag-planilha input::placeholder {{ color:var(--6f-texto-3); }}
+        .pag-planilha .planilha-tabela {{ background:var(--6f-bg-superficie);
+                                          box-shadow:none; border:1px solid var(--6f-borda); }}
+        .pag-planilha .planilha-tabela th {{ background:var(--6f-bg-elevado); color:var(--6f-texto-2);
+                                             border-bottom:1px solid var(--6f-borda); }}
+        .pag-planilha .planilha-tabela td {{ color:var(--6f-texto); border-bottom:1px solid var(--6f-borda); }}
+        .pag-planilha .planilha-tabela tr:hover td {{ background:var(--6f-bg-hover); }}
+        .pag-planilha .mono {{ color:var(--6f-texto-2); }}
+
+        /* ── TEMA ESCURO 6floor — escopado à aba Sistema (Painel + Histórico) ──
+           O corpo do Painel é estilizado por PAINEL_CSS (injetado via head_extra,
+           já convertido para var(--6f-…) porque é exclusivo desta tela); aqui fica
+           o fundo do body + o que o Histórico usa do molde comum (.legenda). */
+        body.pag-painel {{ background:var(--6f-bg-base); color:var(--6f-texto); }}
+        .pag-painel .legenda {{ color:var(--6f-texto-2); }}
+        .pag-painel .vazio {{ color:var(--6f-texto-3); }}
+
+        /* ── TEMA ESCURO 6floor — escopado à aba Posts (Ficha) ──
+           Vale nas DUAS caras (operador na base E câmera remota no celular — decisão
+           do idealizador, marca coerente dentro e fora). O corpo é estilizado por
+           CSS_FICHA (injetado via head_extra, já em var(--6f-…) porque é exclusivo
+           da ficha); aqui fica o fundo do body + o que vem do molde comum. */
+        body.pag-ficha {{ background:var(--6f-bg-base); color:var(--6f-texto); }}
+        .pag-ficha .legenda {{ color:var(--6f-texto-2); }}
+        .pag-ficha .vazio {{ color:var(--6f-texto-3); }}
+
+        /* ── TEMA ESCURO 6floor — telas operacionais restantes (só-base):
+           Configurar Colunas (molde), Cadastros (profissionais), Programação (listas).
+           Estas telas são estilizadas inline nos próprios builders (já convertidos para
+           var(--6f-…)); aqui fica só o fundo do body + o que vem do molde comum. */
+        body.pag-molde, body.pag-profissionais, body.pag-listas {{
+            background:var(--6f-bg-base); color:var(--6f-texto); }}
+        .pag-molde .legenda, .pag-profissionais .legenda, .pag-listas .legenda {{ color:var(--6f-texto-2); }}
+        .pag-molde .vazio, .pag-profissionais .vazio, .pag-listas .vazio {{ color:var(--6f-texto-3); }}
+        .pag-molde .mono, .pag-profissionais .mono, .pag-listas .mono {{ color:var(--6f-texto-2); }}
     </style>
     {head_extra}
 </head>
@@ -3174,7 +3221,7 @@ def _celula_planilha(col, linha, chips, textos=None):
             profissional = linha["numero_cartao"].rsplit("_", 1)[0]
         html_val = _esc(profissional) or "—"
         if linha["prof_nome_audio"]:
-            html_val += (f' <span style="color:#6c757d;font-size:0.85em">'
+            html_val += (f' <span style="color:var(--6f-texto-2);font-size:0.85em">'
                          f'+ {_esc(linha["prof_nome_audio"])} (áudio)</span>')
         return html_val
 
@@ -3225,12 +3272,12 @@ def _celula_transcricao(linha):
     if n_transcritos:
         return (f'✓ {n_transcritos} áudio(s) '
                 f'<a href="/cartao/{cartao_id}/transcricao" '
-                f'style="color:#1D9E75;font-size:0.85em">ver</a>')
+                f'style="color:var(--6f-teal);font-size:0.85em">ver</a>')
 
     with _lock_transcricao:
         rodando = cartao_id in _transcricoes_em_andamento
     if rodando:
-        return '<span style="color:#856404">⏳ transcrevendo…</span>'
+        return '<span style="color:var(--6f-aviso)">⏳ transcrevendo…</span>'
 
     # Elegível: cartão de ÁUDIO já copiado (tem pasta de destino). Primeiro tijolo:
     # só áudio (a trilha dos vídeos fica para uma fatia futura).
@@ -3239,7 +3286,7 @@ def _celula_transcricao(linha):
     if tipo == "AUDIO" and destino and _transcricao_disponivel():
         return (f'<form method="POST" action="/cartao/{cartao_id}/transcrever" style="margin:0">'
                 f'<button type="submit" style="font-size:0.82em;padding:3px 8px;'
-                f'background:#1D9E75;color:#fff;border:none;border-radius:4px;cursor:pointer">'
+                f'background:var(--6f-teal);color:var(--6f-bg-base);border:none;border-radius:4px;cursor:pointer">'
                 f'🎙 Transcrever</button></form>')
     return "—"
 
@@ -3335,21 +3382,21 @@ def planilha():
             if arqs:
                 itens_arq = "".join(
                     f'<li style="margin-bottom:4px"><strong>{_esc(a["nome_arquivo"])}</strong>'
-                    f' — <em style="color:#555">{_esc(a["trecho"])}</em>'
+                    f' — <em style="color:var(--6f-texto-2)">{_esc(a["trecho"])}</em>'
                     f' <a href="/cartao/{linha["id"]}/transcricao" '
-                    f'style="color:#1D9E75;font-size:0.82em;white-space:nowrap">ver transcrição</a></li>'
+                    f'style="color:var(--6f-teal);font-size:0.82em;white-space:nowrap">ver transcrição</a></li>'
                     for a in arqs
                 )
                 painel_busca = (
                     f'<tr class="busca-detalhe">'
-                    f'<td colspan="{n_cols}" style="background:#f0fff8;padding:6px 14px;'
-                    f'font-size:0.82em;border-bottom:2px solid #1D9E75">'
+                    f'<td colspan="{n_cols}" style="background:var(--6f-teal-trilho);padding:6px 14px;'
+                    f'font-size:0.82em;border-bottom:2px solid var(--6f-teal)">'
                     f'Transcrição: <ul style="margin:4px 0 0 16px;padding:0">{itens_arq}</ul>'
                     f'</td></tr>'
                 )
             # Destaque visual na linha que bateu
             linhas_html += (
-                f'<tr style="background:#e8f5e9;outline:2px solid #1D9E75">{celulas}</tr>'
+                f'<tr style="background:var(--6f-teal-trilho);outline:2px solid var(--6f-teal)">{celulas}</tr>'
                 + painel_busca
             )
         else:
@@ -3379,11 +3426,13 @@ def planilha():
     }
     bloco_feedback = ""
     if _msg_ok == "transcricao_iniciada":
-        bloco_feedback = ("<div style='background:#e8f5e9;border:1px solid #4caf50;color:#2e7d32;"
+        bloco_feedback = ("<div style='background:var(--6f-teal-trilho);border:1px solid var(--6f-ok);"
+                          "color:var(--6f-texto);"
                           "border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:0.9em'>"
                           f"✓ {_avisos_transc['transcricao_iniciada']}</div>")
     elif _msg_aviso:
-        bloco_feedback = ("<div style='background:#fff3cd;border:1px solid #ffc107;color:#856404;"
+        bloco_feedback = ("<div style='background:var(--6f-bg-elevado);border:1px solid var(--6f-aviso);"
+                          "color:var(--6f-aviso);"
                           "border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:0.9em'>"
                           f"{_esc(_avisos_transc.get(_msg_aviso, _msg_aviso))}</div>")
 
@@ -3396,7 +3445,7 @@ def planilha():
     n_resultados = len(resultados_busca) if termo_busca else None
     legenda_busca = ""
     if termo_busca and n_resultados is not None:
-        cor = "#2e7d32" if n_resultados else "#856404"
+        cor = "var(--6f-ok)" if n_resultados else "var(--6f-aviso)"
         legenda_busca = (
             f'<span style="font-size:0.85em;color:{cor};margin-left:8px">'
             f'{n_resultados} resultado(s) para "{_esc(termo_busca)}"'
@@ -3413,11 +3462,11 @@ def planilha():
                              estado_ia, "🤖 Assistente IA")
         resposta_html = _esc(resposta_ia).replace("\n", "<br>")
         bloco_ia = (
-            f'<div style="background:#f0fff8;border:1px solid #1D9E75;'
-            f'border-left:4px solid #1D9E75;border-radius:8px;padding:12px 16px;margin-bottom:12px">'
-            f'<div style="font-size:0.76em;color:#1D9E75;font-weight:600;margin-bottom:5px">'
+            f'<div style="background:var(--6f-teal-trilho);border:1px solid var(--6f-teal);'
+            f'border-left:4px solid var(--6f-teal);border-radius:8px;padding:12px 16px;margin-bottom:12px">'
+            f'<div style="font-size:0.76em;color:var(--6f-teal-claro);font-weight:600;margin-bottom:5px">'
             f'{rotulo_estado}</div>'
-            f'<div style="font-size:0.92em;color:#222;line-height:1.45">{resposta_html}</div></div>'
+            f'<div style="font-size:0.92em;color:var(--6f-texto);line-height:1.45">{resposta_html}</div></div>'
         )
 
     # ── Barra de busca: conversacional (se a IA estiver ligada) + mecânica ─────
@@ -3428,20 +3477,23 @@ def planilha():
     <form method="GET" action="/planilha" style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
         <input type="text" name="pergunta" value="{_esc(pergunta_ia)}"
                placeholder="{placeholder_ia}"
-               style="flex:1;max-width:560px;padding:9px 12px;border:1px solid #1D9E75;
+               style="flex:1;max-width:560px;padding:9px 12px;border:1px solid var(--6f-teal);
+                      background:var(--6f-bg-elevado);color:var(--6f-texto);
                       border-radius:6px;font-size:0.9em"
                title="A IA entende a pergunta em linguagem natural, busca no acervo e redige a resposta.">
         <button type="submit"
-                style="padding:9px 18px;background:#1D9E75;color:#fff;border:none;
+                style="padding:9px 18px;background:var(--6f-teal);color:var(--6f-bg-base);border:none;
                        border-radius:6px;cursor:pointer;font-size:0.9em">🤖 Perguntar</button>
     </form>
     <form method="GET" action="/planilha" style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
         <input type="text" name="busca" value="{_esc('' if usou_ia else termo_busca)}"
                placeholder="ou busca exata por palavras… palco, marca, profissional, data"
-               style="flex:1;max-width:560px;padding:7px 12px;border:1px solid #cdded6;
+               style="flex:1;max-width:560px;padding:7px 12px;border:1px solid var(--6f-borda);
+                      background:var(--6f-bg-elevado);color:var(--6f-texto);
                       border-radius:6px;font-size:0.85em">
         <button type="submit"
-                style="padding:7px 14px;background:#fff;color:#1D9E75;border:1px solid #1D9E75;
+                style="padding:7px 14px;background:var(--6f-bg-elevado);color:var(--6f-teal);
+                       border:1px solid var(--6f-teal);
                        border-radius:6px;cursor:pointer;font-size:0.85em">Buscar</button>
     </form>"""
     else:
@@ -3449,12 +3501,13 @@ def planilha():
     <form method="GET" action="/planilha" style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
         <input type="text" name="busca" value="{_esc(termo_busca)}"
                placeholder="buscar… transcrição, palco, marca, profissional, data"
-               style="flex:1;max-width:480px;padding:8px 12px;border:1px solid #1D9E75;
+               style="flex:1;max-width:480px;padding:8px 12px;border:1px solid var(--6f-teal);
+                      background:var(--6f-bg-elevado);color:var(--6f-texto);
                       border-radius:6px;font-size:0.9em"
                title="Busca profunda: alcança transcrições de áudio e classificação completa.
 Múltiplas palavras = AND. Exemplo: sunset volkswagen">
         <button type="submit"
-                style="padding:8px 16px;background:#1D9E75;color:#fff;border:none;
+                style="padding:8px 16px;background:var(--6f-teal);color:var(--6f-bg-base);border:none;
                        border-radius:6px;cursor:pointer;font-size:0.9em">Buscar</button>
     </form>"""
 
@@ -3464,7 +3517,7 @@ Múltiplas palavras = AND. Exemplo: sunset volkswagen">
         <p class="legenda" style="margin:0;flex:1;min-width:180px">
             Espelho local da entrega — é o que vai para o Google Sheets
             (só informação, nunca o vídeo).</p>
-        <a href="/molde" style="font-size:0.85em;color:#1D9E75;white-space:nowrap;align-self:center">
+        <a href="/molde" style="font-size:0.85em;color:var(--6f-teal);white-space:nowrap;align-self:center">
           ⚙ Configurar colunas</a>
     </div>
 
@@ -3539,29 +3592,29 @@ def molde_planilha():
         rotulo_bloco = rotulos_blocos.get(bloco_chave, bloco_chave)
 
         n_visiveis = sum(1 for c in cols_bloco if c["visivel"])
-        cor_bloco = "#1D9E75" if n_visiveis == len(cols_bloco) else ("#f59e0b" if n_visiveis else "#adb5bd")
+        cor_bloco = "var(--6f-teal)" if n_visiveis == len(cols_bloco) else ("var(--6f-aviso)" if n_visiveis else "var(--6f-texto-3)")
 
         linhas_col = ""
         for col in cols_bloco:
             vis = col["visivel"]
             btn_label = "Ocultar" if vis else "Mostrar"
-            btn_cor = "#dc3545" if vis else "#1D9E75"
-            badge_vis = (f'<span style="color:#1D9E75;font-size:0.8em">● visível</span>'
+            btn_cor = "var(--6f-erro)" if vis else "var(--6f-teal)"
+            badge_vis = (f'<span style="color:var(--6f-teal);font-size:0.8em">● visível</span>'
                          if vis else
-                         f'<span style="color:#adb5bd;font-size:0.8em">○ oculta</span>')
+                         f'<span style="color:var(--6f-texto-3);font-size:0.8em">○ oculta</span>')
             # As colunas vêm só dos grupos cadastrados e do sistema — não há mais
             # coluna "personalizada" solta (s33). Por isso, sem selo nem excluir aqui:
             # para tirar uma coluna de classificação, exclui-se o GRUPO na aba Listas.
             badge_sis = ""
             btn_excluir = ""
             linhas_col += f"""
-            <tr style="border-bottom:1px solid #f1f3f5">
+            <tr style="border-bottom:1px solid var(--6f-borda)">
               <td style="padding:8px 12px">{_esc(col['rotulo'])}{badge_sis}</td>
               <td style="padding:8px 12px">{badge_vis}</td>
               <td style="padding:8px 12px;text-align:right">
                 <form method="post" action="/molde/{_esc(col['chave'])}/visivel" style="display:inline">
                   <input type="hidden" name="visivel" value="{'0' if vis else '1'}">
-                  <button type="submit" style="background:{btn_cor};color:#fff;border:none;
+                  <button type="submit" style="background:{btn_cor};color:var(--6f-bg-base);border:none;
                     border-radius:4px;padding:3px 10px;cursor:pointer;font-size:0.82em">
                     {btn_label}
                   </button>
@@ -3577,25 +3630,25 @@ def molde_planilha():
         if not todos_oc:
             btn_bloco += (
                 f'<form method="post" action="/molde/bloco/{bloco_chave}/ocultar" style="display:inline">'
-                f'<button type="submit" style="background:none;border:1px solid #adb5bd;'
-                f'border-radius:4px;padding:2px 8px;cursor:pointer;font-size:0.78em;color:#6c757d">'
+                f'<button type="submit" style="background:none;border:1px solid var(--6f-borda);'
+                f'border-radius:4px;padding:2px 8px;cursor:pointer;font-size:0.78em;color:var(--6f-texto-2)">'
                 f'Ocultar bloco</button></form> '
             )
         if not todos_vis:
             btn_bloco += (
                 f'<form method="post" action="/molde/bloco/{bloco_chave}/mostrar" style="display:inline">'
-                f'<button type="submit" style="background:none;border:1px solid #1D9E75;'
-                f'border-radius:4px;padding:2px 8px;cursor:pointer;font-size:0.78em;color:#1D9E75">'
+                f'<button type="submit" style="background:none;border:1px solid var(--6f-teal);'
+                f'border-radius:4px;padding:2px 8px;cursor:pointer;font-size:0.78em;color:var(--6f-teal)">'
                 f'Mostrar bloco</button></form>'
             )
 
         secoes_html += f"""
-        <div style="background:#fff;border:1px solid #e9ecef;border-radius:8px;
+        <div style="background:var(--6f-bg-superficie);border:1px solid var(--6f-borda);border-radius:8px;
                     margin-bottom:18px;overflow:hidden">
-          <div style="background:#f8f9fa;padding:10px 16px;display:flex;
+          <div style="background:var(--6f-bg-elevado);padding:10px 16px;display:flex;
                       align-items:center;justify-content:space-between">
             <span style="font-weight:600;color:{cor_bloco}">{_esc(rotulo_bloco)}</span>
-            <span style="font-size:0.82em;color:#6c757d">{n_visiveis}/{len(cols_bloco)} visíveis
+            <span style="font-size:0.82em;color:var(--6f-texto-2)">{n_visiveis}/{len(cols_bloco)} visíveis
               &nbsp;{btn_bloco}</span>
           </div>
           <table style="width:100%;border-collapse:collapse">
@@ -3607,13 +3660,13 @@ def molde_planilha():
     <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px">
       <div style="flex:1">
         <h2 style="margin:0;font-size:1.1em">Configurar colunas da planilha</h2>
-        <p style="margin:4px 0 0 0;font-size:0.85em;color:#6c757d">
+        <p style="margin:4px 0 0 0;font-size:0.85em;color:var(--6f-texto-2)">
           Ligue/desligue as colunas. As colunas de classificação vêm dos grupos
-          cadastrados na aba <a href="/listas" style="color:#1D9E75">Programação</a> —
+          cadastrados na aba <a href="/listas" style="color:var(--6f-teal)">Programação</a> —
           para criar ou remover uma, mexa nos grupos lá.
         </p>
       </div>
-      <a href="/planilha" style="font-size:0.85em;color:#1D9E75">← Voltar à planilha</a>
+      <a href="/planilha" style="font-size:0.85em;color:var(--6f-teal)">← Voltar à planilha</a>
     </div>
     {secoes_html}"""
 
@@ -3751,118 +3804,122 @@ OPCOES_TIPO_CONTEUDO = [
 OPCOES_PRIORIDADE = ["NORMAL", "URGENTE"]
 
 CSS_FICHA = """
-    .ficha-form { background:#fff; border-radius:8px; box-shadow:0 1px 4px rgba(0,0,0,0.08);
+    .ficha-form { background:var(--6f-bg-superficie); border-radius:8px;
+                  border:1px solid var(--6f-borda); box-shadow:none;
                   padding:22px 24px; max-width:680px; }
     .ficha-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px 18px; }
     .campo { display:flex; flex-direction:column; gap:5px; }
     .campo.largo { grid-column:1 / -1; }
-    .campo label { font-size:0.82em; font-weight:700; color:#495057; }
-    .campo .estrela { color:#c0392b; }
-    .campo .ajuda { font-weight:400; color:#adb5bd; font-size:0.92em; }
+    .campo label { font-size:0.82em; font-weight:700; color:var(--6f-texto-2); }
+    .campo .estrela { color:var(--6f-erro); }
+    .campo .ajuda { font-weight:400; color:var(--6f-texto-3); font-size:0.92em; }
     .campo input, .campo select, .campo textarea {
-        padding:9px 11px; border:1px solid #ced4da; border-radius:6px;
-        font-family:inherit; font-size:0.95em; background:#fff; }
+        padding:9px 11px; border:1px solid var(--6f-borda); border-radius:6px;
+        font-family:inherit; font-size:0.95em; background:var(--6f-bg-elevado); color:var(--6f-texto); }
+    .campo input::placeholder, .campo textarea::placeholder { color:var(--6f-texto-3); }
     .campo textarea { min-height:64px; resize:vertical; }
-    .grupo-titulo { grid-column:1 / -1; font-size:0.78em; font-weight:700; color:#adb5bd;
+    .grupo-titulo { grid-column:1 / -1; font-size:0.78em; font-weight:700; color:var(--6f-texto-3);
                     text-transform:uppercase; letter-spacing:0.5px; margin-top:8px;
-                    border-top:1px solid #f1f3f5; padding-top:14px; }
+                    border-top:1px solid var(--6f-borda); padding-top:14px; }
     .ficha-acoes { margin-top:20px; display:flex; gap:12px; align-items:center; }
-    .btn-enviar { background:#27ae60; color:#fff; border:none; border-radius:6px;
+    .btn-enviar { background:var(--6f-teal); color:var(--6f-bg-base); border:none; border-radius:6px;
                   padding:11px 28px; font-weight:700; font-size:0.95em; cursor:pointer; }
-    .btn-enviar:hover { background:#229954; }
-    .erro-box { background:#fdecea; border:1px solid #f5c6cb; color:#c0392b;
+    .btn-enviar:hover { background:var(--6f-teal-forte); }
+    .erro-box { background:var(--6f-bg-elevado); border:1px solid var(--6f-erro); color:var(--6f-erro);
                 border-radius:6px; padding:11px 14px; margin-bottom:16px; font-size:0.9em; }
-    .ok-box { background:#eafaf1; border:1px solid #abebc6; color:#1e8449;
+    .ok-box { background:var(--6f-teal-trilho); border:1px solid var(--6f-teal); color:var(--6f-texto);
               border-radius:8px; padding:20px 24px; max-width:680px; }
     .ok-box h2 { font-size:1.15em; margin-bottom:10px; }
-    .ok-box .resumo { background:#fff; border-radius:6px; padding:12px 16px; margin:12px 0;
-                      color:#1a1a1a; font-size:0.92em; line-height:1.7; }
-    .ok-box .resumo b { display:inline-block; min-width:120px; color:#6c757d; font-weight:600; }
-    .btn-secundario { display:inline-block; background:#1a1a2e; color:#fff; text-decoration:none;
-                      border-radius:6px; padding:10px 20px; font-weight:600; font-size:0.9em; }
-    .dica-gabarito { font-weight:400; color:#adb5bd; font-size:0.88em; }
+    .ok-box .resumo { background:var(--6f-bg-elevado); border-radius:6px; padding:12px 16px; margin:12px 0;
+                      color:var(--6f-texto); font-size:0.92em; line-height:1.7; }
+    .ok-box .resumo b { display:inline-block; min-width:120px; color:var(--6f-texto-2); font-weight:600; }
+    .btn-secundario { display:inline-block; background:var(--6f-bg-elevado); color:var(--6f-texto); text-decoration:none;
+                      border:1px solid var(--6f-borda); border-radius:6px; padding:10px 20px; font-weight:600; font-size:0.9em; }
+    .dica-gabarito { font-weight:400; color:var(--6f-texto-3); font-size:0.88em; }
     .campo input:disabled, .campo select:disabled {
-        background:#f1f3f5; color:#868e96; cursor:not-allowed; }
-    .aviso-trava { background:#fff8e1; border:1px solid #ffe08a; color:#8a6d3b;
+        background:var(--6f-bg-hover); color:var(--6f-texto-3); cursor:not-allowed; }
+    .aviso-trava { background:var(--6f-bg-elevado); border:1px solid var(--6f-aviso); color:var(--6f-aviso);
                    border-radius:6px; padding:10px 14px; margin-bottom:14px; font-size:0.88em; }
     /* ── Lista de fichas recentes (editar) ── */
     .recentes { margin-top:30px; max-width:880px; }
-    .recentes h2 { font-size:1em; color:#495057; margin-bottom:10px; }
-    .tab-recentes { width:100%; border-collapse:collapse; background:#fff; border-radius:8px;
-                    overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.08); font-size:0.86em; }
-    .tab-recentes th { text-align:left; padding:8px 12px; background:#f8f9fa; color:#6c757d;
+    .recentes h2 { font-size:1em; color:var(--6f-texto-2); margin-bottom:10px; }
+    .tab-recentes { width:100%; border-collapse:collapse; background:var(--6f-bg-superficie); border-radius:8px;
+                    overflow:hidden; box-shadow:none; border:1px solid var(--6f-borda); font-size:0.86em; }
+    .tab-recentes th { text-align:left; padding:8px 12px; background:var(--6f-bg-elevado); color:var(--6f-texto-2);
                        text-transform:uppercase; font-size:0.76em; letter-spacing:0.4px;
-                       border-bottom:1px solid #dee2e6; }
-    .tab-recentes td { padding:8px 12px; border-bottom:1px solid #f1f3f5; }
-    .tab-recentes tr:hover td { background:#f8f9fa; }
+                       border-bottom:1px solid var(--6f-borda); }
+    .tab-recentes td { padding:8px 12px; border-bottom:1px solid var(--6f-borda); color:var(--6f-texto); }
+    .tab-recentes tr:hover td { background:var(--6f-bg-hover); }
     .badge-mini { border-radius:10px; padding:1px 8px; font-size:0.74em; font-weight:700; color:#fff; }
-    .link-editar { color:#2196f3; text-decoration:none; font-weight:600; }
+    .link-editar { color:var(--6f-teal); text-decoration:none; font-weight:600; }
     .link-editar:hover { text-decoration:underline; }
     /* ── Grupos recolhíveis de Posts (centro de controle) ── */
     .grupo-posts { margin-bottom:12px; }
-    .grupo-posts > summary { cursor:pointer; padding:9px 14px; background:#f1f3f5;
-        border-radius:8px; font-weight:600; font-size:0.9em; color:#495057;
+    .grupo-posts > summary { cursor:pointer; padding:9px 14px; background:var(--6f-bg-elevado);
+        border-radius:8px; font-weight:600; font-size:0.9em; color:var(--6f-texto-2);
         list-style:none; user-select:none; }
     .grupo-posts > summary::-webkit-details-marker { display:none; }
-    .grupo-posts > summary::before { content:"▸ "; color:#adb5bd; }
+    .grupo-posts > summary::before { content:"▸ "; color:var(--6f-texto-3); }
     .grupo-posts[open] > summary::before { content:"▾ "; }
     .grupo-posts[open] > summary { border-radius:8px 8px 0 0; }
     .grupo-posts .tab-recentes { border-radius:0 0 8px 8px; margin-top:0; }
-    .grupo-posts .badge { background:#dee2e6; color:#495057; border-radius:10px;
+    .grupo-posts .badge { background:var(--6f-bg-hover); color:var(--6f-texto-2); border-radius:10px;
         padding:1px 9px; font-size:0.82em; font-weight:700; margin-left:4px; }
-    .grupo-cancelados > summary { background:#faf3f3; color:#a94442; }
+    .grupo-cancelados > summary { background:var(--6f-bg-elevado); color:var(--6f-erro); }
     /* ── Tipo multi-seleção (checkboxes) ── */
     .tipo-checks { display:flex; gap:16px; align-items:center; flex-wrap:wrap; margin-top:2px; }
-    .tipo-checks label { font-size:0.92em; font-weight:600; color:#495057;
+    .tipo-checks label { font-size:0.92em; font-weight:600; color:var(--6f-texto-2);
                          display:flex; align-items:center; gap:6px; cursor:pointer; }
-    .tipo-checks input[type=checkbox] { width:17px; height:17px; cursor:pointer; accent-color:#27ae60; }
+    .tipo-checks input[type=checkbox] { width:17px; height:17px; cursor:pointer; accent-color:var(--6f-teal); }
     /* ── Dropdowns fechados de nome ── */
     .campo-nome-wrapper { display:flex; flex-direction:column; gap:14px; }
     .campo-nome-wrapper .campo { margin:0; }
-    .aviso-sem-cadastro { font-size:0.8em; color:#e67e22; margin-top:4px; }
+    .aviso-sem-cadastro { font-size:0.8em; color:var(--6f-aviso); margin-top:4px; }
     /* ── Chips de classificação (listas de contexto) ── */
     .chip-area { display:flex; flex-direction:column; gap:14px; }
     .chip-bloco { display:flex; flex-direction:column; gap:7px; }
-    .chip-rotulo { font-size:0.82em; font-weight:700; color:#495057; }
+    .chip-rotulo { font-size:0.82em; font-weight:700; color:var(--6f-texto-2); }
     .chip-linha { display:flex; flex-wrap:wrap; gap:8px; }
     .chip { position:relative; display:inline-flex; align-items:center; cursor:pointer;
-            user-select:none; border:1px solid #ced4da; border-radius:16px;
-            padding:5px 13px; font-size:0.88em; color:#495057; background:#fff;
+            user-select:none; border:1px solid var(--6f-borda); border-radius:16px;
+            padding:5px 13px; font-size:0.88em; color:var(--6f-texto); background:var(--6f-bg-elevado);
             transition:background .12s, border-color .12s, color .12s; }
-    .chip:hover { border-color:#1D9E75; }
+    .chip:hover { border-color:var(--6f-teal); }
     .chip input { position:absolute; opacity:0; width:0; height:0; margin:0; }
-    .chip.sel { background:#1D9E75; border-color:#1D9E75; color:#fff; font-weight:600; }
-    .chip-vazio { font-size:0.84em; color:#adb5bd; font-style:italic; }
-    .chip-contador { font-weight:600; font-size:0.85em; color:#adb5bd; }
-    .chip-contador.tem { color:#1D9E75; }
+    .chip.sel { background:var(--6f-teal); border-color:var(--6f-teal); color:var(--6f-bg-base); font-weight:600; }
+    .chip-vazio { font-size:0.84em; color:var(--6f-texto-3); font-style:italic; }
+    .chip-contador { font-weight:600; font-size:0.85em; color:var(--6f-texto-3); }
+    .chip-contador.tem { color:var(--6f-teal); }
     .chip-acao  { margin-top:5px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
-    .chip-btn-novo { background:none; border:1px dashed #ced4da; border-radius:12px;
-        padding:3px 10px; font-size:0.8em; color:#6c757d; cursor:pointer; }
-    .chip-btn-novo:hover { border-color:#1D9E75; color:#1D9E75; }
+    .chip-btn-novo { background:none; border:1px dashed var(--6f-borda); border-radius:12px;
+        padding:3px 10px; font-size:0.8em; color:var(--6f-texto-2); cursor:pointer; }
+    .chip-btn-novo:hover { border-color:var(--6f-teal); color:var(--6f-teal); }
     .chip-novo-form { display:inline-flex; align-items:center; gap:4px; }
-    .chip-novo-input { border:1px solid #1D9E75; border-radius:12px; padding:3px 10px;
+    .chip-novo-input { border:1px solid var(--6f-teal); border-radius:12px; padding:3px 10px;
+        background:var(--6f-bg-elevado); color:var(--6f-texto);
         font-size:0.85em; outline:none; width:160px; }
     .chip-novo-ok, .chip-novo-cancel { background:none; border:none; cursor:pointer;
         font-size:1em; padding:0 4px; }
-    .chip-novo-ok { color:#1D9E75; font-weight:700; }
-    .chip-novo-cancel { color:#adb5bd; }
+    .chip-novo-ok { color:var(--6f-teal); font-weight:700; }
+    .chip-novo-cancel { color:var(--6f-texto-3); }
     /* Grupos de TEXTO: tags de valores livres + caixa de adicionar */
-    .texto-tag { display:inline-flex; align-items:center; gap:6px; background:#1D9E75;
-        color:#fff; border-radius:16px; padding:5px 12px; font-size:0.88em; font-weight:600; }
-    .texto-rm { background:none; border:none; color:#fff; cursor:pointer; font-size:0.9em;
+    .texto-tag { display:inline-flex; align-items:center; gap:6px; background:var(--6f-teal);
+        color:var(--6f-bg-base); border-radius:16px; padding:5px 12px; font-size:0.88em; font-weight:600; }
+    .texto-rm { background:none; border:none; color:var(--6f-bg-base); cursor:pointer; font-size:0.9em;
         padding:0; line-height:1; opacity:0.8; }
     .texto-rm:hover { opacity:1; }
-    .texto-input { border:1px solid #ced4da; border-radius:16px; padding:5px 13px;
+    .texto-input { border:1px solid var(--6f-borda); border-radius:16px; padding:5px 13px;
+        background:var(--6f-bg-elevado); color:var(--6f-texto);
         font-size:0.88em; font-family:inherit; outline:none; min-width:180px; }
-    .texto-input:focus { border-color:#1D9E75; }
-    .texto-add { background:none; border:1px dashed #ced4da; border-radius:12px;
-        padding:4px 12px; font-size:0.8em; color:#6c757d; cursor:pointer; }
-    .texto-add:hover { border-color:#1D9E75; color:#1D9E75; }
+    .texto-input:focus { border-color:var(--6f-teal); }
+    .texto-add { background:none; border:1px dashed var(--6f-borda); border-radius:12px;
+        padding:4px 12px; font-size:0.8em; color:var(--6f-texto-2); cursor:pointer; }
+    .texto-add:hover { border-color:var(--6f-teal); color:var(--6f-teal); }
     /* Toggles "Quando foi gravado?" e "Quem está preenchendo?" */
     .radio-linha { display:flex; gap:18px; align-items:center; margin-top:2px; }
-    .radio-op { font-size:0.92em; font-weight:600; color:#495057;
+    .radio-op { font-size:0.92em; font-weight:600; color:var(--6f-texto-2);
                 display:flex; align-items:center; gap:6px; cursor:pointer; }
-    .radio-op input[type=radio] { width:16px; height:16px; cursor:pointer; accent-color:#27ae60; }
+    .radio-op input[type=radio] { width:16px; height:16px; cursor:pointer; accent-color:var(--6f-teal); }
     /* Toques maiores no celular: chips mais fáceis de acertar com o dedo. */
     @media (max-width: 600px) {
         .ficha-form { padding:16px 14px; }
@@ -4631,7 +4688,7 @@ def _linha_post_html(f):
     # Nome principal + (quando há áudio de outra pessoa) o 2º nome — Fatia 5.
     nome_html = f"<b>{_esc(f['nome'])}</b>"
     if f["nome_audio"]:
-        nome_html += (f' <span style="color:#6c757d;font-size:0.85em">'
+        nome_html += (f' <span style="color:var(--6f-texto-2);font-size:0.85em">'
                       f'+ {_esc(f["nome_audio"])} (áudio)</span>')
     # Ação "cancelar": soft-delete reversível → grupo "Posts cancelados" (mesmo
     # motor da Operação, rota /post/<id>/cancelar).
@@ -4639,7 +4696,7 @@ def _linha_post_html(f):
         f"<form action='/post/{fid}/cancelar' method='post' style='margin:0;display:inline' "
         f"onsubmit=\"return confirm('Cancelar este Post? Ele sai das telas e vai para "
         f"Posts cancelados (reversível).');\">"
-        f"<button type='submit' style='background:none;border:none;color:#c0392b;"
+        f"<button type='submit' style='background:none;border:none;color:var(--6f-erro);"
         f"font-size:0.82em;cursor:pointer;text-decoration:underline'>cancelar</button></form>"
     )
 
@@ -4656,14 +4713,15 @@ def _linha_post_html(f):
         form_link = (
             f"<form action='/post/{fid}/link-recebidos' method='post' "
             f"style='margin:4px 0 0 0;display:flex;gap:6px;align-items:center'>"
-            f"<label style='font-size:0.8em;color:#6c757d;white-space:nowrap'>"
+            f"<label style='font-size:0.8em;color:var(--6f-texto-2);white-space:nowrap'>"
             f"Link p/ recebimento:</label>"
             f"<input type='url' name='link_recebidos' value='{link_atual}' "
             f"placeholder='https://drive.google.com/...' "
-            f"style='flex:1;font-size:0.82em;padding:2px 6px;border:1px solid #ced4da;"
+            f"style='flex:1;font-size:0.82em;padding:2px 6px;border:1px solid var(--6f-borda);"
+            f"background:var(--6f-bg-elevado);color:var(--6f-texto);"
             f"border-radius:4px;min-width:160px'>"
             f"<button type='submit' style='font-size:0.8em;padding:2px 8px;"
-            f"background:#495057;color:#fff;border:none;border-radius:4px;cursor:pointer'>"
+            f"background:var(--6f-bg-hover);color:var(--6f-texto);border:1px solid var(--6f-borda);border-radius:4px;cursor:pointer'>"
             f"salvar</button></form>"
         )
 
@@ -4684,21 +4742,21 @@ def _linha_post_html(f):
                     "concluido":            "Concluído",
                 }.get(status, "Com match — aguardando")
                 btn_gatilho = (
-                    f"<span style='font-size:0.8em;color:#2e7d32;font-weight:600'>"
+                    f"<span style='font-size:0.8em;color:var(--6f-teal);font-weight:600'>"
                     f"✅ {status_label}</span>"
                 )
             else:
                 # Pronto mas sem match ainda: mostra "pronto" + botão "Copiar agora" (Fatia 4)
                 btn_gatilho = (
-                    f"<span style='font-size:0.8em;color:#2e7d32;font-weight:600'>"
+                    f"<span style='font-size:0.8em;color:var(--6f-teal);font-weight:600'>"
                     f"✅ Material pronto</span> "
                     f"<form action='/post/{fid}/copiar-recebido' method='post' "
                     f"style='margin:4px 0 0 0;display:inline' "
                     f"onsubmit=\"return confirm('Iniciar a cópia agora? O processo pode "
                     f"demorar alguns minutos para arquivos grandes.');\">"
                     f"<button type='submit' "
-                    f"style='font-size:0.82em;padding:3px 12px;background:#0d6efd;"
-                    f"color:#fff;border:none;border-radius:4px;cursor:pointer;"
+                    f"style='font-size:0.82em;padding:3px 12px;background:var(--6f-teal);"
+                    f"color:var(--6f-bg-base);border:none;border-radius:4px;cursor:pointer;"
                     f"font-weight:600'>"
                     f"Copiar agora</button></form>"
                 )
@@ -4709,8 +4767,8 @@ def _linha_post_html(f):
                 f"onsubmit=\"return confirm('Confirmar: o material deste Post chegou e "
                 f"está pronto para cópia?');\">"
                 f"<button type='submit' "
-                f"style='font-size:0.82em;padding:3px 10px;background:#1a7a4a;"
-                f"color:#fff;border:none;border-radius:4px;cursor:pointer'>"
+                f"style='font-size:0.82em;padding:3px 10px;background:var(--6f-teal);"
+                f"color:var(--6f-bg-base);border:none;border-radius:4px;cursor:pointer'>"
                 f"📥 Material recebido — pronto para copiar</button></form>"
             )
 
@@ -4724,7 +4782,7 @@ def _linha_post_html(f):
         <td><span class="badge-mini" style="background:{cor}">{_esc(status) or '—'}</span></td>
         <td style="white-space:nowrap">
           <a class="link-editar" href="/ficha/{fid}/editar">editar ✎</a>
-          <span style="color:#dee2e6;margin:0 6px">·</span>
+          <span style="color:var(--6f-texto-3);margin:0 6px">·</span>
           {cancelar}
         </td>
       </tr>"""
@@ -4733,9 +4791,9 @@ def _linha_post_html(f):
     # de link e o botão de gatilho. Reutiliza form_link e btn_gatilho já montados.
     if eh_satelite:
         linha += f"""
-      <tr style="background:#f0fff4">
+      <tr style="background:var(--6f-teal-trilho)">
         <td colspan="6" style="padding:4px 8px 8px 24px;border-top:none">
-          <div style='font-size:0.78em;color:#1a7a4a;font-weight:600;margin-bottom:4px'>
+          <div style='font-size:0.78em;color:var(--6f-teal-claro);font-weight:600;margin-bottom:4px'>
             📂 Pasta satélite (material enviado digitalmente)</div>
           <div style='display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start'>
             <div style='flex:1;min-width:200px'>{form_link}</div>
@@ -4774,14 +4832,14 @@ def _grupo_cancelados_html(cancelados):
         f"<td class='mono'>{_esc(c['data_gravacao'] or '—')}</td>"
         f"<td style='white-space:nowrap'>"
         f"<form action='/post/{c['id']}/restaurar' method='post' style='margin:0;display:inline'>"
-        f"<button type='submit' style='background:none;border:none;color:#2e7d32;"
+        f"<button type='submit' style='background:none;border:none;color:var(--6f-teal);"
         f"font-size:0.82em;cursor:pointer;text-decoration:underline'>restaurar</button></form>"
         # Excluir definitivo: passo final para sobra/lixo. Irreversível — sobra só o Log.
-        f"<span style='color:#dee2e6;margin:0 6px'>·</span>"
+        f"<span style='color:var(--6f-texto-3);margin:0 6px'>·</span>"
         f"<form action='/post/{c['id']}/excluir' method='post' style='margin:0;display:inline' "
         f"onsubmit=\"return confirm('Excluir {_esc(c['nome'])} DE VEZ? Não tem volta — "
         f"sobra só o registro no Log do sistema.');\">"
-        f"<button type='submit' style='background:none;border:none;color:#adb5bd;"
+        f"<button type='submit' style='background:none;border:none;color:var(--6f-erro);"
         f"font-size:0.82em;cursor:pointer;text-decoration:underline'>excluir</button></form>"
         f"</td></tr>"
         for c in cancelados
@@ -4789,7 +4847,7 @@ def _grupo_cancelados_html(cancelados):
     return f"""
     <details class="grupo-posts grupo-cancelados">
       <summary>🗂️ Posts cancelados <span class="badge">{len(cancelados)}</span>
-        <span style="font-weight:400;color:#adb5bd;font-size:0.85em">
+        <span style="font-weight:400;color:var(--6f-texto-3);font-size:0.85em">
           — fora das telas e da Planilha; restaurar ou excluir de vez</span>
       </summary>
       <table class="tab-recentes">
@@ -5075,7 +5133,8 @@ def _bloco_classificacao_ficha(chips_selecionados, eh_operador=False, textos_sel
                 f'style="margin-left:6px">{opts}</select>'
             )
         banner = (
-            '<div class="prog-banner" style="background:#9FE1CB;color:#04342C;'
+            '<div class="prog-banner" style="background:var(--6f-teal-trilho);color:var(--6f-teal-claro);'
+            'border:1px solid var(--6f-teal);'
             'border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:0.95em">'
             f'📅 Programação ativa: <b>{_esc(rotulo_dia)}</b>{troca}</div>'
         )
@@ -5198,7 +5257,7 @@ def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
         corpo_descanso = f"""
     <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px;flex-wrap:wrap">
       <p class="legenda" style="margin:0;max-width:560px">Os Posts deste evento, agrupados por status. Crie um novo ou gerencie os existentes (editar, cancelar, restaurar).</p>
-      <a href="/ficha?novo=1" style="background:var(--6f-teal-forte);color:#fff;text-decoration:none;font-weight:600;padding:10px 22px;border-radius:8px;white-space:nowrap">+ Novo Post</a>
+      <a href="/ficha?novo=1" style="background:var(--6f-teal);color:var(--6f-bg-base);text-decoration:none;font-weight:600;padding:10px 22px;border-radius:8px;white-space:nowrap">+ Novo Post</a>
     </div>
     {relatorio}"""
         head_extra_descanso = f"<style>{CSS_FICHA}</style>{JS_CHIPS}{JS_CHIP_NOVO}{JS_TEXTO_GRUPO}{JS_FICHA_TOGGLES}{JS_SHOWS_CASCATA}"
@@ -5218,11 +5277,11 @@ def _html_ficha(dados=None, erro=None, modo="nova", ficha_id=None,
 
     if editando:
         legenda = ('Edite os dados desta ficha. Campos com '
-                   '<span style="color:#c0392b">★</span> são obrigatórios.')
+                   '<span style="color:var(--6f-erro)">★</span> são obrigatórios.')
         texto_botao = "Salvar alterações"
     else:
         legenda = ('Preencha a ficha do cartão que chegou na base. Campos com '
-                   '<span style="color:#c0392b">★</span> são obrigatórios.')
+                   '<span style="color:var(--6f-erro)">★</span> são obrigatórios.')
         texto_botao = "Enviar ficha"
 
     # Carrega a lista de profissionais cadastrados para o JS da ficha.
@@ -5406,7 +5465,7 @@ def ficha_enviar():
         <div><b>Áudio</b> {_esc(payload.get('nome_audio'))} <span class="mono">(à parte)</span></div>
         <div><b>Data</b> {_esc(dados.get('data_gravacao',''))}</div>
       </div>
-      <p style="margin-top:8px;color:#6c757d;font-size:0.9em">
+      <p style="margin-top:8px;color:var(--6f-texto-2);font-size:0.9em">
         O áudio é sempre transferência separada — cada um dá match com seu próprio cartão.
       </p>"""
     else:
@@ -5435,16 +5494,16 @@ def ficha_enviar():
 
             if link_nuvem:
                 bloco_link = (
-                    f"<div style='margin-top:12px;padding:10px 14px;background:#e8f5e9;"
-                    f"border-left:4px solid #2e7d32;border-radius:4px'>"
+                    f"<div style='margin-top:12px;padding:10px 14px;background:var(--6f-teal-trilho);"
+                    f"border-left:4px solid var(--6f-teal);border-radius:4px'>"
                     f"<b>📂 Envie seu material para:</b><br>"
                     f"<a href='{_esc(link_nuvem)}' target='_blank' "
                     f"style='word-break:break-all'>{_esc(link_nuvem)}</a></div>"
                 )
             else:
                 bloco_link = (
-                    "<div style='margin-top:12px;padding:10px 14px;background:#fff8e1;"
-                    "border-left:4px solid #f9a825;border-radius:4px;color:#5d4037'>"
+                    "<div style='margin-top:12px;padding:10px 14px;background:var(--6f-bg-elevado);"
+                    "border-left:4px solid var(--6f-aviso);border-radius:4px;color:var(--6f-aviso)'>"
                     "📂 O operador vai disponibilizar o link de envio em breve. "
                     "Aguarde a confirmação antes de fazer o upload.</div>"
                 )
@@ -6338,7 +6397,7 @@ def _pagina_profissionais(
         return "✓" if valor else "—"
 
     def _cor_icone(valor):
-        return "color:#27ae60;font-weight:700" if valor else "color:#ced4da"
+        return "color:var(--6f-teal);font-weight:700" if valor else "color:var(--6f-texto-3)"
 
     if lista:
         linhas_tabela = ""
@@ -6350,7 +6409,7 @@ def _pagina_profissionais(
             if ativo:
                 botao = (
                     '<button type="submit" name="ativo" value="0" '
-                    'style="background:#fff;border:1px solid #ced4da;color:#c0392b;'
+                    'style="background:var(--6f-bg-elevado);border:1px solid var(--6f-borda);color:var(--6f-erro);'
                     'border-radius:5px;padding:4px 10px;font-size:0.82em;cursor:pointer;'
                     'font-family:inherit">Desativar</button>'
                 )
@@ -6358,11 +6417,11 @@ def _pagina_profissionais(
             else:
                 botao = (
                     '<button type="submit" name="ativo" value="1" '
-                    'style="background:#1a1a2e;border:1px solid #1a1a2e;color:#fff;'
+                    'style="background:var(--6f-teal);border:1px solid var(--6f-teal);color:var(--6f-bg-base);'
                     'border-radius:5px;padding:4px 10px;font-size:0.82em;cursor:pointer;'
                     'font-family:inherit">Ativar</button>'
                 )
-                selo = ('<span style="background:#e9ecef;color:#6c757d;border-radius:4px;'
+                selo = ('<span style="background:var(--6f-bg-hover);color:var(--6f-texto-2);border-radius:4px;'
                         'padding:1px 7px;font-size:0.74em;font-weight:600;margin-right:8px">'
                         'inativo</span>')
 
@@ -6377,14 +6436,14 @@ def _pagina_profissionais(
                     f'onsubmit="return confirm(\'Excluir {_esc(p["nome"])} de vez? '
                     f'Só é possível porque não há nenhuma ficha com esse nome. Não tem volta.\')">'
                     '<button type="submit" '
-                    'style="background:none;border:none;color:#adb5bd;font-size:0.82em;'
+                    'style="background:none;border:none;color:var(--6f-texto-3);font-size:0.82em;'
                     'cursor:pointer;text-decoration:underline;font-family:inherit;padding:0">'
                     'excluir</button></form>'
                 )
             else:
                 botao_excluir = (
                     '<span title="Tem ficha usando este nome — só dá para desativar" '
-                    'style="color:#ced4da;font-size:0.82em;cursor:default">excluir</span>'
+                    'style="color:var(--6f-texto-3);font-size:0.82em;cursor:default">excluir</span>'
                 )
 
             # Mini-form inline da câmera: campo de texto + botão salvar. Submete
@@ -6395,10 +6454,11 @@ def _pagina_profissionais(
                 f'style="margin:0;display:flex;gap:5px;align-items:center">'
                 f'<input type="text" name="camera" value="{_esc(camera_atual)}" '
                 f'placeholder="—" autocomplete="off" '
-                f'style="width:92px;padding:4px 7px;border:1px solid #ced4da;'
+                f'style="width:92px;padding:4px 7px;border:1px solid var(--6f-borda);'
+                f'background:var(--6f-bg-elevado);color:var(--6f-texto);'
                 f'border-radius:5px;font-size:0.85em;font-family:inherit">'
                 f'<button type="submit" title="Salvar câmera" '
-                f'style="background:#fff;border:1px solid #ced4da;color:#1a1a2e;'
+                f'style="background:var(--6f-bg-elevado);border:1px solid var(--6f-borda);color:var(--6f-texto);'
                 f'border-radius:5px;padding:4px 8px;font-size:0.8em;cursor:pointer;'
                 f'font-family:inherit">salvar</button>'
                 f'</form>'
@@ -6412,9 +6472,9 @@ def _pagina_profissionais(
             if travado:
                 celula_nomes = (
                     f'<div style="font-size:0.82em;line-height:1.5;text-align:left">'
-                    f'<div><span style="color:#adb5bd">pasta</span> '
+                    f'<div><span style="color:var(--6f-texto-3)">pasta</span> '
                     f'<span style="font-family:ui-monospace,monospace">{_esc(raiz_atual) or "—"}</span></div>'
-                    f'<div><span style="color:#adb5bd">cartão</span> '
+                    f'<div><span style="color:var(--6f-texto-3)">cartão</span> '
                     f'<span style="font-family:ui-monospace,monospace;font-weight:600">{_esc(curto_atual) or "—"}</span> '
                     f'<span title="Travado: já tem cartão logado">🔒</span></div>'
                     f'</div>'
@@ -6424,19 +6484,21 @@ def _pagina_profissionais(
                     f'<form action="/profissionais/{p["id"]}/nomes" method="post" '
                     f'style="margin:0;display:flex;flex-direction:column;gap:4px;text-align:left">'
                     f'<div style="display:flex;gap:4px;align-items:center">'
-                    f'<span style="color:#adb5bd;font-size:0.74em;width:42px">pasta</span>'
+                    f'<span style="color:var(--6f-texto-3);font-size:0.74em;width:42px">pasta</span>'
                     f'<input type="text" name="nome_raiz" value="{_esc(raiz_atual)}" '
                     f'placeholder="NOME_SOBRENOME" autocomplete="off" '
-                    f'style="width:130px;padding:3px 6px;border:1px solid #ced4da;'
+                    f'style="width:130px;padding:3px 6px;border:1px solid var(--6f-borda);'
+                    f'background:var(--6f-bg-elevado);color:var(--6f-texto);'
                     f'border-radius:5px;font-size:0.8em;font-family:ui-monospace,monospace"></div>'
                     f'<div style="display:flex;gap:4px;align-items:center">'
-                    f'<span style="color:#adb5bd;font-size:0.74em;width:42px">cartão</span>'
+                    f'<span style="color:var(--6f-texto-3);font-size:0.74em;width:42px">cartão</span>'
                     f'<input type="text" name="nome_curto" value="{_esc(curto_atual)}" '
                     f'placeholder="SOBRENOME" autocomplete="off" '
-                    f'style="width:130px;padding:3px 6px;border:1px solid #ced4da;'
+                    f'style="width:130px;padding:3px 6px;border:1px solid var(--6f-borda);'
+                    f'background:var(--6f-bg-elevado);color:var(--6f-texto);'
                     f'border-radius:5px;font-size:0.8em;font-family:ui-monospace,monospace">'
                     f'<button type="submit" title="Salvar nomes" '
-                    f'style="background:#fff;border:1px solid #ced4da;color:#1a1a2e;'
+                    f'style="background:var(--6f-bg-elevado);border:1px solid var(--6f-borda);color:var(--6f-texto);'
                     f'border-radius:5px;padding:3px 7px;font-size:0.76em;cursor:pointer;'
                     f'font-family:inherit">salvar</button></div>'
                     f'</form>'
@@ -6445,7 +6507,7 @@ def _pagina_profissionais(
             linhas_tabela += f"""
             <tr style="{estilo_linha}">
                 <td style="font-family:ui-monospace,monospace;font-size:1.1em;
-                            font-weight:700;color:#1a1a2e;letter-spacing:1px">
+                            font-weight:700;color:var(--6f-teal);letter-spacing:1px">
                     {_esc(p['letra'])}
                 </td>
                 <td style="font-weight:600">{selo}{_esc(p['nome'])}</td>
@@ -6466,7 +6528,7 @@ def _pagina_profissionais(
     else:
         linhas_tabela = """
             <tr>
-                <td colspan="8" style="text-align:center;color:#adb5bd;padding:24px">
+                <td colspan="8" style="text-align:center;color:var(--6f-texto-3);padding:24px">
                     Nenhum profissional cadastrado ainda.
                 </td>
             </tr>"""
@@ -6475,7 +6537,7 @@ def _pagina_profissionais(
     bloco_erro = ""
     if erro:
         bloco_erro = f"""
-        <div style="background:#fdecea;border:1px solid #f5c6cb;color:#c0392b;
+        <div style="background:var(--6f-bg-elevado);border:1px solid var(--6f-erro);color:var(--6f-erro);
                     border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:0.9em">
             <strong>Erro:</strong> {_esc(erro)}
         </div>"""
@@ -6484,7 +6546,7 @@ def _pagina_profissionais(
     bloco_aviso = ""
     if aviso_banco:
         bloco_aviso = f"""
-        <div style="background:#fff3cd;border:1px solid #ffc107;color:#856404;
+        <div style="background:var(--6f-bg-elevado);border:1px solid var(--6f-aviso);color:var(--6f-aviso);
                     border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:0.9em">
             {_esc(aviso_banco)}
         </div>"""
@@ -6499,9 +6561,9 @@ def _pagina_profissionais(
 
         <!-- Tabela de profissionais cadastrados -->
         <div>
-            <h2 style="font-size:1em;font-weight:700;color:#1a1a2e;margin-bottom:12px">
+            <h2 style="font-size:1em;font-weight:700;color:var(--6f-texto);margin-bottom:12px">
                 Profissionais cadastrados
-                <span style="font-size:0.8em;font-weight:400;color:#6c757d;margin-left:8px">
+                <span style="font-size:0.8em;font-weight:400;color:var(--6f-texto-2);margin-left:8px">
                     ({len(lista)} {'profissional' if len(lista) == 1 else 'profissionais'})
                 </span>
             </h2>
@@ -6509,46 +6571,46 @@ def _pagina_profissionais(
             <style>
                 /* Organização mínima: respiro + linha separadora entre profissionais,
                    pra nomes longos não embolarem uns nos outros. */
-                .tab-prof td {{ padding:12px 12px; border-bottom:1px solid #e9ecef;
+                .tab-prof td {{ padding:12px 12px; border-bottom:1px solid var(--6f-borda);
                                 vertical-align:middle; }}
                 .tab-prof tbody tr:last-child td {{ border-bottom:none; }}
-                .tab-prof tbody tr:hover td {{ background:#f8f9fa; }}
+                .tab-prof tbody tr:hover td {{ background:var(--6f-bg-hover); }}
             </style>
-            <table class="tab-prof" style="width:100%;border-collapse:collapse;background:#fff;
-                          border-radius:8px;overflow:hidden;
-                          box-shadow:0 1px 4px rgba(0,0,0,0.08);font-size:0.88em">
+            <table class="tab-prof" style="width:100%;border-collapse:collapse;background:var(--6f-bg-superficie);
+                          border-radius:8px;overflow:hidden;border:1px solid var(--6f-borda);
+                          box-shadow:none;font-size:0.88em">
                 <thead>
                     <tr>
-                        <th style="padding:9px 12px;text-align:left;background:#f8f9fa;
-                                   color:#6c757d;text-transform:uppercase;font-size:0.78em;
-                                   letter-spacing:0.4px;border-bottom:1px solid #dee2e6;
+                        <th style="padding:9px 12px;text-align:left;background:var(--6f-bg-elevado);
+                                   color:var(--6f-texto-2);text-transform:uppercase;font-size:0.78em;
+                                   letter-spacing:0.4px;border-bottom:1px solid var(--6f-borda);
                                    width:60px">Letra</th>
-                        <th style="padding:9px 12px;text-align:left;background:#f8f9fa;
-                                   color:#6c757d;text-transform:uppercase;font-size:0.78em;
-                                   letter-spacing:0.4px;border-bottom:1px solid #dee2e6">Nome</th>
-                        <th style="padding:9px 12px;text-align:left;background:#f8f9fa;
-                                   color:#6c757d;text-transform:uppercase;font-size:0.78em;
-                                   letter-spacing:0.4px;border-bottom:1px solid #dee2e6;
+                        <th style="padding:9px 12px;text-align:left;background:var(--6f-bg-elevado);
+                                   color:var(--6f-texto-2);text-transform:uppercase;font-size:0.78em;
+                                   letter-spacing:0.4px;border-bottom:1px solid var(--6f-borda)">Nome</th>
+                        <th style="padding:9px 12px;text-align:left;background:var(--6f-bg-elevado);
+                                   color:var(--6f-texto-2);text-transform:uppercase;font-size:0.78em;
+                                   letter-spacing:0.4px;border-bottom:1px solid var(--6f-borda);
                                    width:200px">Pasta · Cartão</th>
-                        <th style="padding:9px 12px;text-align:center;background:#f8f9fa;
-                                   color:#6c757d;text-transform:uppercase;font-size:0.78em;
-                                   letter-spacing:0.4px;border-bottom:1px solid #dee2e6;
+                        <th style="padding:9px 12px;text-align:center;background:var(--6f-bg-elevado);
+                                   color:var(--6f-texto-2);text-transform:uppercase;font-size:0.78em;
+                                   letter-spacing:0.4px;border-bottom:1px solid var(--6f-borda);
                                    width:70px">Foto</th>
-                        <th style="padding:9px 12px;text-align:center;background:#f8f9fa;
-                                   color:#6c757d;text-transform:uppercase;font-size:0.78em;
-                                   letter-spacing:0.4px;border-bottom:1px solid #dee2e6;
+                        <th style="padding:9px 12px;text-align:center;background:var(--6f-bg-elevado);
+                                   color:var(--6f-texto-2);text-transform:uppercase;font-size:0.78em;
+                                   letter-spacing:0.4px;border-bottom:1px solid var(--6f-borda);
                                    width:70px">Áudio</th>
-                        <th style="padding:9px 12px;text-align:center;background:#f8f9fa;
-                                   color:#6c757d;text-transform:uppercase;font-size:0.78em;
-                                   letter-spacing:0.4px;border-bottom:1px solid #dee2e6;
+                        <th style="padding:9px 12px;text-align:center;background:var(--6f-bg-elevado);
+                                   color:var(--6f-texto-2);text-transform:uppercase;font-size:0.78em;
+                                   letter-spacing:0.4px;border-bottom:1px solid var(--6f-borda);
                                    width:70px">Vídeo</th>
-                        <th style="padding:9px 12px;text-align:center;background:#f8f9fa;
-                                   color:#6c757d;text-transform:uppercase;font-size:0.78em;
-                                   letter-spacing:0.4px;border-bottom:1px solid #dee2e6;
+                        <th style="padding:9px 12px;text-align:center;background:var(--6f-bg-elevado);
+                                   color:var(--6f-texto-2);text-transform:uppercase;font-size:0.78em;
+                                   letter-spacing:0.4px;border-bottom:1px solid var(--6f-borda);
                                    width:170px">Câmera</th>
-                        <th style="padding:9px 12px;text-align:center;background:#f8f9fa;
-                                   color:#6c757d;text-transform:uppercase;font-size:0.78em;
-                                   letter-spacing:0.4px;border-bottom:1px solid #dee2e6;
+                        <th style="padding:9px 12px;text-align:center;background:var(--6f-bg-elevado);
+                                   color:var(--6f-texto-2);text-transform:uppercase;font-size:0.78em;
+                                   letter-spacing:0.4px;border-bottom:1px solid var(--6f-borda);
                                    width:160px">Situação</th>
                     </tr>
                 </thead>
@@ -6556,37 +6618,38 @@ def _pagina_profissionais(
                     {linhas_tabela}
                 </tbody>
             </table>
-            <p style="color:#adb5bd;font-size:0.8em;margin-top:10px">
+            <p style="color:var(--6f-texto-3);font-size:0.8em;margin-top:10px">
                 A letra é atribuída automaticamente na ordem de cadastro e é permanente.
                 Ela identifica visualmente as câmeras no set — é pista, não autoridade.
             </p>
         </div>
 
         <!-- Formulário de novo cadastro -->
-        <div style="background:#fff;border-radius:8px;padding:20px 22px;
-                    box-shadow:0 1px 4px rgba(0,0,0,0.08)">
-            <h2 style="font-size:1em;font-weight:700;color:#1a1a2e;margin-bottom:16px">
+        <div style="background:var(--6f-bg-superficie);border:1px solid var(--6f-borda);border-radius:8px;padding:20px 22px;
+                    box-shadow:none">
+            <h2 style="font-size:1em;font-weight:700;color:var(--6f-texto);margin-bottom:16px">
                 Novo profissional
             </h2>
             {bloco_erro}
             <form action="/profissionais" method="post">
                 <div style="margin-bottom:14px">
                     <label style="display:block;font-size:0.85em;font-weight:600;
-                                  color:#495057;margin-bottom:5px">
-                        Nome <span style="color:#c0392b">★</span>
+                                  color:var(--6f-texto-2);margin-bottom:5px">
+                        Nome <span style="color:var(--6f-erro)">★</span>
                     </label>
                     <input type="text" name="nome"
                            value="{_esc(nome_digitado)}"
                            placeholder="Ex.: JOAO"
                            autocomplete="off"
-                           style="width:100%;padding:9px 12px;border:1px solid #ced4da;
+                           style="width:100%;padding:9px 12px;border:1px solid var(--6f-borda);
+                                  background:var(--6f-bg-elevado);color:var(--6f-texto);
                                   border-radius:6px;font-size:0.9em;font-family:inherit">
                 </div>
 
                 <div style="margin-bottom:18px">
                     <label style="display:block;font-size:0.85em;font-weight:600;
-                                  color:#495057;margin-bottom:8px">
-                        Tipos de material <span style="color:#c0392b">★</span>
+                                  color:var(--6f-texto-2);margin-bottom:8px">
+                        Tipos de material <span style="color:var(--6f-erro)">★</span>
                     </label>
                     <label style="display:flex;align-items:center;gap:8px;
                                   margin-bottom:8px;cursor:pointer;font-size:0.9em">
@@ -6610,22 +6673,23 @@ def _pagina_profissionais(
 
                 <div style="margin-bottom:18px">
                     <label style="display:block;font-size:0.85em;font-weight:600;
-                                  color:#495057;margin-bottom:5px">
-                        Câmera <span style="color:#adb5bd;font-weight:400">(opcional)</span>
+                                  color:var(--6f-texto-2);margin-bottom:5px">
+                        Câmera <span style="color:var(--6f-texto-3);font-weight:400">(opcional)</span>
                     </label>
                     <input type="text" name="camera"
                            value="{_esc(camera_digitada)}"
                            placeholder="Ex.: Sony"
                            autocomplete="off"
-                           style="width:100%;padding:9px 12px;border:1px solid #ced4da;
+                           style="width:100%;padding:9px 12px;border:1px solid var(--6f-borda);
+                                  background:var(--6f-bg-elevado);color:var(--6f-texto);
                                   border-radius:6px;font-size:0.9em;font-family:inherit">
-                    <p style="color:#adb5bd;font-size:0.78em;margin-top:5px">
+                    <p style="color:var(--6f-texto-3);font-size:0.78em;margin-top:5px">
                         O Matcher compara esta marca com a câmera detectada no cartão.
                     </p>
                 </div>
 
                 <button type="submit"
-                        style="width:100%;background:#1a1a2e;color:#fff;border:none;
+                        style="width:100%;background:var(--6f-teal);color:var(--6f-bg-base);border:none;
                                border-radius:6px;padding:10px;font-weight:700;
                                font-size:0.9em;cursor:pointer;letter-spacing:0.3px">
                     Cadastrar
@@ -6939,7 +7003,7 @@ def _cabecalho_grupo_html(g, total, em_uso):
 
     sel_mult = "selected" if g["multipla"] else ""
     sel_uni = "" if g["multipla"] else "selected"
-    estilo_btn = ("background:#fff;border:1px solid #ced4da;border-radius:5px;"
+    estilo_btn = ("background:var(--6f-bg-elevado);border:1px solid var(--6f-borda);color:var(--6f-texto-2);border-radius:5px;"
                   "padding:3px 9px;font-size:0.8em;cursor:pointer;font-family:inherit")
 
     # Renomear + múltipla num só form
@@ -6948,13 +7012,13 @@ def _cabecalho_grupo_html(g, total, em_uso):
         f'style="display:flex;gap:6px;align-items:center;margin:0;flex:1">'
         f'<input type="text" name="rotulo" value="{rotulo}" maxlength="40" '
         f'style="font-weight:700;font-size:0.95em;border:1px solid transparent;'
-        f'border-radius:5px;padding:3px 6px;font-family:inherit;color:#1a1a2e;'
-        f'background:#f8f9fa;width:160px">'
+        f'border-radius:5px;padding:3px 6px;font-family:inherit;color:var(--6f-texto);'
+        f'background:var(--6f-bg-elevado);width:160px">'
         f'<select name="multipla" style="{estilo_btn}">'
         f'<option value="1" {sel_mult}>marca vários</option>'
         f'<option value="0" {sel_uni}>escolhe um</option>'
         f'</select>'
-        f'<button type="submit" style="{estilo_btn};color:#1D9E75;font-weight:700">salvar</button>'
+        f'<button type="submit" style="{estilo_btn};color:var(--6f-teal);font-weight:700">salvar</button>'
         f'</form>'
     )
 
@@ -6970,28 +7034,28 @@ def _cabecalho_grupo_html(g, total, em_uso):
     if ativo:
         btn_ativo = (
             f'<form action="/grupos/{chave}/ativo" method="post" style="margin:0">'
-            f'<button name="ativo" value="0" style="{estilo_btn};color:#c0392b">Desativar</button></form>'
+            f'<button name="ativo" value="0" style="{estilo_btn};color:var(--6f-erro)">Desativar</button></form>'
         )
         selo = ""
     else:
         btn_ativo = (
             f'<form action="/grupos/{chave}/ativo" method="post" style="margin:0">'
-            f'<button name="ativo" value="1" style="background:#1a1a2e;border:1px solid #1a1a2e;'
-            f'color:#fff;border-radius:5px;padding:3px 9px;font-size:0.8em;cursor:pointer;'
+            f'<button name="ativo" value="1" style="background:var(--6f-teal);border:1px solid var(--6f-teal);'
+            f'color:var(--6f-bg-base);border-radius:5px;padding:3px 9px;font-size:0.8em;cursor:pointer;'
             f'font-family:inherit">Ativar</button></form>'
         )
-        selo = ('<span style="background:#e9ecef;color:#6c757d;border-radius:4px;'
+        selo = ('<span style="background:var(--6f-bg-hover);color:var(--6f-texto-2);border-radius:4px;'
                 'padding:1px 7px;font-size:0.72em;font-weight:600">inativo</span>')
 
     # Excluir — só se NÃO está em uso (s33). Em uso → dica de desativar.
     if em_uso:
-        btn_excluir = ('<span style="color:#adb5bd;font-size:0.76em" '
+        btn_excluir = ('<span style="color:var(--6f-texto-3);font-size:0.76em" '
                        'title="Já usado em fichas — só pode desativar">em uso</span>')
     else:
         btn_excluir = (
             f'<form action="/grupos/{chave}/excluir" method="post" style="margin:0" '
             f'onsubmit="return confirm(\'Excluir o grupo {rotulo} e seus itens? Não tem volta.\')">'
-            f'<button type="submit" style="background:none;border:none;color:#adb5bd;'
+            f'<button type="submit" style="background:none;border:none;color:var(--6f-erro);'
             f'font-size:0.78em;cursor:pointer;text-decoration:underline;font-family:inherit;'
             f'padding:0">excluir</button></form>'
         )
@@ -6999,10 +7063,10 @@ def _cabecalho_grupo_html(g, total, em_uso):
     # Grupo de texto não tem itens — mostra o nº só nos de lista.
     eh_texto = g.get("modo") == "texto"
     badge = "" if eh_texto else (
-        f'<span style="background:#e9ecef;color:#6c757d;border-radius:12px;'
+        f'<span style="background:var(--6f-bg-hover);color:var(--6f-texto-2);border-radius:12px;'
         f'padding:1px 10px;font-size:0.8em;font-weight:700">{total}</span>')
     badge_modo = (
-        '<span style="background:#e6f1fb;color:#185fa5;border-radius:4px;'
+        '<span style="background:var(--6f-bg-elevado);color:var(--6f-teal-claro);border-radius:4px;'
         'padding:1px 8px;font-size:0.72em;font-weight:600">escreve na hora</span>'
         if eh_texto else "")
 
@@ -7026,7 +7090,7 @@ def _grupo_colapsavel_html(chave, dim, cabecalho, corpo):
         f'<div class="grupo-bloco" data-chave="{_esc(chave)}" style="margin-bottom:24px{dim}">'
         '<div style="display:flex;align-items:flex-start;gap:8px">'
         '<button type="button" class="grupo-toggle" onclick="gmaToggleGrupo(this)" '
-        'title="Minimizar / expandir" style="background:#fff;border:1px solid #ced4da;'
+        'title="Minimizar / expandir" style="background:var(--6f-bg-elevado);border:1px solid var(--6f-borda);color:var(--6f-texto-2);'
         'border-radius:5px;cursor:pointer;font-size:0.8em;line-height:1;padding:6px 9px;'
         'margin-top:1px;font-family:inherit">▾</button>'
         f'<div style="flex:1;min-width:0">{cabecalho}</div>'
@@ -7134,8 +7198,8 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
         if g.get("modo") == "texto":
             dim = ";opacity:0.55" if not g["ativo"] else ""
             corpo_grupo = (
-                '<p style="color:#adb5bd;font-size:0.85em;background:#fff;border-radius:8px;'
-                'padding:12px 16px;box-shadow:0 1px 4px rgba(0,0,0,0.08);margin:0">'
+                '<p style="color:var(--6f-texto-2);font-size:0.85em;background:var(--6f-bg-superficie);border-radius:8px;'
+                'border:1px solid var(--6f-borda);padding:12px 16px;box-shadow:none;margin:0">'
                 'Grupo de preenchimento — o profissional escreve o valor na ficha '
                 '(ex.: nome do entrevistado). Não tem itens a cadastrar aqui.</p>'
             )
@@ -7157,19 +7221,19 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
                     botao_ativo = (
                         f'<form action="/listas/{item["id"]}/ativo" method="post" style="margin:0">'
                         '<button type="submit" name="ativo" value="0" '
-                        'style="background:#fff;border:1px solid #ced4da;color:#c0392b;'
+                        'style="background:var(--6f-bg-elevado);border:1px solid var(--6f-borda);color:var(--6f-erro);'
                         'border-radius:5px;padding:3px 10px;font-size:0.82em;cursor:pointer;'
                         'font-family:inherit">Desativar</button>'
                         '</form>'
                     )
                 else:
-                    selo = ('<span style="background:#e9ecef;color:#6c757d;border-radius:4px;'
+                    selo = ('<span style="background:var(--6f-bg-hover);color:var(--6f-texto-2);border-radius:4px;'
                             'padding:1px 7px;font-size:0.74em;font-weight:600;margin-right:6px">'
                             'inativo</span>')
                     botao_ativo = (
                         f'<form action="/listas/{item["id"]}/ativo" method="post" style="margin:0">'
                         '<button type="submit" name="ativo" value="1" '
-                        'style="background:#1a1a2e;border:1px solid #1a1a2e;color:#fff;'
+                        'style="background:var(--6f-teal);border:1px solid var(--6f-teal);color:var(--6f-bg-base);'
                         'border-radius:5px;padding:3px 10px;font-size:0.82em;cursor:pointer;'
                         'font-family:inherit">Ativar</button>'
                         '</form>'
@@ -7184,7 +7248,7 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
                     f'style="margin:0" '
                     f'onsubmit="return confirm(\'Excluir {valor_esc} de vez? Não tem volta.\')">'
                     '<button type="submit" '
-                    'style="background:none;border:none;color:#adb5bd;font-size:0.82em;'
+                    'style="background:none;border:none;color:var(--6f-texto-3);font-size:0.82em;'
                     'cursor:pointer;text-decoration:underline;font-family:inherit;padding:0">'
                     'excluir</button>'
                     '</form>'
@@ -7193,7 +7257,7 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
                 linhas_tipo += f"""
                 <tr style="{estilo_linha}">
                     <td style="font-weight:600">{selo}{valor_esc}</td>
-                    <td style="color:#adb5bd;font-size:0.82em">{_esc(item['criado_em'][:10])}</td>
+                    <td style="color:var(--6f-texto-3);font-size:0.82em">{_esc(item['criado_em'][:10])}</td>
                     <td>
                         <div style="display:flex;gap:10px;align-items:center">
                             {botao_ativo}
@@ -7204,32 +7268,32 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
         else:
             linhas_tipo = """
                 <tr>
-                    <td colspan="3" style="text-align:center;color:#adb5bd;
+                    <td colspan="3" style="text-align:center;color:var(--6f-texto-3);
                                            padding:14px;font-size:0.85em">
                         Nenhum item cadastrado ainda.
                     </td>
                 </tr>"""
 
         corpo_grupo = f"""
-            <table style="width:100%;border-collapse:collapse;background:#fff;
-                          border-radius:8px;overflow:hidden;
-                          box-shadow:0 1px 4px rgba(0,0,0,0.08);font-size:0.88em">
+            <table style="width:100%;border-collapse:collapse;background:var(--6f-bg-superficie);
+                          border-radius:8px;overflow:hidden;border:1px solid var(--6f-borda);
+                          box-shadow:none;font-size:0.88em">
                 <thead>
                     <tr>
-                        <th style="padding:8px 12px;text-align:left;background:#f8f9fa;
-                                   color:#6c757d;text-transform:uppercase;font-size:0.78em;
-                                   letter-spacing:0.4px;border-bottom:1px solid #dee2e6">
+                        <th style="padding:8px 12px;text-align:left;background:var(--6f-bg-elevado);
+                                   color:var(--6f-texto-2);text-transform:uppercase;font-size:0.78em;
+                                   letter-spacing:0.4px;border-bottom:1px solid var(--6f-borda)">
                             Valor
                         </th>
-                        <th style="padding:8px 12px;text-align:left;background:#f8f9fa;
-                                   color:#6c757d;text-transform:uppercase;font-size:0.78em;
-                                   letter-spacing:0.4px;border-bottom:1px solid #dee2e6;
+                        <th style="padding:8px 12px;text-align:left;background:var(--6f-bg-elevado);
+                                   color:var(--6f-texto-2);text-transform:uppercase;font-size:0.78em;
+                                   letter-spacing:0.4px;border-bottom:1px solid var(--6f-borda);
                                    width:110px">
                             Criado em
                         </th>
-                        <th style="padding:8px 12px;text-align:left;background:#f8f9fa;
-                                   color:#6c757d;text-transform:uppercase;font-size:0.78em;
-                                   letter-spacing:0.4px;border-bottom:1px solid #dee2e6;
+                        <th style="padding:8px 12px;text-align:left;background:var(--6f-bg-elevado);
+                                   color:var(--6f-texto-2);text-transform:uppercase;font-size:0.78em;
+                                   letter-spacing:0.4px;border-bottom:1px solid var(--6f-borda);
                                    width:180px">
                             Ação
                         </th>
@@ -7246,7 +7310,7 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
     bloco_erro = ""
     if erro:
         bloco_erro = f"""
-        <div style="background:#fdecea;border:1px solid #f5c6cb;color:#c0392b;
+        <div style="background:var(--6f-bg-elevado);border:1px solid var(--6f-erro);color:var(--6f-erro);
                     border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:0.9em">
             <strong>Erro:</strong> {_esc(erro)}
         </div>"""
@@ -7255,7 +7319,7 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
     bloco_aviso = ""
     if aviso_banco:
         bloco_aviso = f"""
-        <div style="background:#fff3cd;border:1px solid #ffc107;color:#856404;
+        <div style="background:var(--6f-bg-elevado);border:1px solid var(--6f-aviso);color:var(--6f-aviso);
                     border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:0.9em">
             {_esc(aviso_banco)}
         </div>"""
@@ -7275,7 +7339,7 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
 
         <!-- Listas agrupadas por tipo -->
         <div>
-            <p style="color:#6c757d;font-size:0.9em;margin-bottom:20px;line-height:1.5">
+            <p style="color:var(--6f-texto-2);font-size:0.9em;margin-bottom:20px;line-height:1.5">
                 Estas listas fornecem as opções de classificação da ficha de check-in
                 (palcos, marcas, pautas, serviços e tags). O profissional escolhe
                 da lista — nunca digita livremente. Itens desativados preservam o
@@ -7283,11 +7347,11 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
             </p>
             <div style="display:flex;gap:8px;margin-bottom:16px">
                 <button type="button" onclick="gmaTodasGrupos(true)"
-                        style="background:#fff;border:1px solid #ced4da;border-radius:5px;
+                        style="background:var(--6f-bg-elevado);border:1px solid var(--6f-borda);color:var(--6f-texto-2);border-radius:5px;
                                padding:5px 11px;font-size:0.82em;cursor:pointer;font-family:inherit">
                     ▸ minimizar todas</button>
                 <button type="button" onclick="gmaTodasGrupos(false)"
-                        style="background:#fff;border:1px solid #ced4da;border-radius:5px;
+                        style="background:var(--6f-bg-elevado);border:1px solid var(--6f-borda);color:var(--6f-texto-2);border-radius:5px;
                                padding:5px 11px;font-size:0.82em;cursor:pointer;font-family:inherit">
                     ▾ expandir todas</button>
             </div>
@@ -7299,29 +7363,31 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
         <div style="display:flex;flex-direction:column;gap:18px;position:sticky;top:20px">
 
         <!-- Formulário de novo GRUPO -->
-        <div style="background:#fff;border-radius:8px;padding:20px 22px;
-                    box-shadow:0 1px 4px rgba(0,0,0,0.08)">
-            <h2 style="font-size:1em;font-weight:700;color:#1a1a2e;margin-bottom:6px">
+        <div style="background:var(--6f-bg-superficie);border:1px solid var(--6f-borda);border-radius:8px;padding:20px 22px;
+                    box-shadow:none">
+            <h2 style="font-size:1em;font-weight:700;color:var(--6f-texto);margin-bottom:6px">
                 Novo grupo
             </h2>
-            <p style="color:#adb5bd;font-size:0.78em;margin-bottom:14px;line-height:1.5">
+            <p style="color:var(--6f-texto-3);font-size:0.78em;margin-bottom:14px;line-height:1.5">
                 Um grupo vira um bloco de chips na ficha e uma coluna na planilha.
             </p>
             <form action="/grupos" method="post">
                 <div style="margin-bottom:12px">
                     <label style="display:block;font-size:0.85em;font-weight:600;
-                                  color:#495057;margin-bottom:5px">Nome do grupo
-                        <span style="color:#c0392b">★</span></label>
+                                  color:var(--6f-texto-2);margin-bottom:5px">Nome do grupo
+                        <span style="color:var(--6f-erro)">★</span></label>
                     <input type="text" name="rotulo" autocomplete="off"
                            placeholder="Ex.: Salas, Patrocinador, Idioma"
-                           style="width:100%;padding:9px 12px;border:1px solid #ced4da;
+                           style="width:100%;padding:9px 12px;border:1px solid var(--6f-borda);
+                                  background:var(--6f-bg-elevado);color:var(--6f-texto);
                                   border-radius:6px;font-size:0.9em;font-family:inherit">
                 </div>
                 <div style="margin-bottom:12px">
                     <label style="display:block;font-size:0.85em;font-weight:600;
-                                  color:#495057;margin-bottom:5px">Como preenche?</label>
+                                  color:var(--6f-texto-2);margin-bottom:5px">Como preenche?</label>
                     <select name="modo"
-                            style="width:100%;padding:9px 12px;border:1px solid #ced4da;
+                            style="width:100%;padding:9px 12px;border:1px solid var(--6f-borda);
+                                   background:var(--6f-bg-elevado);color:var(--6f-texto);
                                    border-radius:6px;font-size:0.9em;font-family:inherit">
                         <option value="lista">Escolhe da lista (chips)</option>
                         <option value="texto">Escreve na hora (texto)</option>
@@ -7329,16 +7395,17 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
                 </div>
                 <div style="margin-bottom:16px">
                     <label style="display:block;font-size:0.85em;font-weight:600;
-                                  color:#495057;margin-bottom:5px">Quantos por ficha</label>
+                                  color:var(--6f-texto-2);margin-bottom:5px">Quantos por ficha</label>
                     <select name="multipla"
-                            style="width:100%;padding:9px 12px;border:1px solid #ced4da;
+                            style="width:100%;padding:9px 12px;border:1px solid var(--6f-borda);
+                                   background:var(--6f-bg-elevado);color:var(--6f-texto);
                                    border-radius:6px;font-size:0.9em;font-family:inherit">
                         <option value="1">Vários</option>
                         <option value="0">Um só</option>
                     </select>
                 </div>
                 <button type="submit"
-                        style="width:100%;background:#1D9E75;color:#fff;border:none;
+                        style="width:100%;background:var(--6f-teal);color:var(--6f-bg-base);border:none;
                                border-radius:6px;padding:10px;font-weight:700;
                                font-size:0.9em;cursor:pointer;letter-spacing:0.3px">
                     Criar grupo
@@ -7347,20 +7414,21 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
         </div>
 
         <!-- Formulário de novo item -->
-        <div style="background:#fff;border-radius:8px;padding:20px 22px;
-                    box-shadow:0 1px 4px rgba(0,0,0,0.08)">
-            <h2 style="font-size:1em;font-weight:700;color:#1a1a2e;margin-bottom:16px">
+        <div style="background:var(--6f-bg-superficie);border:1px solid var(--6f-borda);border-radius:8px;padding:20px 22px;
+                    box-shadow:none">
+            <h2 style="font-size:1em;font-weight:700;color:var(--6f-texto);margin-bottom:16px">
                 Adicionar item
             </h2>
             {bloco_erro}
             <form action="/listas" method="post">
                 <div style="margin-bottom:14px">
                     <label style="display:block;font-size:0.85em;font-weight:600;
-                                  color:#495057;margin-bottom:5px">
-                        Tipo <span style="color:#c0392b">★</span>
+                                  color:var(--6f-texto-2);margin-bottom:5px">
+                        Tipo <span style="color:var(--6f-erro)">★</span>
                     </label>
                     <select name="tipo"
-                            style="width:100%;padding:9px 12px;border:1px solid #ced4da;
+                            style="width:100%;padding:9px 12px;border:1px solid var(--6f-borda);
+                                   background:var(--6f-bg-elevado);color:var(--6f-texto);
                                    border-radius:6px;font-size:0.9em;font-family:inherit">
                         <option value="">— escolha —</option>
                         {opcoes_tipo}
@@ -7369,29 +7437,30 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
 
                 <div style="margin-bottom:18px">
                     <label style="display:block;font-size:0.85em;font-weight:600;
-                                  color:#495057;margin-bottom:5px">
-                        Valor <span style="color:#c0392b">★</span>
+                                  color:var(--6f-texto-2);margin-bottom:5px">
+                        Valor <span style="color:var(--6f-erro)">★</span>
                     </label>
                     <input type="text" name="valor"
                            value="{_esc(valor_digitado)}"
                            placeholder="Ex.: RedBull, Palco Principal"
                            autocomplete="off"
-                           style="width:100%;padding:9px 12px;border:1px solid #ced4da;
+                           style="width:100%;padding:9px 12px;border:1px solid var(--6f-borda);
+                                  background:var(--6f-bg-elevado);color:var(--6f-texto);
                                   border-radius:6px;font-size:0.9em;font-family:inherit">
-                    <p style="color:#adb5bd;font-size:0.78em;margin-top:5px">
+                    <p style="color:var(--6f-texto-3);font-size:0.78em;margin-top:5px">
                         Aparece como opção na ficha de check-in.
                     </p>
                 </div>
 
                 <button type="submit"
-                        style="width:100%;background:#1a1a2e;color:#fff;border:none;
+                        style="width:100%;background:var(--6f-teal);color:var(--6f-bg-base);border:none;
                                border-radius:6px;padding:10px;font-weight:700;
                                font-size:0.9em;cursor:pointer;letter-spacing:0.3px">
                     Adicionar
                 </button>
             </form>
 
-            <p style="color:#adb5bd;font-size:0.78em;margin-top:18px;line-height:1.5">
+            <p style="color:var(--6f-texto-3);font-size:0.78em;margin-top:18px;line-height:1.5">
                 Itens desativados somem das fichas mas ficam no banco (proteção do
                 histórico). Itens já usados numa ficha não podem ser excluídos de
                 vez — só desativados.
@@ -7443,58 +7512,61 @@ def erro_interno(erro):
 # ══════════════════════════════════════════════════════════════════════════════
 
 PAINEL_CSS = """
-.painel-secao { background:#fff; border-radius:10px; box-shadow:0 1px 4px rgba(0,0,0,0.08);
+.painel-secao { background:var(--6f-bg-superficie); border-radius:10px;
+                border:1px solid var(--6f-borda); box-shadow:none;
                 padding:18px 20px; margin-bottom:18px; }
-.painel-secao h2 { font-size:1.05em; margin-bottom:4px; color:#1a1a2e; }
-.painel-secao .sub { color:#6c757d; font-size:0.85em; margin-bottom:14px; line-height:1.5; }
+.painel-secao h2 { font-size:1.05em; margin-bottom:4px; color:var(--6f-texto); }
+.painel-secao .sub { color:var(--6f-texto-2); font-size:0.85em; margin-bottom:14px; line-height:1.5; }
 .projeto-ativo { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
-.projeto-ativo .nome { font-size:1.4em; font-weight:700; color:#1D9E75; }
-.projeto-ativo .db { font-family:ui-monospace,Menlo,monospace; font-size:0.85em; color:#6c757d; }
+.projeto-ativo .nome { font-size:1.4em; font-weight:700; color:var(--6f-teal); }
+.projeto-ativo .db { font-family:ui-monospace,Menlo,monospace; font-size:0.85em; color:var(--6f-texto-2); }
 .proj-lista { display:flex; flex-direction:column; gap:8px; }
 .proj-item { display:flex; align-items:center; justify-content:space-between; gap:12px;
-             padding:10px 12px; border:1px solid #e9ecef; border-radius:8px; }
-.proj-item.ativo { border-color:#1D9E75; background:#f0fbf6; }
+             padding:10px 12px; border:1px solid var(--6f-borda); border-radius:8px; }
+.proj-item.ativo { border-color:var(--6f-teal); background:var(--6f-teal-trilho); }
 .proj-item .info b { font-size:0.98em; }
-.proj-item .info .cam { font-family:ui-monospace,Menlo,monospace; font-size:0.8em; color:#868e96; }
-.tag-ativo { background:#1D9E75; color:#fff; border-radius:10px; padding:2px 10px; font-size:0.74em; font-weight:700; }
+.proj-item .info .cam { font-family:ui-monospace,Menlo,monospace; font-size:0.8em; color:var(--6f-texto-3); }
+.tag-ativo { background:var(--6f-teal); color:var(--6f-bg-base); border-radius:10px; padding:2px 10px; font-size:0.74em; font-weight:700; }
 .conexoes { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:12px; }
-.conexao { border:1px solid #e9ecef; border-radius:8px; padding:12px 14px; }
+.conexao { border:1px solid var(--6f-borda); border-radius:8px; padding:12px 14px; }
 .conexao .top { display:flex; align-items:center; gap:8px; margin-bottom:4px; }
 .dot { width:10px; height:10px; border-radius:50%; flex:none; }
-.dot.ok { background:#1D9E75; } .dot.aviso { background:#f59e0b; }
-.dot.off { background:#ced4da; } .dot.erro { background:#c0392b; }
+.dot.ok { background:var(--6f-ok); } .dot.aviso { background:var(--6f-aviso); }
+.dot.off { background:var(--6f-texto-3); } .dot.erro { background:var(--6f-erro); }
 .conexao .rot { font-weight:700; font-size:0.95em; }
-.conexao .val { font-family:ui-monospace,Menlo,monospace; font-size:0.82em; color:#495057;
+.conexao .val { font-family:ui-monospace,Menlo,monospace; font-size:0.82em; color:var(--6f-texto-2);
                 word-break:break-all; margin:2px 0 8px; }
-.conexao .desc { color:#868e96; font-size:0.8em; margin-bottom:8px; line-height:1.4; }
+.conexao .desc { color:var(--6f-texto-3); font-size:0.8em; margin-bottom:8px; line-height:1.4; }
 .btn { border:none; border-radius:6px; padding:6px 14px; font-weight:600; font-size:0.82em;
        cursor:pointer; font-family:inherit; }
-.btn-testar { background:#e7f5ff; color:#1971c2; }
-.btn-trocar { background:#1D9E75; color:#fff; }
-.btn-secund { background:#f1f3f5; color:#495057; }
-.btn-perigo { background:#c0392b; color:#fff; }
+.btn-testar { background:var(--6f-bg-elevado); color:var(--6f-teal-claro); }
+.btn-trocar { background:var(--6f-teal); color:var(--6f-bg-base); }
+.btn-secund { background:var(--6f-bg-elevado); color:var(--6f-texto-2); }
+.btn-perigo { background:var(--6f-erro); color:var(--6f-bg-base); }
 .btn:disabled { opacity:0.5; cursor:default; }
 .linha-form { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:6px; }
-.linha-form input[type=text] { flex:1; min-width:180px; padding:7px 10px; border:1px solid #ced4da;
+.linha-form input[type=text] { flex:1; min-width:180px; padding:7px 10px; border:1px solid var(--6f-borda);
+                               background:var(--6f-bg-elevado); color:var(--6f-texto);
                                border-radius:6px; font-size:0.85em; font-family:inherit; }
+.linha-form input[type=text]::placeholder { color:var(--6f-texto-3); }
 .aviso-painel { padding:10px 14px; border-radius:8px; margin-bottom:16px; font-size:0.9em; }
-.aviso-painel.ok { background:#f0fbf6; border:1px solid #1D9E75; color:#0b6b4a; }
-.aviso-painel.erro { background:#fff5f5; border:1px solid #ffc9c9; color:#c0392b; }
-.resultado-teste { background:#f8f9fa; border:1px solid #dee2e6; border-radius:6px;
-                   padding:7px 10px; font-size:0.82em; margin-top:6px; }
+.aviso-painel.ok { background:var(--6f-teal-trilho); border:1px solid var(--6f-teal); color:var(--6f-texto); }
+.aviso-painel.erro { background:var(--6f-bg-elevado); border:1px solid var(--6f-erro); color:var(--6f-erro); }
+.resultado-teste { background:var(--6f-bg-elevado); border:1px solid var(--6f-borda); border-radius:6px;
+                   color:var(--6f-texto-2); padding:7px 10px; font-size:0.82em; margin-top:6px; }
 .controle-sistema { display:flex; gap:10px; flex-wrap:wrap; }
-.nota-command { color:#868e96; font-size:0.82em; margin-top:12px; line-height:1.5; }
+.nota-command { color:var(--6f-texto-3); font-size:0.82em; margin-top:12px; line-height:1.5; }
 .conexao-botoes { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px; }
 .conexao.inativo { opacity:0.65; }
-.ajuda-sheets { background:#f0fbf6; border:1px solid #c6efdd; border-radius:6px;
+.ajuda-sheets { background:var(--6f-teal-trilho); border:1px solid var(--6f-borda); border-radius:6px;
                 padding:8px 10px; margin-bottom:8px; }
-.ajuda-passos { font-size:0.78em; color:#0b6b4a; margin-bottom:6px; line-height:1.4; }
+.ajuda-passos { font-size:0.78em; color:var(--6f-texto-2); margin-bottom:6px; line-height:1.4; }
 .ajuda-sa { display:flex; align-items:center; gap:6px; }
-.ajuda-sa code { flex:1; background:#fff; border:1px solid #c6efdd; border-radius:5px;
-                 padding:5px 8px; font-size:0.76em; color:#155; word-break:break-all; }
-.btn-copiar { background:#1D9E75; color:#fff; border:none; border-radius:5px;
+.ajuda-sa code { flex:1; background:var(--6f-bg-elevado); border:1px solid var(--6f-borda); border-radius:5px;
+                 padding:5px 8px; font-size:0.76em; color:var(--6f-texto); word-break:break-all; }
+.btn-copiar { background:var(--6f-teal); color:var(--6f-bg-base); border:none; border-radius:5px;
               padding:5px 10px; font-size:0.76em; cursor:pointer; white-space:nowrap; }
-.btn-copiar:hover { background:#178a65; }
+.btn-copiar:hover { background:var(--6f-teal-forte); }
 """
 
 
