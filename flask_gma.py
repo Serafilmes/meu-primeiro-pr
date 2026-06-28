@@ -7591,16 +7591,8 @@ def _saguao_rodando():
         return False
 
 
-def _inicializar_banco_projeto(slug):
-    """Cria o schema do banco vazio de um projeto recém-criado (subprocess isolado)."""
-    estado = painel_config.carregar_estado()
-    cfg = estado["projetos"][slug]
-    db = painel_config.caminho_db(cfg)
-    env = dict(os.environ)
-    env["GMA_DB"] = db
-    subprocess.run([sys.executable if os.path.basename(sys.executable).startswith("python") else "/usr/bin/python3",
-                    "banco_dados.py"],
-                   cwd=_painel_raiz(), env=env, capture_output=True, text=True, timeout=120)
+# (_inicializar_banco_projeto saiu junto com a rota /painel/novo: criar projeto
+#  — e preparar o banco dele — agora é só no saguão, em criar_projeto_novo.)
 
 
 def _testar_conexao(chave):
@@ -7913,31 +7905,11 @@ def _pagina_painel(aviso=None, erro=None, resultado_teste=None):
         "</div></div>"
     )
 
-    # ── Lista de projetos + criar novo ───────────────────────────────────────
-    itens = []
-    for slug, cfg in estado["projetos"].items():
-        eh_ativo = (slug == ativo_slug)
-        # Trocar de projeto é pelo SAGUÃO agora — aqui a lista é só informativa.
-        tag = "<span class='tag-ativo'>ATIVO</span>" if eh_ativo else ""
-        itens.append(
-            f"<div class='proj-item {'ativo' if eh_ativo else ''}'>"
-            f"<div class='info'><b>{_esc(cfg.get('nome', slug))}</b><br>"
-            f"<span class='cam'>{_esc(painel_config.caminho_db(cfg))}</span></div>"
-            f"{tag}</div>"
-        )
-    partes.append(
-        "<div class='painel-secao'><h2>Projetos</h2>"
-        "<div class='sub'>Para <b>trocar</b> de projeto, use “⬅ Voltar ao saguão” no topo — "
-        "lá você escolhe em qual entrar (o isolamento é total: cada projeto tem seu banco, "
-        "sua pasta e sua planilha).</div>"
-        f"<div class='proj-lista'>{''.join(itens)}</div>"
-        "<form method='POST' action='/painel/novo' class='linha-form'>"
-        "<input type='text' name='nome' placeholder='Nome do projeto novo (ex.: The Town 2026)'>"
-        "<button class='btn btn-secund' type='submit'>+ Criar projeto</button></form>"
-        "<div class='sub' style='margin-top:8px'>Criar um projeto faz a pasta isolada dele e prepara o banco vazio. "
-        "Depois, volte ao saguão e entre nele para configurar as conexões aqui no cockpit.</div>"
-        "</div>"
-    )
+    # ── (Lista de projetos saiu daqui) ───────────────────────────────────────
+    # Listar/trocar/criar projeto agora é só no SAGUÃO (o térreo): lá ficam a
+    # lista, o "Entrar" e o "Criar projeto". Tê-los também aqui era duplicação —
+    # a caixa "Projeto ativo" acima já basta para saber onde você está. Para
+    # mexer em projetos, use "⬅ Voltar ao saguão" no topo.
 
     # ── Conexões (cockpit) ───────────────────────────────────────────────────
     cards = []
@@ -8070,19 +8042,8 @@ def painel_cockpit():
     return _pagina_painel()
 
 
-@app.route("/painel/novo", methods=["POST"])
-def painel_novo():
-    """Cria um projeto novo (pasta isolada + banco vazio inicializado)."""
-    nome = (request.form.get("nome") or "").strip()
-    try:
-        slug = painel_config.criar_projeto(nome)
-        _inicializar_banco_projeto(slug)
-        logger.info(f"PAINEL | Projeto criado: '{nome}' (slug={slug})")
-        return _pagina_painel(aviso=f"Projeto “{nome}” criado e banco preparado. "
-                                    f"Troque para ele quando quiser começar.")
-    except Exception as e:
-        logger.warning(f"PAINEL | Falha ao criar projeto: {e}")
-        return _pagina_painel(erro=f"Não deu para criar o projeto: {e}")
+# (A rota /painel/novo saiu: criar projeto agora é só no saguão, via /criar.
+#  A caixa "Projetos" do Painel — único lugar que postava aqui — foi removida.)
 
 
 @app.route("/painel/destino", methods=["POST"])
