@@ -98,6 +98,12 @@ def carregar_dotenv(caminho_env):
 # Raiz do projeto GMA — todos os scripts estão aqui
 RAIZ_GMA = "/Users/serafa/GMA"
 
+# Arquivos temporários do túnel Cloudflare.
+# Devem ser IGUAIS aos caminhos usados pelo cloudflared_gma.sh para que os dois
+# não pisem um no estado do outro.
+CF_LOG       = "/tmp/cloudflared_gma.log"       # log do processo cloudflared
+CF_URL_STATE = "/tmp/cloudflared_gma_url.txt"   # URL pública ativa (arquivo presente = túnel vivo)
+
 # Arquivo sentinela: quando existe, o Porteiro processa eventos
 SENTINELA = os.path.join(RAIZ_GMA, ".gma_ativo")
 
@@ -449,22 +455,67 @@ def encerrar_processo(processo, nome_legivel, timeout=5):
 
 # ── PONTO DE ENTRADA ──────────────────────────────────────────────────────────
 
-def iniciar_ngrok():
+def _tunel_url():
     """
-    Sobe o ngrok como processo OPCIONAL do maestro — o túnel sobe junto com o
-    sistema, sem terminal separado. Só age quando faz sentido:
+    Lê a URL HTTPS pública do Cloudflare a partir do arquivo de estado.
+    Retorna a URL (sem barra final) se o arquivo existir e contiver uma URL
+    HTTPS válida, ou None se o arquivo não existir ou o conteúdo for inválido.
+    O arquivo CF_URL_STATE é gravado pelo iniciar_cloudflared() assim que o
+    túnel sobe; ausência do arquivo = sem túnel ativo.
+    """
+    try:
+        with open(CF_URL_STATE, "r", encoding="utf-8") as _f:
+            conteudo = _f.read().strip()
+        if conteudo.startswith("https://"):
+            return conteudo.rstrip("/")
+    except Exception:
+        pass
+    return None
+
+
+def _tunel_no_ar():
+    """
+    True se já existe um processo cloudflared rodando no sistema.
+    Usa pgrep para detectar o processo de verdade — não confia só no arquivo
+    de estado, que pode ter sobrado de uma sessão anterior sem túnel ativo.
+    """
+    try:
+        resultado = subprocess.run(
+            ["pgrep", "-f", "cloudflared tunnel"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        return resultado.returncode == 0
+    except Exception:
+        # Se pgrep falhar por qualquer motivo, assume que não há túnel e
+        # deixa o iniciar_cloudflared() tentar subir (o pior caso é um segundo
+        # processo que o Cloudflare toleraria, mas preferimos não ter).
+        return False
+
+
+def iniciar_cloudflared():
+    """
+    Sobe o cloudflared como processo OPCIONAL do maestro — o túnel sobe junto
+    com o sistema, sem terminal separado. Só age quando faz sentido:
       - o projeto ativo está com a ficha remota LIGADA (tunel_ativo), E
-      - NÃO há link fixo/override (modo automático — caso do plano gratuito), E
-      - o ngrok está instalado, E
-      - ainda não há um ngrok no ar.
+      - NÃO há link fixo/override (modo automático), E
+      - o cloudflared está instalado, E
+      - ainda não há um cloudflared no ar.
 
-    Verifica DE VERDADE: espera o túnel aparecer na API local (127.0.0.1:4040).
-    Se não subir (falta authtoken ou internet), AVISA e segue — o sistema todo
-    continua de pé (offline-first: o túnel é sempre opcional; as câmeras ainda
-    alcançam a ficha pela rede local). O Flask detecta a URL sozinho, então o QR
-    aparece quando o túnel sobe.
+    Por que Cloudflare em vez do ngrok?
+      - O ngrok gratuito exibe uma tela de aviso antes da ficha, atrapalhando
+        o acesso por QR Code no set.
+      - O Cloudflare Quick Tunnel não tem essa tela: o QR leva direto à ficha.
+      - O cloudflared não tem API local (diferente do ngrok/4040): a URL pública
+        só aparece no LOG do processo — por isso fazemos polling do arquivo de log.
 
-    Retorna o Popen do ngrok, ou None se não subiu / não se aplica.
+    Se o cloudflared cair na primeira tentativa com o erro transitório
+    "invalid UUID length: 0" (conhecido do Cloudflare), tenta uma segunda vez
+    automaticamente antes de desistir.
+
+    Offline-first: se não subir, o sistema continua de pé. A ficha ainda
+    funciona na rede local. O QR só aparece quando o túnel está ativo.
+
+    Retorna o Popen do cloudflared, ou None se não subiu / não se aplica.
     """
     # 1) A ficha remota está ligada neste projeto?
     try:
@@ -472,78 +523,145 @@ def iniciar_ngrok():
     except Exception:
         cfg = {}
     if not cfg.get("tunel_ativo", True):
-        log("sistema", "Tunel: ficha remota desativada no Painel — ngrok nao iniciado.")
+        log("sistema", "Tunel: ficha remota desativada no Painel — cloudflared nao iniciado.")
         return None
 
-    # 2) Link fixo/override? Então o túnel é gerido por você (domínio fixo/manual).
+    # 2) Link fixo/override? O túnel é gerido externamente (domínio fixo/manual).
     if (cfg.get("tunel_link") or os.environ.get("GMA_LINK_FICHA", "")).strip():
-        log("sistema", "Tunel: link fixo configurado — ngrok nao e gerido pelo maestro.")
+        log("sistema", "Tunel: link fixo configurado — tunel nao e gerido pelo maestro.")
         return None
 
-    # 3) ngrok instalado?
-    if not shutil.which("ngrok"):
-        log("sistema", "Tunel: ngrok nao instalado — ficha so na rede local "
-                       "(brew install ngrok/ngrok/ngrok).")
+    # 3) cloudflared instalado?
+    if not shutil.which("cloudflared"):
+        log("sistema", "Tunel: cloudflared nao instalado — ficha so na rede local "
+                       "(brew install cloudflared).")
         return None
 
-    # 4) Já há um ngrok no ar (ex.: subido à mão)? Não sobe outro (evita conflito no 4040).
+    # 4) Já há um cloudflared no ar (ex.: subido à mão)? Não sobe outro.
     if _tunel_no_ar():
-        log("sistema", "Tunel: ja ha um ngrok no ar — o maestro nao sobe outro.")
+        log("sistema", "Tunel: ja ha um tunel cloudflared no ar — o maestro nao sobe outro.")
         return None
 
-    # Sobe o ngrok apontando para a porta do Flask.
-    estado = painel_config.carregar_estado()
-    porta = (estado.get("porta") or os.environ.get("GMA_PORT", "5050") or "5050").strip() or "5050"
+    # Porta do Flask (mesma lógica usada no resto do sistema).
     try:
-        proc = subprocess.Popen(
-            ["ngrok", "http", str(porta), "--log=stderr"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, cwd=RAIZ_GMA,
-        )
+        estado = painel_config.carregar_estado()
+    except Exception:
+        estado = {}
+    porta = (estado.get("porta") or os.environ.get("GMA_PORT", "5050") or "5050").strip() or "5050"
+
+    def _uma_tentativa():
+        """
+        Sobe um processo cloudflared e faz polling do log por até ~15s.
+        Retorna (proc, url): proc é o Popen; url é a URL encontrada ou None.
+        """
+        # Remove arquivo de estado velho para não ler URL de sessão anterior.
+        try:
+            if os.path.isfile(CF_URL_STATE):
+                os.remove(CF_URL_STATE)
+        except OSError:
+            pass
+
+        try:
+            log_handle = open(CF_LOG, "w", encoding="utf-8")
+        except Exception as erro:
+            log("sistema", f"Tunel: nao foi possivel abrir o log do cloudflared ({erro}). "
+                           "Sistema segue sem tunel.")
+            return None, None
+
+        try:
+            proc = subprocess.Popen(
+                ["cloudflared", "tunnel", "--url", f"http://localhost:{porta}"],
+                stdout=log_handle, stderr=log_handle, cwd=RAIZ_GMA,
+            )
+        except Exception as erro:
+            log("sistema", f"Tunel: falha ao iniciar o cloudflared ({erro}). "
+                           "Sistema segue sem tunel.")
+            log_handle.close()
+            return None, None
+
+        # Polling do arquivo de log por até ~15s (30 × 0,5s).
+        import re
+        padrao_url = re.compile(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com")
+        url_encontrada = None
+        for _ in range(30):
+            time.sleep(0.5)
+            if proc.poll() is not None:
+                # O processo morreu antes de criar o túnel (pode ser o erro
+                # transitório "invalid UUID length: 0" do Cloudflare).
+                break
+            try:
+                with open(CF_LOG, "r", encoding="utf-8") as _lf:
+                    conteudo_log = _lf.read()
+                match = padrao_url.search(conteudo_log)
+                if match:
+                    url_encontrada = match.group(0)
+                    break
+            except Exception:
+                pass  # log ainda sendo escrito — tenta na próxima volta
+
+        log_handle.close()
+        return proc, url_encontrada
+
+    # ── Primeira tentativa ────────────────────────────────────────────────────
+    try:
+        proc, url = _uma_tentativa()
     except Exception as erro:
-        log("sistema", f"Tunel: falha ao iniciar o ngrok ({erro}). Sistema segue sem tunel.")
+        log("sistema", f"Tunel: erro inesperado ao tentar subir o cloudflared ({erro}). "
+                       "Sistema segue sem tunel.")
         return None
 
-    # Verifica: o túnel aparece na API local em até ~6s?
-    url = None
-    for _ in range(12):
-        time.sleep(0.5)
-        if proc.poll() is not None:
-            break  # o ngrok já morreu (provável authtoken/credencial)
-        url = _tunel_url()
-        if url:
-            break
+    if proc is None:
+        # Falha antes mesmo de criar o processo — não há o que repetir.
+        return None
 
     if url:
+        # Grava a URL no arquivo de estado para o Flask ler.
+        try:
+            with open(CF_URL_STATE, "w", encoding="utf-8") as _sf:
+                _sf.write(url.rstrip("/"))
+        except Exception:
+            pass
         log("sistema", f"Tunel ATIVO: {url} (ficha remota e QR sobem sozinhos)")
         return proc
 
-    # Não subiu — encerra o que ficou e avisa, sem derrubar o sistema.
-    log("sistema", "Tunel: o ngrok nao estabeleceu o tunel. Confira o authtoken "
-                   "(ngrok config add-authtoken <token>) e a internet. Sistema segue sem tunel.")
+    # ── O processo morreu sem URL — tenta uma segunda vez (erro transitório) ──
+    log("sistema", "Tunel: primeira tentativa do cloudflared nao estabeleceu o tunel "
+                   "(erro transitorio, tentando de novo)...")
     try:
         proc.terminate()
     except Exception:
         pass
-    return None
 
-
-def _tunel_url():
-    """URL HTTPS pública do ngrok agora (via API local 127.0.0.1:4040), ou None."""
-    import urllib.request
     try:
-        with urllib.request.urlopen("http://127.0.0.1:4040/api/tunnels", timeout=1) as r:
-            dados = json.loads(r.read().decode())
-        for t in dados.get("tunnels", []):
-            if t.get("public_url", "").startswith("https"):
-                return t["public_url"]
-    except Exception:
+        proc2, url2 = _uma_tentativa()
+    except Exception as erro:
+        log("sistema", f"Tunel: erro inesperado na segunda tentativa ({erro}). "
+                       "Sistema segue sem tunel.")
+        return None
+
+    if proc2 and url2:
+        try:
+            with open(CF_URL_STATE, "w", encoding="utf-8") as _sf:
+                _sf.write(url2.rstrip("/"))
+        except Exception:
+            pass
+        log("sistema", f"Tunel ATIVO: {url2} (ficha remota e QR sobem sozinhos)")
+        return proc2
+
+    # Desistiu — encerra o que sobrou e avisa sem derrubar o sistema.
+    if proc2 is not None:
+        try:
+            proc2.terminate()
+        except Exception:
+            pass
+    try:
+        if os.path.isfile(CF_URL_STATE):
+            os.remove(CF_URL_STATE)
+    except OSError:
         pass
+    log("sistema", "Tunel: o cloudflared nao estabeleceu o tunel (pode ser instabilidade "
+                   "momentanea do Cloudflare ou falta de internet). Sistema segue sem tunel.")
     return None
-
-
-def _tunel_no_ar():
-    """True se já existe um túnel ngrok HTTPS ativo na API local."""
-    return _tunel_url() is not None
 
 
 def _porta_do_flask():
@@ -644,15 +762,23 @@ def subir_todos():
     print()
     log("sistema", f"{iniciados} de {len(processos)} processos iniciados com sucesso.")
 
-    # Túnel opcional (ngrok) — sobe junto se a ficha remota estiver ligada.
+    # Túnel opcional (Cloudflare) — sobe junto se a ficha remota estiver ligada.
     # Falha graciosa: se não subir, o sistema continua (a ficha segue na rede local).
-    processos["Ngrok"] = iniciar_ngrok()
+    # Antes: ngrok (removido — conflitava com o Cloudflare e exibia tela de aviso no QR).
+    processos["Cloudflare"] = iniciar_cloudflared()
     return processos
 
 
 def descer_todos(processos):
     """Encerra os processos filhos na ordem inversa da inicialização."""
-    encerrar_processo(processos.get("Ngrok"),           "Tunel (ngrok)")
+    encerrar_processo(processos.get("Cloudflare"),      "Tunel (cloudflared)")
+    # Remove o arquivo de estado do túnel para o QR não mostrar uma URL morta
+    # após o encerramento (o próximo Iniciar começa com a tela limpa).
+    try:
+        if os.path.isfile(CF_URL_STATE):
+            os.remove(CF_URL_STATE)
+    except OSError:
+        pass
     encerrar_processo(processos.get("Transcricao"),     "Vigia da Transcricao")
     encerrar_processo(processos.get("Sheets"),          "Exportador Sheets")
     encerrar_processo(processos.get("Auditoria"),       "Auditoria")
@@ -734,15 +860,17 @@ def main():
         log("sistema", ".env encontrado mas sem variaveis novas para carregar.")
     # Se o .env não existir, não imprime nada (silêncio é ok — é opcional)
 
-    # ── Instrução sobre o Tally / ngrok ──────────────────────────────────────
-    # O ngrok NÃO é iniciado automaticamente porque:
-    #   - É opcional (usado só quando o Tally é o formulário de check-in)
-    #   - Requer conta gratuita no ngrok (ngrok.com)
-    #   - A URL pública muda a cada reinicialização e precisa ser copiada manualmente
-    # Para usar o Tally, em um terminal SEPARADO rode:
-    #   ./ngrok_gma.sh
-    # O script vai imprimir a URL pública que você cola no painel do Tally.
-    log("sistema", "Para usar o Tally como formulario: rode './ngrok_gma.sh' em outro terminal.")
+    # ── Instrução sobre o túnel / Tally ──────────────────────────────────────
+    # O cloudflared sobe AUTOMATICAMENTE junto com o sistema (se estiver instalado
+    # e a ficha remota estiver ligada no projeto ativo). Não é preciso abrir outro
+    # terminal. A URL pública aparece no log e o QR Code do painel atualiza sozinho.
+    #
+    # Se preferir subir o túnel manualmente (reserva ou depuração), use:
+    #   ./cloudflared_gma.sh
+    # Mas atenção: o script detecta se o maestro já subiu um túnel e sai sem criar
+    # um segundo, para não gerar conflito nem sobrescrever a URL do QR.
+    log("sistema", "Tunel Cloudflare: sobe automaticamente se cloudflared estiver instalado "
+                   "e a ficha remota estiver ligada no projeto ativo.")
 
     # Verifica se já existem instâncias rodando antes de iniciar
     if not verificar_instancias_ativas():

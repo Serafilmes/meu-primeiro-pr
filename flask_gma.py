@@ -2492,7 +2492,7 @@ def _qr_data_uri(texto, scale=5):
         return None
 
 
-# Cache curto da URL descoberta do ngrok (evita consultar a API a cada refresh).
+# Cache curto da URL descoberta do túnel (evita ler o arquivo a cada refresh).
 _cache_link_ficha = {"url": None, "ts": 0.0}
 
 
@@ -2500,19 +2500,21 @@ def _descobrir_link_ficha():
     """
     Descobre o link público da ficha, nesta ordem de prioridade:
       1. GMA_LINK_FICHA no ambiente (override manual — ex.: domínio fixo).
-      2. AUTO: lê /tmp/cloudflared_gma_url.txt escrito pelo cloudflared_gma.sh.
-         Arquivo presente = túnel Cloudflare vivo; ausente = sem túnel Cloudflare.
-         Preferido ao ngrok porque o Cloudflare Quick Tunnel não exibe tela de aviso.
-      3. AUTO: pergunta à API local do ngrok (127.0.0.1:4040) qual é a URL ativa
-         e monta <url>/ficha. Fallback para quem ainda usa ngrok.
-      4. None, se não houver túnel nem override.
+      2. AUTO: lê /tmp/cloudflared_gma_url.txt gravado pelo maestro (inicializar_gma.py)
+         ou pelo cloudflared_gma.sh. Arquivo presente = túnel Cloudflare vivo;
+         ausente = sem túnel. O Cloudflare Quick Tunnel não exibe tela de aviso,
+         então o QR Code leva direto à ficha (sem clique extra).
+      3. None, se não houver túnel nem override.
+
+    Nota: o ngrok foi removido do projeto (sessão 63) — gerava conflito com o
+    Cloudflare (dois QRs diferentes) e exibia tela de aviso antes da ficha.
     """
     # 1) override manual sempre vence
     manual = os.environ.get("GMA_LINK_FICHA", "").strip()
     if manual:
         return manual
 
-    # cache de ~20s cobre as fontes 2 e 3 juntas
+    # cache de ~20s — evita abrir o arquivo a cada refresh do painel
     import time
     agora = time.time()
     if _cache_link_ficha["url"] and (agora - _cache_link_ficha["ts"] < 20):
@@ -2520,27 +2522,14 @@ def _descobrir_link_ficha():
 
     url = None
 
-    # 2) Cloudflare: lê o arquivo de estado gravado pelo cloudflared_gma.sh
+    # 2) Cloudflare: lê o arquivo de estado gravado pelo inicializar_gma.py
     try:
         with open("/tmp/cloudflared_gma_url.txt", "r") as _f:
             conteudo = _f.read().strip()
         if conteudo.startswith("https://"):
             url = conteudo.rstrip("/") + "/ficha"
     except Exception:
-        url = None  # arquivo ausente, vazio ou inválido → tenta ngrok
-
-    # 3) ngrok: fallback via API local (só consulta se Cloudflare não retornou nada)
-    if not url:
-        try:
-            import urllib.request
-            resposta = urllib.request.urlopen("http://127.0.0.1:4040/api/tunnels", timeout=1.5)
-            dados = json.loads(resposta.read().decode("utf-8"))
-            for tunel in dados.get("tunnels", []):
-                if tunel.get("proto") == "https":
-                    url = tunel["public_url"].rstrip("/") + "/ficha"
-                    break
-        except Exception:
-            url = None  # ngrok parado / sem API → sem link (painel mostra aviso)
+        url = None  # arquivo ausente, vazio ou inválido → sem link público
 
     _cache_link_ficha["url"] = url
     _cache_link_ficha["ts"] = agora
@@ -2551,15 +2540,17 @@ def _painel_qr_ficha():
     """
     Painel com o QR Code do link público da ficha (para os câmeras escanearem).
     O link é resolvido por _descobrir_link_ficha() (override manual OU auto-detecção
-    do ngrok). Sem túnel no ar nem override, mostra um aviso curto em vez do QR.
+    do Cloudflare). Sem túnel no ar nem override, mostra um aviso curto em vez do QR.
     """
     link = _descobrir_link_ficha()
     if not link:
         return """
         <div class="qr-painel">
           <div class="qr-titulo">📷 Ficha para os câmeras</div>
-          <div class="qr-aviso">Suba o túnel (<code>./cloudflared_gma.sh</code> — ou ngrok)
-             que o QR aparece sozinho — ou defina <b>GMA_LINK_FICHA</b> no
+          <div class="qr-aviso">O túnel Cloudflare sobe automaticamente com o sistema.
+             Se não subiu, verifique se o <code>cloudflared</code> está instalado
+             (<code>brew install cloudflared</code>) e a ficha remota está ligada
+             no projeto — ou defina <b>GMA_LINK_FICHA</b> no
              <code>.env</code> (domínio fixo).</div>
         </div>"""
 
@@ -7693,17 +7684,20 @@ def _testar_conexao(chave):
         return painel_config.checar_recebidos(caminho)
 
     if chave == "tunel":
+        # O Cloudflare não tem API local — verifica o arquivo de estado gravado
+        # pelo maestro (inicializar_gma.py) quando o túnel sobe.
         try:
-            import urllib.request
-            with urllib.request.urlopen("http://127.0.0.1:4040/api/tunnels", timeout=3) as resp:
-                dados = json.loads(resp.read().decode())
-            for t in dados.get("tunnels", []):
-                url = t.get("public_url", "")
-                if url.startswith("https"):
-                    return True, f"Túnel ativo: {url}"
-            return False, "O ngrok responde, mas não há túnel HTTPS ativo."
-        except Exception:
-            return False, "O ngrok não está rodando (rode ./ngrok_gma.sh em outro terminal)."
+            with open("/tmp/cloudflared_gma_url.txt", "r") as _f:
+                url = _f.read().strip()
+            if url.startswith("https://"):
+                return True, f"Túnel ativo: {url}"
+            return False, "Arquivo de estado do túnel existe mas está vazio ou inválido."
+        except FileNotFoundError:
+            return False, ("Túnel Cloudflare não está no ar — o sistema tenta subir "
+                           "automaticamente; verifique se o cloudflared está instalado "
+                           "(brew install cloudflared) e a ficha remota está ligada.")
+        except Exception as erro:
+            return False, f"Erro ao verificar o túnel: {erro}"
 
     return False, "Conexão desconhecida."
 
@@ -7813,16 +7807,13 @@ def _conexoes_cockpit():
     tunel_ativo = cfg.get("tunel_ativo", True)
     tunel_url_real = tunel_link
     if not tunel_link and tunel_ativo:
-        # Verifica ngrok ao vivo (timeout curto para não travar o carregamento)
+        # Verifica o Cloudflare ao vivo lendo o arquivo de estado do maestro
+        # (não tem timeout de rede — é só leitura de arquivo local, sempre rápida).
         try:
-            import urllib.request as _ur
-            with _ur.urlopen("http://127.0.0.1:4040/api/tunnels", timeout=2) as resp:
-                dados = json.loads(resp.read().decode())
-            for t in dados.get("tunnels", []):
-                url = t.get("public_url", "")
-                if url.startswith("https"):
-                    tunel_url_real = url + "/ficha"
-                    break
+            with open("/tmp/cloudflared_gma_url.txt", "r") as _cf:
+                _url_cf = _cf.read().strip()
+            if _url_cf.startswith("https://"):
+                tunel_url_real = _url_cf.rstrip("/") + "/ficha"
         except Exception:
             pass
     if not tunel_ativo:
@@ -7830,7 +7821,7 @@ def _conexoes_cockpit():
     elif tunel_url_real:
         tunel_status, tunel_txt = "ok", tunel_url_real
     else:
-        tunel_status, tunel_txt = "aviso", "ngrok não encontrado — suba o túnel"
+        tunel_status, tunel_txt = "aviso", "túnel Cloudflare não encontrado — sistema tenta subir automaticamente"
 
     # Porta / host — estado global ou fallback no .env
     host = (estado.get("host") or os.environ.get("GMA_HOST", "127.0.0.1")).strip() or "127.0.0.1"
@@ -7871,10 +7862,11 @@ def _conexoes_cockpit():
          "ajuda_html": _ajuda_sheets_html(),
          "ativavel": True, "ativo": sheets_ativo, "acao_ativar": "/painel/sheets-ativo"},
         {"chave": "tunel", "rot": "Túnel / ficha remota", "val": tunel_txt,
-         "desc": "Link público da ficha (ngrok). Vazio = detecta automaticamente.",
+         "desc": "Link público da ficha (Cloudflare). Sobe automaticamente com o sistema. "
+                 "Vazio = detectado automaticamente.",
          "status": tunel_status, "testavel": True,
          "direcionar": True, "campo": tunel_link, "acao": "/painel/tunel-link",
-         "placeholder": "Link override (ex.: https://xyz.ngrok.io) — vazio = auto",
+         "placeholder": "Link override (ex.: https://xyz.trycloudflare.com) — vazio = auto",
          "ativavel": True, "ativo": tunel_ativo, "acao_ativar": "/painel/tunel-ativo"},
         {"chave": "senha", "rot": "Senha das telas", "val": senha_txt,
          "desc": "Portão para a internet. Vazia = uso local livre.",
@@ -8173,7 +8165,7 @@ def painel_tunel_link():
         painel_config.definir_tunel_link(slug, valor)
         logger.info(f"PAINEL | Link do túnel de '{slug}' → {valor or '(auto)'}")
         msg = (f"Link do túnel configurado." if valor
-               else "Link removido — o painel vai detectar o ngrok automaticamente.")
+               else "Link removido — o painel vai detectar o Cloudflare automaticamente.")
         return _pagina_painel(aviso=msg)
     except Exception as e:
         logger.warning(f"PAINEL | Falha ao atualizar link do túnel: {e}")

@@ -50,6 +50,19 @@ if ! command -v cloudflared &>/dev/null; then
     exit 1
 fi
 
+# ── Portão: já há um cloudflared rodando? ────────────────────────────────────
+# O maestro (inicializar_gma.py) sobe o túnel automaticamente junto com o sistema.
+# Se este script for chamado à mão enquanto o maestro já subiu um túnel, NÃO
+# abrimos um segundo (dois túneis ao mesmo tempo geram dois QRs diferentes e
+# confundem o operador). Saímos sem erro para não apagar o arquivo de estado do maestro.
+if pgrep -f "cloudflared tunnel" > /dev/null 2>&1; then
+    echo ""
+    echo "[CLOUDFLARE] Ja ha um tunel cloudflared no ar (provavelmente subido pelo proprio sistema)."
+    echo "[CLOUDFLARE] Nao vou subir outro — use o QR Code que ja aparece no painel."
+    echo ""
+    exit 0
+fi
+
 # ── Verifica se o Flask está respondendo ──────────────────────────────────────
 echo ""
 echo "[CLOUDFLARE] Verificando se o Flask GMA esta rodando na porta 5050..."
