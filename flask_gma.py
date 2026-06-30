@@ -1371,14 +1371,14 @@ def painel():
         else:
             _texto_ok = _esc(_msg_ok)
         bloco_feedback = (
-            "<div style='background:#e8f5e9;border:1px solid #4caf50;color:#2e7d32;"
+            "<div style='background:var(--6f-teal-trilho);border:1px solid var(--6f-teal);color:var(--6f-teal-claro);"
             "border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:0.92em'>"
             f"✓ {_texto_ok}</div>"
         )
     elif _msg_aviso:
         _texto = _avisos_legiveis.get(_msg_aviso, _msg_aviso)
         bloco_feedback = (
-            "<div style='background:#fff3cd;border:1px solid #ffc107;color:#856404;"
+            "<div style='background:var(--6f-bg-elevado);border:1px solid var(--6f-aviso);color:var(--6f-aviso);"
             "border-radius:6px;padding:12px 16px;margin-bottom:16px;font-size:0.92em'>"
             f"{_esc(_texto)}</div>"
         )
@@ -1453,7 +1453,7 @@ def painel():
     # Estado do Porteiro
     porteiro_ativo = os.path.isfile(SENTINELA_PORTEIRO)
     porteiro_status_texto = "ATIVO" if porteiro_ativo else "INATIVO"
-    porteiro_cor = "#27ae60" if porteiro_ativo else "#c0392b"
+    porteiro_cor = "var(--6f-ok)" if porteiro_ativo else "var(--6f-erro)"
 
     # Hora atual para exibição
     hora_atual = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
@@ -1470,7 +1470,7 @@ def painel():
         cid = dados.get("db_cartao_id")
         sel = (
             f"<input type='radio' name='cartao_sel' value='{cid}' onclick='gmaMatchRefresh()'>"
-            if cid is not None else "<span style='color:#ced4da'>—</span>"
+            if cid is not None else "<span style='color:var(--6f-texto-3)'>—</span>"
         )
         return (
             f"<tr>"
@@ -1503,12 +1503,12 @@ def painel():
             conteudo = dados.get("tipo_material", "—")
         # Prioridade: destaca URGENTE em vermelho
         prioridade = dados.get("prioridade") or "NORMAL"
-        cor_prioridade = "#c0392b" if prioridade == "URGENTE" else "#6c757d"
+        cor_prioridade = "var(--6f-erro)" if prioridade == "URGENTE" else "var(--6f-texto-2)"
         # Seletor para o match manual: rádio com o id da ficha no banco.
         fid = dados.get("db_formulario_id")
         sel = (
             f"<input type='radio' name='ficha_sel' value='{fid}' onclick='gmaMatchRefresh()'>"
-            if fid is not None else "<span style='color:#ced4da'>—</span>"
+            if fid is not None else "<span style='color:var(--6f-texto-3)'>—</span>"
         )
         # Cancelar/restaurar/excluir agora moram na Nova Ficha (centro de controle
         # dos Posts). Aqui a Operação cuida só do match.
@@ -1612,9 +1612,9 @@ def painel():
             nome = html.escape(dados.get("nome", "—"))
             camera = html.escape(dados.get("camera", "—"))
             return f"""
-            <div style="border:1px solid #f48fb1;border-radius:6px;padding:12px 16px;margin:8px 0;background:#fff5f7">
+            <div style="border:1px solid var(--6f-aviso);border-radius:6px;padding:12px 16px;margin:8px 0;background:var(--6f-bg-elevado)">
                 <strong>{nome}</strong> &middot; {camera}
-                <span style="color:#888;font-size:0.85em"> — Post aguardando confirmacao</span>
+                <span style="color:var(--6f-texto-3);font-size:0.85em"> — Post aguardando confirmacao</span>
             </div>"""
 
         # ── Cabeçalho do cartão ───────────────────────────────────────────────
@@ -1677,40 +1677,40 @@ def painel():
                 <form action="/match/{cartao_id}/confirmar" method="post" style="display:inline">
                     <input type="hidden" name="nome" value="{nome_cand}">
                     <button type="submit"
-                            style="background:#27ae60;color:#fff;border:none;border-radius:5px;
+                            style="background:var(--6f-teal);color:var(--6f-bg-base);border:none;border-radius:5px;
                                    padding:5px 14px;font-weight:700;font-size:0.85em;cursor:pointer;">
                         Confirmar {nome_cand}
                     </button>
                 </form>"""
             else:
-                botao = "<span style='color:#888;font-size:0.82em'>(sem id de cartao — nao e possivel confirmar)</span>"
+                botao = "<span style='color:var(--6f-texto-3);font-size:0.82em'>(sem id de cartao — nao e possivel confirmar)</span>"
 
             blocos_candidatos += f"""
-            <div style="background:#f8f9fa;border-radius:5px;padding:10px 14px;margin-top:8px">
+            <div style="background:var(--6f-bg-superficie);border-radius:5px;padding:10px 14px;margin-top:8px">
                 <div style="font-weight:700;font-size:0.95em">{nome_cand}
-                    <span style="font-weight:400;color:#6c757d;font-size:0.88em">
+                    <span style="font-weight:400;color:var(--6f-texto-2);font-size:0.88em">
                         &middot; {cam_cand}
                         &middot; <span style="font-family:monospace">score {score_cand}</span>
                     </span>
                 </div>
-                <div style="color:#888;font-size:0.82em;margin:4px 0 8px;font-family:monospace">
+                <div style="color:var(--6f-texto-3);font-size:0.82em;margin:4px 0 8px;font-family:monospace">
                     {amostra}
                 </div>
                 {botao}
             </div>"""
 
         if not blocos_candidatos:
-            blocos_candidatos = "<div style='color:#888;font-size:0.85em;margin-top:8px'>Sem candidatos registrados para este cartao.</div>"
+            blocos_candidatos = "<div style='color:var(--6f-texto-3);font-size:0.85em;margin-top:8px'>Sem candidatos registrados para este cartao.</div>"
 
         return f"""
-        <div style="border:1px solid #f48fb1;border-radius:6px;padding:14px 18px;margin:10px 0;background:#fff5f7">
+        <div style="border:1px solid var(--6f-aviso);border-radius:6px;padding:14px 18px;margin:10px 0;background:var(--6f-bg-elevado)">
             <div style="font-weight:700;font-size:1em;margin-bottom:2px">
                 {volume}
-                <span style="font-weight:400;color:#6c757d;font-size:0.88em">
+                <span style="font-weight:400;color:var(--6f-texto-2);font-size:0.88em">
                     &middot; {n_arquivos} arquivos &middot; {camera_detectada}
                 </span>
             </div>
-            <div style="color:#c0392b;font-size:0.82em;margin-bottom:6px">
+            <div style="color:var(--6f-aviso);font-size:0.82em;margin-bottom:6px">
                 Quem e esse cartao?
             </div>
             {blocos_candidatos}
@@ -1719,21 +1719,21 @@ def painel():
     # Renderiza as linhas de cada seção
     linhas_material = "".join(
         linha_material(n, d) for n, d in material_aguardando
-    ) or "<tr><td colspan='4' style='color:#888;text-align:center'>Nenhum material aguardando</td></tr>"
+    ) or "<tr><td colspan='4' style='color:var(--6f-texto-3);text-align:center'>Nenhum material aguardando</td></tr>"
 
     linhas_forms = "".join(
         linha_form(n, d) for n, d in forms_aguardando
-    ) or "<tr><td colspan='6' style='color:#888;text-align:center'>Nenhum Post aguardando</td></tr>"
+    ) or "<tr><td colspan='6' style='color:var(--6f-texto-3);text-align:center'>Nenhum Post aguardando</td></tr>"
 
     linhas_matches = "".join(
         linha_match(n, d) for n, d in matches_recentes
-    ) or "<tr><td colspan='4' style='color:#888;text-align:center'>Nenhum match registrado hoje</td></tr>"
+    ) or "<tr><td colspan='4' style='color:var(--6f-texto-3);text-align:center'>Nenhum match registrado hoje</td></tr>"
 
     # Renderiza os blocos da seção "Aguardando confirmacao" — cada cartão é um bloco
     blocos_confirmacao = "".join(
         bloco_confirmacao_cartao(nome_arq, tipo, dados)
         for nome_arq, (tipo, dados) in aguardando_confirmacao
-    ) or "<p style='color:#888;text-align:center;padding:18px'>Nenhum item aguardando confirmacao</p>"
+    ) or "<p style='color:var(--6f-texto-3);text-align:center;padding:18px'>Nenhum item aguardando confirmacao</p>"
 
     # Alerta de órfãos (aparece destacado se houver algum)
     if total_orfaos > 0:
@@ -1745,8 +1745,8 @@ def painel():
         if orfaos["forms"]:
             partes_alerta.append(f"Post sem material ({len(orfaos['forms'])}): {nomes_orfaos_form}")
         bloco_orfaos = f"""
-        <div style="background:#fff3cd;border:1px solid #ffc107;border-radius:6px;
-                    padding:12px 18px;margin-bottom:20px;color:#856404;">
+        <div style="background:var(--6f-bg-elevado);border:1px solid var(--6f-aviso);border-radius:6px;
+                    padding:12px 18px;margin-bottom:20px;color:var(--6f-aviso);">
             <strong>Atencao: {total_orfaos} orfao(s) aguardando ha mais de {MINUTOS_ORFAO} minutos</strong><br>
             {"<br>".join(partes_alerta)}
         </div>"""
@@ -1756,147 +1756,72 @@ def painel():
     # Posts cancelados (restaurar/excluir) migraram para o centro de controle na
     # Nova Ficha; a Operação não monta mais esse bloco.
 
-    # ── Monta o HTML completo ──────────────────────────────────────────────────
-    pagina_html = f"""<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GMA — Painel de Check-in</title>
-    <!-- O auto-refresh de 5s agora é feito em JS no fim da página: ele PAUSA -->
-    <!-- enquanto o operador está fazendo o match na mão (uma bolinha marcada), pra não -->
-    <!-- recarregar por cima da escolha. (Antes era um meta-refresh fixo.) -->
+    # ── Monta a página pelo molde da marca (_pagina) ───────────────────────────
+    # A aba Match agora usa o MESMO molde das outras 7 telas: o _pagina cuida do
+    # cabeçalho 6floor (∞ + título), das abas e das variáveis da marca. Aqui fica
+    # só o CSS próprio desta tela (classes exclusivas da Operação), escopado em
+    # .pag-operacao e já no mundo escuro. As 4 categorias de card viram acento
+    # semântico: matches = teal (sucesso); confirmação = âmbar (precisa de você);
+    # as duas filas de espera = neutro.
+    css_operacao = """
+        .pag-operacao main { max-width:1200px; }
+        .pag-operacao .grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:20px; }
+        .pag-operacao .card { background:var(--6f-bg-elevado); border:1px solid var(--6f-borda);
+                              border-radius:8px; overflow:hidden; }
+        .pag-operacao .card-full { grid-column:1 / -1; }
+        .pag-operacao .card-header { padding:12px 16px; font-weight:600; font-size:0.9em;
+                                     letter-spacing:0.3px; display:flex; justify-content:space-between;
+                                     align-items:center; background:var(--6f-bg-superficie);
+                                     color:var(--6f-texto); border-bottom:1px solid var(--6f-borda); }
+        .pag-operacao .card-header .badge { background:var(--6f-bg-hover); color:var(--6f-texto-2);
+                                            border-radius:12px; padding:2px 10px; font-size:0.85em; font-weight:700; }
+        .pag-operacao .header-matches     { border-bottom:2px solid var(--6f-teal); }
+        .pag-operacao .header-confirmacao { border-bottom:2px solid var(--6f-aviso); }
+        .pag-operacao table { width:100%; border-collapse:collapse; font-size:0.88em; }
+        .pag-operacao th { padding:8px 12px; text-align:left; background:var(--6f-bg-superficie);
+                           border-bottom:1px solid var(--6f-borda); font-weight:600; color:var(--6f-texto-2);
+                           font-size:0.82em; text-transform:uppercase; letter-spacing:0.4px; }
+        .pag-operacao td { padding:9px 12px; border-bottom:1px solid var(--6f-borda);
+                           vertical-align:middle; color:var(--6f-texto); }
+        .pag-operacao tr:last-child td { border-bottom:none; }
+        .pag-operacao tr:hover td { background:var(--6f-bg-hover); }
+        .pag-operacao .rodape { text-align:center; padding:16px; color:var(--6f-texto-3); font-size:0.8em; }
+        .pag-operacao .controles { display:flex; gap:10px; margin-bottom:20px; align-items:center; flex-wrap:wrap; }
+        .pag-operacao .btn { padding:8px 18px; border:none; border-radius:6px; font-size:0.88em;
+                             font-weight:600; cursor:pointer; text-decoration:none; }
+        .pag-operacao .btn-ativar    { background:var(--6f-teal); color:var(--6f-bg-base); }
+        .pag-operacao .btn-desativar { background:var(--6f-erro); color:#fff; }
+        .pag-operacao .match-acao { margin-bottom:16px; }
+        .pag-operacao .btn-match { background:var(--6f-teal); color:var(--6f-bg-base); font-weight:700;
+                                   letter-spacing:0.5px; padding:8px 28px; }
+        .pag-operacao .btn-match:disabled { opacity:0.4; cursor:not-allowed; }
+        .pag-operacao .status-porteiro { font-size:0.85em; color:var(--6f-texto-2); }
+    """
+    head_extra = f"<style>{css_operacao}</style>" + """<script>
+    // ── Match manual: liga o botão só quando há 1 cartão + 1 ficha escolhidos ──
+    function gmaMatchRefresh() {
+        var c = document.querySelector('input[name=cartao_sel]:checked');
+        var f = document.querySelector('input[name=ficha_sel]:checked');
+        document.getElementById('btn-match').disabled = !(c && f);
+    }
+    function gmaMatchSubmit() {
+        var c = document.querySelector('input[name=cartao_sel]:checked');
+        var f = document.querySelector('input[name=ficha_sel]:checked');
+        if (!c || !f) return;
+        document.getElementById('match-cartao-id').value = c.value;
+        document.getElementById('match-ficha-id').value = f.value;
+        document.getElementById('form-match').submit();
+    }
+    // Auto-refresh de 5s — PAUSA enquanto há uma bolinha marcada (match na mão em curso).
+    setTimeout(function() {
+        var c = document.querySelector('input[name=cartao_sel]:checked');
+        var f = document.querySelector('input[name=ficha_sel]:checked');
+        if (c || f) return;
+        location.reload();
+    }, 5000);
+    </script>"""
 
-    <style>
-        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            background: #f0f2f5;
-            color: #1a1a1a;
-            font-size: 14px;
-        }}
-        header {{
-            background: #1a1a2e;
-            color: white;
-            padding: 14px 24px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }}
-        header h1 {{ font-size: 1.2em; font-weight: 600; letter-spacing: 0.5px; }}
-        header .info {{ font-size: 0.85em; opacity: 0.75; }}
-        .porteiro-badge {{
-            display: inline-block;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.8em;
-            font-weight: 700;
-            letter-spacing: 1px;
-            background: {porteiro_cor};
-            color: white;
-        }}
-        main {{ padding: 20px 24px; max-width: 1200px; margin: 0 auto; }}
-        .grid {{
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-            margin-bottom: 20px;
-        }}
-        .card {{
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-            overflow: hidden;
-        }}
-        .card-full {{ grid-column: 1 / -1; }}
-        .card-header {{
-            padding: 12px 16px;
-            font-weight: 600;
-            font-size: 0.9em;
-            letter-spacing: 0.3px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }}
-        .card-header .badge {{
-            background: #e9ecef;
-            color: #495057;
-            border-radius: 12px;
-            padding: 2px 10px;
-            font-size: 0.85em;
-            font-weight: 700;
-        }}
-        .header-material    {{ background: #fff8e1; border-bottom: 2px solid #f59e0b; }}
-        .header-forms       {{ background: #e8f5e9; border-bottom: 2px solid #4caf50; }}
-        .header-matches     {{ background: #e3f2fd; border-bottom: 2px solid #2196f3; }}
-        .header-confirmacao {{ background: #fce4ec; border-bottom: 2px solid #e91e63; }}
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.88em;
-        }}
-        th {{
-            padding: 8px 12px;
-            text-align: left;
-            background: #f8f9fa;
-            border-bottom: 1px solid #dee2e6;
-            font-weight: 600;
-            color: #6c757d;
-            font-size: 0.82em;
-            text-transform: uppercase;
-            letter-spacing: 0.4px;
-        }}
-        td {{
-            padding: 9px 12px;
-            border-bottom: 1px solid #f1f3f5;
-            vertical-align: middle;
-        }}
-        tr:last-child td {{ border-bottom: none; }}
-        tr:hover td {{ background: #f8f9fa; }}
-        .rodape {{
-            text-align: center;
-            padding: 16px;
-            color: #adb5bd;
-            font-size: 0.8em;
-        }}
-        .controles {{
-            display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-            align-items: center;
-        }}
-        .btn {{
-            padding: 8px 18px;
-            border: none;
-            border-radius: 6px;
-            font-size: 0.88em;
-            font-weight: 600;
-            cursor: pointer;
-            text-decoration: none;
-        }}
-        .btn-ativar   {{ background: #27ae60; color: white; }}
-        .btn-desativar {{ background: #c0392b; color: white; }}
-        .match-acao {{ margin-bottom: 16px; }}
-        .btn-match {{ background: #8e44ad; color: white; font-weight: 700; letter-spacing: 0.5px; padding: 8px 28px; }}
-        .btn-match:disabled {{ opacity: 0.45; cursor: not-allowed; }}
-        .status-porteiro {{
-            font-size: 0.85em;
-            color: #6c757d;
-        }}
-        {CSS_ABAS}
-    </style>
-</head>
-<body>
-    <header>
-        <h1>GMA — Painel de Check-in</h1>
-        <div style="display:flex;align-items:center;gap:16px">
-            <span class="porteiro-badge">PORTEIRO: {porteiro_status_texto}</span>
-            <span class="info">Atualizado: {hora_atual}</span>
-        </div>
-    </header>
-    {barra_abas('operacao')}
-
-    <main>
+    corpo = f"""
         {bloco_feedback}
         {bloco_orfaos}
 
@@ -1993,7 +1918,7 @@ def painel():
             <div class="card card-full">
                 <div class="card-header header-confirmacao">
                     Aguardando confirmacao
-                    <span class="badge" style="background:#fce4ec;color:#c0392b">{len(aguardando_confirmacao)}</span>
+                    <span class="badge" style="background:var(--6f-bg-hover);color:var(--6f-aviso)">{len(aguardando_confirmacao)}</span>
                 </div>
                 <div style="padding:12px 16px">
                     {blocos_confirmacao}
@@ -2003,38 +1928,10 @@ def painel():
 
         <p class="rodape">
             GMA Camada 1 &mdash; Atualiza automaticamente a cada 5 segundos &mdash;
-            <a href="/status" style="color:#adb5bd">JSON de status</a>
-        </p>
-    </main>
-    <script>
-    // ── Match manual: liga o botão só quando há 1 cartão + 1 ficha escolhidos ──
-    function gmaMatchRefresh() {{
-        var c = document.querySelector('input[name=cartao_sel]:checked');
-        var f = document.querySelector('input[name=ficha_sel]:checked');
-        document.getElementById('btn-match').disabled = !(c && f);
-    }}
-    // Leva a escolha para o formulário oculto e vai para a tela de resumo.
-    function gmaMatchSubmit() {{
-        var c = document.querySelector('input[name=cartao_sel]:checked');
-        var f = document.querySelector('input[name=ficha_sel]:checked');
-        if (!c || !f) return;
-        document.getElementById('match-cartao-id').value = c.value;
-        document.getElementById('match-ficha-id').value = f.value;
-        document.getElementById('form-match').submit();
-    }}
-    // Auto-refresh de 5s — mas PAUSA enquanto o operador está fazendo o match na mão
-    // (alguma bolinha marcada), pra não recarregar por cima da escolha.
-    setTimeout(function() {{
-        var c = document.querySelector('input[name=cartao_sel]:checked');
-        var f = document.querySelector('input[name=ficha_sel]:checked');
-        if (c || f) return;   // seleção em curso — não recarrega
-        location.reload();
-    }}, 5000);
-    </script>
-</body>
-</html>"""
+            <a href="/status" style="color:var(--6f-texto-3)">JSON de status</a>
+        </p>"""
 
-    return pagina_html, 200, {"Content-Type": "text/html; charset=utf-8"}
+    return _pagina("Match", "operacao", corpo, head_extra), 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2327,6 +2224,12 @@ def _pagina(titulo, aba, corpo, head_extra=""):
         .pag-molde .legenda, .pag-profissionais .legenda, .pag-listas .legenda {{ color:var(--6f-texto-2); }}
         .pag-molde .vazio, .pag-profissionais .vazio, .pag-listas .vazio {{ color:var(--6f-texto-3); }}
         .pag-molde .mono, .pag-profissionais .mono, .pag-listas .mono {{ color:var(--6f-texto-2); }}
+
+        /* ── TEMA ESCURO 6floor — aba Match (Operação) ──
+           A última tela operacional a entrar no escuro (s61). O corpo é estilizado
+           por css_operacao (injetado via head_extra, exclusivo desta tela); aqui
+           fica só o fundo do body. Com isto, TODAS as telas seguem o padrão. */
+        body.pag-operacao {{ background:var(--6f-bg-base); color:var(--6f-texto); }}
     </style>
     {head_extra}
 </head>
@@ -2527,17 +2430,20 @@ def _card_kanban(cartao):
 
 
 CSS_QR = """
-    .qr-painel { background:#fff; border-radius:8px; box-shadow:0 1px 4px rgba(0,0,0,0.08);
+    .qr-painel { background:var(--6f-bg-superficie); border:1px solid var(--6f-borda);
+                 border-radius:8px; box-shadow:none;
                  padding:16px 18px; margin-bottom:18px; max-width:300px;
                  display:inline-flex; flex-direction:column; align-items:center; gap:8px;
                  vertical-align:top; }
-    .qr-titulo { font-weight:700; color:#1a1a2e; font-size:0.95em; align-self:flex-start; }
-    .qr-img { width:200px; height:200px; image-rendering:pixelated; }
-    .qr-link a { color:#2196f3; text-decoration:none; font-size:0.82em; word-break:break-all;
+    .qr-titulo { font-weight:700; color:var(--6f-texto); font-size:0.95em; align-self:flex-start; }
+    /* O QR já vem com fundo branco embutido; a borda branca dá a moldura/quiet zone. */
+    .qr-img { width:200px; height:200px; image-rendering:pixelated;
+              background:#fff; border:6px solid #fff; border-radius:4px; }
+    .qr-link a { color:var(--6f-teal-claro); text-decoration:none; font-size:0.82em; word-break:break-all;
                  text-align:center; }
-    .qr-senha { font-size:0.85em; color:#495057; }
-    .qr-dica { font-size:0.78em; color:#adb5bd; text-align:center; }
-    .qr-aviso { font-size:0.8em; color:#adb5bd; }
+    .qr-senha { font-size:0.85em; color:var(--6f-texto-2); }
+    .qr-dica { font-size:0.78em; color:var(--6f-texto-3); text-align:center; }
+    .qr-aviso { font-size:0.8em; color:var(--6f-texto-2); }
 """
 
 
@@ -2546,7 +2452,12 @@ def _qr_data_uri(texto, scale=5):
     if not (SEGNO_DISPONIVEL and texto):
         return None
     try:
-        return segno.make(texto, error="m").svg_data_uri(scale=scale, border=2)
+        # Fundo BRANCO embutido no próprio QR (light) + quiet zone maior (border):
+        # garante leitura e visibilidade mesmo sobre o painel escuro do mundo 6floor —
+        # QR precisa de alto contraste (preto sobre branco) para a câmera escanear.
+        return segno.make(texto, error="m").svg_data_uri(
+            scale=scale, border=4, dark="#000000", light="#ffffff"
+        )
     except Exception as erro:
         logger.error(f"QR | Erro ao gerar QR | {erro}")
         return None
@@ -6598,7 +6509,7 @@ def _pagina_profissionais(
                             font-weight:700;color:var(--6f-teal);letter-spacing:1px">
                     {_esc(p['letra'])}
                 </td>
-                <td style="font-weight:600">{selo}{_esc(p['nome'])}</td>
+                <td style="font-weight:600;color:var(--6f-texto)">{selo}{_esc(p['nome'])}</td>
                 <td style="text-align:left">{celula_nomes}</td>
                 <td style="text-align:center;{_cor_icone(p['tem_foto'])}">{_icone(p['tem_foto'])}</td>
                 <td style="text-align:center;{_cor_icone(p['tem_audio'])}">{_icone(p['tem_audio'])}</td>
