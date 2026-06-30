@@ -2558,8 +2558,9 @@ def _painel_qr_ficha():
         return """
         <div class="qr-painel">
           <div class="qr-titulo">📷 Ficha para os câmeras</div>
-          <div class="qr-aviso">Suba o túnel (ngrok) que o QR aparece sozinho —
-             ou defina <b>GMA_LINK_FICHA</b> no <code>.env</code> (domínio fixo).</div>
+          <div class="qr-aviso">Suba o túnel (<code>./cloudflared_gma.sh</code> — ou ngrok)
+             que o QR aparece sozinho — ou defina <b>GMA_LINK_FICHA</b> no
+             <code>.env</code> (domínio fixo).</div>
         </div>"""
 
     data_uri = _qr_data_uri(link, scale=5)
