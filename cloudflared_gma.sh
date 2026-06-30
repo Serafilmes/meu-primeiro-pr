@@ -35,6 +35,11 @@ set -e   # interrompe o script se qualquer comando falhar
 # Diferente do ngrok, o cloudflared não tem uma API local — a URL aparece no log.
 LOG_TEMP="/tmp/cloudflared_gma.log"
 
+# Arquivo de estado: quando o túnel está vivo, contém a URL pública (sem barra final).
+# O Flask lê este arquivo para montar o QR Code automaticamente.
+# Arquivo presente = túnel vivo; arquivo ausente = sem túnel.
+URL_STATE="/tmp/cloudflared_gma_url.txt"
+
 # ── Verifica se o cloudflared está instalado ──────────────────────────────────
 if ! command -v cloudflared &>/dev/null; then
     echo ""
@@ -58,8 +63,9 @@ fi
 echo "[CLOUDFLARE] Flask respondendo. Iniciando tunel Cloudflare..."
 echo ""
 
-# Limpa o log anterior para não ler uma URL velha por engano
+# Limpa o log anterior e o arquivo de estado para não ler uma URL velha por engano
 rm -f "$LOG_TEMP"
+rm -f "$URL_STATE"
 
 # ── Inicia o cloudflared em background, gravando o log no arquivo temporário ──
 # O cloudflared imprime a URL pública no stderr — redirecionamos para o log.
@@ -107,6 +113,10 @@ if [ -z "$URL_PUBLICA" ]; then
     exit 1
 fi
 
+# ── Grava a URL no arquivo de estado (Flask lê para montar o QR automaticamente) ─
+# A URL é escrita sem barra final; arquivo presente = túnel vivo.
+printf '%s' "${URL_PUBLICA}" > "$URL_STATE"
+
 # ── Imprime as instruções para o operador ─────────────────────────────────────
 echo ""
 echo "============================================================"
@@ -133,5 +143,5 @@ echo ""
 
 # ── Mantém o script vivo enquanto o túnel estiver ativo ───────────────────────
 # Quando o operador apertar Ctrl+C, encerra o cloudflared também.
-trap "echo ''; echo '[CLOUDFLARE] Encerrando tunel...'; kill $CF_PID 2>/dev/null; echo '[CLOUDFLARE] Tunel encerrado.'; echo ''" INT TERM
+trap "echo ''; echo '[CLOUDFLARE] Encerrando tunel...'; kill $CF_PID 2>/dev/null; rm -f \"$URL_STATE\"; echo '[CLOUDFLARE] Tunel encerrado.'; echo ''" INT TERM
 wait $CF_PID

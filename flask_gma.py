@@ -2500,33 +2500,47 @@ def _descobrir_link_ficha():
     """
     Descobre o link público da ficha, nesta ordem de prioridade:
       1. GMA_LINK_FICHA no ambiente (override manual — ex.: domínio fixo).
-      2. AUTO: pergunta à API local do ngrok (127.0.0.1:4040) qual é a URL ativa
-         e monta <url>/ficha. Assim, quando o ngrok reinicia e muda de endereço,
-         o QR se atualiza sozinho — sem editar o .env.
-      3. None, se não houver túnel nem override.
+      2. AUTO: lê /tmp/cloudflared_gma_url.txt escrito pelo cloudflared_gma.sh.
+         Arquivo presente = túnel Cloudflare vivo; ausente = sem túnel Cloudflare.
+         Preferido ao ngrok porque o Cloudflare Quick Tunnel não exibe tela de aviso.
+      3. AUTO: pergunta à API local do ngrok (127.0.0.1:4040) qual é a URL ativa
+         e monta <url>/ficha. Fallback para quem ainda usa ngrok.
+      4. None, se não houver túnel nem override.
     """
     # 1) override manual sempre vence
     manual = os.environ.get("GMA_LINK_FICHA", "").strip()
     if manual:
         return manual
 
-    # 2) auto-detecção via ngrok (com cache de ~20s)
+    # cache de ~20s cobre as fontes 2 e 3 juntas
     import time
     agora = time.time()
     if _cache_link_ficha["url"] and (agora - _cache_link_ficha["ts"] < 20):
         return _cache_link_ficha["url"]
 
     url = None
+
+    # 2) Cloudflare: lê o arquivo de estado gravado pelo cloudflared_gma.sh
     try:
-        import urllib.request
-        resposta = urllib.request.urlopen("http://127.0.0.1:4040/api/tunnels", timeout=1.5)
-        dados = json.loads(resposta.read().decode("utf-8"))
-        for tunel in dados.get("tunnels", []):
-            if tunel.get("proto") == "https":
-                url = tunel["public_url"].rstrip("/") + "/ficha"
-                break
+        with open("/tmp/cloudflared_gma_url.txt", "r") as _f:
+            conteudo = _f.read().strip()
+        if conteudo.startswith("https://"):
+            url = conteudo.rstrip("/") + "/ficha"
     except Exception:
-        url = None  # ngrok parado / sem API → sem link (painel mostra aviso)
+        url = None  # arquivo ausente, vazio ou inválido → tenta ngrok
+
+    # 3) ngrok: fallback via API local (só consulta se Cloudflare não retornou nada)
+    if not url:
+        try:
+            import urllib.request
+            resposta = urllib.request.urlopen("http://127.0.0.1:4040/api/tunnels", timeout=1.5)
+            dados = json.loads(resposta.read().decode("utf-8"))
+            for tunel in dados.get("tunnels", []):
+                if tunel.get("proto") == "https":
+                    url = tunel["public_url"].rstrip("/") + "/ficha"
+                    break
+        except Exception:
+            url = None  # ngrok parado / sem API → sem link (painel mostra aviso)
 
     _cache_link_ficha["url"] = url
     _cache_link_ficha["ts"] = agora
