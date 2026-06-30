@@ -1,7 +1,7 @@
 # Contexto Atual — Sistema GMA
 ## Estado vivo do projeto (carregar em TODA sessão junto com `arquitetura_GMA.md`)
 
-> Última atualização: 2026-06-29 (sessão 61 — Camada 7 · FECHADO O PADRÃO FULL-DARK: a aba Match/Operação entrou no escuro e migrou para o molde da marca — todas as 8 telas operacionais agora seguem o mesmo padrão)
+> Última atualização: 2026-06-30 (sessão 62 — SUPORTE/FIX: senha do operador redefinida + popup Basic Auth removido (uso local) + fix do falso positivo do aviso de órfão na aba Match; registrada a ideia futura de KEYGEN/LICENCIAMENTO por tempo)
 > Para detalhes técnicos históricos, ver `historico_GMA.md` (não carregar por padrão).
 
 ---
@@ -22,6 +22,17 @@
 ---
 
 ## O que acabou de ser feito (sessões recentes)
+
+### ✅ Sessão 62 (SUPORTE/FIX) — senhas (operador + Basic Auth) + fix do falso positivo do aviso de órfão + ideia do keygen
+**Arquivos:** `flask_gma.py` (commitado `3bb6911`), `operadores.json` e `.env` (config local, fora do git), os 2 mapas + memória. **Commitado no `main`.**
+> Sessão de apoio: o idealizador esqueceu a senha de acesso. Descobrimos **duas senhas distintas** no caminho de entrada e corrigimos um falso positivo que ele notou na tela. Ao fim, ele registrou uma intenção de produto (keygen/licenciamento).
+
+- **🔑 SENHA DO OPERADOR REDEFINIDA:** a senha é hash de mão única (não dá pra recuperar). Usei `operadores.trocar_senha('serafa', '1234')` e confirmei com `verificar`. Operadores no armazém global: **Serafa** (ativo) e **Pierri** (desativado). O `operadores.json` segue fora do git.
+- **🚪 DUAS PORTAS NA ENTRADA (a confusão):** ele tentava `1234` no **popup Basic Auth do navegador** (que pedia `GMA_SENHA=gma123`), não no formulário de operador. São camadas separadas do `_portao_de_acesso`: (1) Basic Auth `GMA_SENHA` (popup do navegador, `.env`) e (2) login de operador (tela escura do 6floor, `operadores.json`). Reproduzi via `curl` no servidor vivo: sem o Basic Auth → 401; com `-u gma:gma123` + `nome=Serafa&senha=1234` → **302 → /** (o login de operador SEMPRE funcionou).
+- **🧹 POPUP REMOVIDO (decisão dele "tira o pop-up"):** esvaziei `GMA_SENHA=` no `.env` (seguro porque `GMA_HOST=127.0.0.1`, só nesta máquina; deixei comentário lembrando de repor se um dia expor na internet via ngrok). **Efetiva no próximo Voltar+Entrar** (o `.env` é lido quando a sessão sobe). O login de operador (Serafa/`1234`) continua.
+- **🐛 FIX — AVISO DE ÓRFÃO (falso positivo CALIFA):** a aba Match mostrava "2 órfãos: CALIFA, CALIFA" mesmo os dois Posts já estando `concluido` no banco. Causa: `identificar_orfaos()` lia os JSONs crus da fila; o material RECEBIDO pula o Matcher (que avançaria o JSON), então o arquivo fica preso em `aguardando_material` para sempre. A s47 já tinha dado ao **painel** o filtro por status do banco, mas a função do **aviso** ficou de fora. Corrigido: `identificar_orfaos()` cruza com o banco (fonte de verdade) nos dois lados — esconde Posts cujo formulário saiu de `aguardando` e materiais cujo cartão já está `concluido`. **Verificado** contra o sp2b real: CALIFA/CALIFA → **0 órfãos**; `ast.parse` OK. **Efetiva no próximo Voltar+Entrar.** Commit `3bb6911`.
+- **💡 IDEIA FUTURA REGISTRADA — KEYGEN/LICENCIAMENTO:** o idealizador quer, mais pra frente, um **keygen + tabela de senhas com limite de data** para ter controle e **vender pacotes por tempo limitado** (licença temporária do sistema). É a virada protótipo→produto comercial (encaixa na **Camada 5**); seria uma 3ª camada de acesso (licença do PRODUTO, não identidade de quem opera). **"Pensamos nisto depois" — NÃO construir ainda.** Guardado na memória [[keygen-licenciamento-venda]].
+- **🔶 PRÓXIMO:** sem mudança de rumo — segue valendo o que estava aberto: C7 (ícone do app real · grid · lockup em contornos) · C5 (velocidade de disco/transferência Fatia 2 · multi-máquina · `.app` · futuramente o keygen) · C6 (Missão A com chave real · trilha de áudio dos vídeos).
 
 ### ✅ Sessão 61 (BUILD) — CAMADA 7: fechado o padrão full-dark (a aba Match/Operação entra no escuro e migra para o molde da marca)
 **Arquivos:** `flask_gma.py` + os 2 mapas. Feito direto (orquestrador). **Falta commitar.**
