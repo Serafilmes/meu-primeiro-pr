@@ -23,6 +23,7 @@ Pré-requisitos:
 
 import os
 import sys
+import json
 import hashlib
 import shutil
 import logging
@@ -43,6 +44,14 @@ import ler_cartao
 
 # Arquivo de log deste módulo (separado do log de transferencia.py)
 ARQUIVO_LOG = os.path.join(RAIZ_GMA, "logs", "copiador.log")
+
+# Bilhete de progresso da cópia AO VIVO — a aba Mural lê este arquivo para mostrar
+# a velocidade em tempo real (estilo ShotPut). Mesma técnica do bilhete do
+# exportador Sheets: escreve num .tmp e os.replace (troca atômica), para a tela
+# nunca ler pela metade. É SEMPRE best-effort — falhar aqui NUNCA derruba a cópia
+# (princípio nº2: o indicador jamais põe a mídia em risco). Só observa bytes que já
+# estão sendo lidos para o MD5; não toca, move nem apaga nada.
+ARQUIVO_STATUS_COPIA = os.path.join(RAIZ_GMA, ".gma_copia_status.json")
 
 # Tamanho dos blocos lidos para calcular MD5 (1 MB por bloco)
 # Blocos menores usam menos memória RAM mas são mais lentos para arquivos grandes.
@@ -135,13 +144,111 @@ def configurar_logger():
 
 # ── FUNÇÕES DE CHECKSUM ───────────────────────────────────────────────────────
 
-def calcular_md5(caminho_arquivo):
+class MedidorProgresso:
+    """
+    Acompanha o andamento de UMA cópia e publica um 'bilhete'
+    (.gma_copia_status.json) que a aba Mural lê para mostrar a velocidade em tempo
+    real. NÃO toca em mídia — só conta bytes que já estão sendo lidos para o MD5.
+
+    Tudo aqui é best-effort: qualquer erro ao medir ou publicar é engolido e a
+    cópia segue intacta. O medidor jamais pode ser a causa de uma transferência
+    falhar (princípio nº2).
+
+    Como mede: o copiador lê cada arquivo DUAS vezes para o MD5 (origem + destino),
+    em blocos de 1 MB. A cada bloco lido, somamos os bytes. O "trabalho total" é,
+    portanto, 2× o tamanho do material. A barra anda por esse trabalho de leitura
+    (suave, porque cobre ~2/3 do tempo de cada arquivo); a velocidade é a taxa de
+    leitura recente (o pulso de MB/s que se vê na tela).
+    """
+
+    INTERVALO_PUBLICACAO = 0.5  # segundos entre bilhetes (não escreve a cada bloco)
+
+    def __init__(self, nome_job, total_arquivos, bytes_total):
+        self.nome_job = nome_job
+        self.total_arquivos = total_arquivos
+        self.bytes_total = max(int(bytes_total), 1)     # evita divisão por zero
+        self.trabalho_total = self.bytes_total * 2      # lê cada arquivo 2x (origem+destino)
+        self.bytes_lidos = 0                            # progresso de leitura acumulado
+        self.indice_atual = 0
+        self.nome_atual = ""
+        self.t_inicio = time.time()
+        self._ultimo_publicado = 0.0
+        self._bytes_no_ultimo = 0
+        self._t_ultimo = self.t_inicio
+        self.velocidade_mbs = 0.0
+
+    def novo_arquivo(self, indice, nome):
+        """Marca o início de um arquivo (atualiza o 'arquivo X de Y' e publica)."""
+        self.indice_atual = indice
+        self.nome_atual = nome
+        self._publicar(forcar=True)
+
+    def somar_bytes(self, n):
+        """Callback passado ao calcular_md5: chamado a cada bloco de 1 MB lido."""
+        self.bytes_lidos += n
+        self._publicar()
+
+    def _publicar(self, forcar=False):
+        agora = time.time()
+        if not forcar and (agora - self._ultimo_publicado) < self.INTERVALO_PUBLICACAO:
+            return
+        try:
+            # Velocidade instantânea: bytes lidos desde o último bilhete ÷ tempo.
+            dt = agora - self._t_ultimo
+            if dt > 0:
+                bytes_recentes = self.bytes_lidos - self._bytes_no_ultimo
+                self.velocidade_mbs = (bytes_recentes / dt) / (1024 * 1024)
+            self._bytes_no_ultimo = self.bytes_lidos
+            self._t_ultimo = agora
+            self._ultimo_publicado = agora
+
+            frac = min(self.bytes_lidos / self.trabalho_total, 1.0)
+            # Tempo restante pela média desde o início (mais estável que a janela).
+            decorrido = agora - self.t_inicio
+            media_bps = (self.bytes_lidos / decorrido) if decorrido > 0 else 0
+            restante_bytes = max(self.trabalho_total - self.bytes_lidos, 0)
+            restante_seg = (restante_bytes / media_bps) if media_bps > 0 else 0
+
+            self._escrever({
+                "estado": "copiando",
+                "job": self.nome_job,
+                "arquivo_indice": self.indice_atual,
+                "arquivo_total": self.total_arquivos,
+                "nome_atual": self.nome_atual,
+                "percentual": round(frac * 100, 1),
+                "velocidade_mbs": round(max(self.velocidade_mbs, 0.0), 1),
+                "restante_seg": int(restante_seg),
+                "bytes_total": self.bytes_total,
+                "quando": agora,
+            })
+        except Exception:
+            pass  # best-effort: nunca derruba a cópia
+
+    def finalizar(self):
+        """Marca o fim da cópia: a tela deixa de mostrar a faixa de velocidade."""
+        try:
+            self._escrever({"estado": "ocioso", "quando": time.time()})
+        except Exception:
+            pass
+
+    @staticmethod
+    def _escrever(dados):
+        tmp = ARQUIVO_STATUS_COPIA + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(dados, f, ensure_ascii=False)
+        os.replace(tmp, ARQUIVO_STATUS_COPIA)  # troca atômica — a tela nunca lê pela metade
+
+
+def calcular_md5(caminho_arquivo, ao_ler=None):
     """
     Calcula o hash MD5 de um arquivo lendo em blocos de TAMANHO_BLOCO_MD5.
     Ler em blocos evita carregar arquivos de vídeo inteiros na memória RAM.
 
     Parâmetros:
       caminho_arquivo — caminho completo do arquivo
+      ao_ler — função opcional chamada a cada bloco com o nº de bytes lidos
+               (usada pelo MedidorProgresso para a velocidade ao vivo). Quando
+               None, o comportamento é exatamente o de antes — custo zero.
 
     Retorna a string hexadecimal do MD5 (ex: "d41d8cd98f00b204e9800998ecf8427e").
     Lança OSError se o arquivo não puder ser lido.
@@ -154,6 +261,8 @@ def calcular_md5(caminho_arquivo):
             if not bloco:
                 break  # Chegou ao fim do arquivo
             hasher.update(bloco)
+            if ao_ler is not None:
+                ao_ler(len(bloco))
 
     return hasher.hexdigest()
 
@@ -479,6 +588,17 @@ def copiar(caminho_origem, caminho_destino, nome_job=""):
 
     logger.info(f"ARQUIVOS ENCONTRADOS | {total} arquivo(s) para copiar")
 
+    # ── Medidor de velocidade AO VIVO (best-effort, não toca em mídia) ─────────
+    # Soma os tamanhos uma vez para a barra/tempo restante; um getsize que falhe
+    # apenas subestima o total — nunca interrompe a cópia.
+    bytes_total_estimado = 0
+    for _caminho in lista_arquivos_origem:
+        try:
+            bytes_total_estimado += os.path.getsize(_caminho)
+        except OSError:
+            pass
+    medidor = MedidorProgresso(nome_job, total, bytes_total_estimado)
+
     # ── Loop de cópia ─────────────────────────────────────────────────────────
 
     lista_resultados = []
@@ -486,6 +606,7 @@ def copiar(caminho_origem, caminho_destino, nome_job=""):
 
     for indice, caminho_arquivo_origem in enumerate(lista_arquivos_origem, start=1):
         nome_arquivo = os.path.basename(caminho_arquivo_origem)
+        medidor.novo_arquivo(indice, nome_arquivo)
 
         # Tamanho do arquivo para log de progresso
         try:
@@ -547,7 +668,7 @@ def copiar(caminho_origem, caminho_destino, nome_job=""):
 
         # ── Passo 1: MD5 da origem ────────────────────────────────────────────
         try:
-            md5_origem = calcular_md5(caminho_arquivo_origem)
+            md5_origem = calcular_md5(caminho_arquivo_origem, ao_ler=medidor.somar_bytes)
             resultado_arquivo["md5_origem"] = md5_origem
         except OSError as erro:
             msg_erro = f"Erro ao calcular MD5 da origem: {erro}"
@@ -580,7 +701,7 @@ def copiar(caminho_origem, caminho_destino, nome_job=""):
 
         # ── Passo 3: MD5 do destino ───────────────────────────────────────────
         try:
-            md5_destino = calcular_md5(caminho_arquivo_destino)
+            md5_destino = calcular_md5(caminho_arquivo_destino, ao_ler=medidor.somar_bytes)
             resultado_arquivo["md5_destino"] = md5_destino
         except OSError as erro:
             msg_erro = f"Erro ao calcular MD5 do destino: {erro}"
@@ -604,6 +725,8 @@ def copiar(caminho_origem, caminho_destino, nome_job=""):
         lista_resultados.append(resultado_arquivo)
 
     # ── Totais finais ─────────────────────────────────────────────────────────
+
+    medidor.finalizar()  # bilhete volta a "ocioso" — a faixa de velocidade some da tela
 
     tempo_copia_fim = time.time()
     duracao_segundos = tempo_copia_fim - tempo_copia_inicio

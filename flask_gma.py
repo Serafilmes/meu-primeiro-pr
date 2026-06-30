@@ -68,6 +68,10 @@ except Exception:
 # Arquivo sentinela que ativa/desativa o Porteiro
 SENTINELA_PORTEIRO = os.path.join(RAIZ_GMA, ".gma_ativo")
 
+# Bilhete da cópia ao vivo, escrito pelo copiador.py (Camada 2). A aba Mural lê
+# este arquivo para mostrar a velocidade de transferência em tempo real.
+ARQUIVO_STATUS_COPIA = os.path.join(RAIZ_GMA, ".gma_copia_status.json")
+
 # Arquivo de log do Flask
 ARQUIVO_LOG = os.path.join(RAIZ_GMA, "logs", "flask_gma.log")
 
@@ -2698,6 +2702,17 @@ def kanban():
     corpo = f"""
     <p class="legenda">Cada cartão é um card; ele anda da esquerda para a direita conforme o status muda no banco.
        Escreva um post-it em qualquer card e clique em <strong>Salvar</strong> — fica gravado na fonte única.</p>
+    <div id="faixa-copia" class="faixa-copia" style="display:none">
+      <div class="fc-topo">
+        <span class="fc-titulo">📦 Copiando <strong id="fc-job"></strong></span>
+        <span class="fc-vel"><strong id="fc-vel">—</strong> MB/s</span>
+      </div>
+      <div class="fc-barra"><div class="fc-preench" id="fc-preench"></div></div>
+      <div class="fc-baixo">
+        <span id="fc-detalhe"></span>
+        <span id="fc-restante"></span>
+      </div>
+    </div>
     {_painel_qr_ficha()}
     <div class="kanban" id="kanban-board">{colunas_html}</div>"""
 
@@ -2705,7 +2720,20 @@ def kanban():
     # inteira, busca só o quadro a cada 1s e troca quando muda. Pausa enquanto
     # você digita um post-it; preserva os grupos de dia recolhidos na coluna
     # "Concluído" (lembra pelo data-dia).
-    head_extra = f"<style>{CSS_QR}</style>" + """<script>
+    css_faixa = """
+      .faixa-copia{background:var(--6f-bg-elevado);border:1px solid var(--6f-teal);
+        border-radius:10px;padding:12px 16px;margin:0 0 16px;}
+      .fc-topo{display:flex;justify-content:space-between;align-items:baseline;gap:12px;}
+      .fc-titulo{color:var(--6f-texto);font-size:15px;}
+      .fc-vel{color:var(--6f-teal-claro);font-size:15px;white-space:nowrap;}
+      .fc-vel strong{font-size:22px;font-variant-numeric:tabular-nums;}
+      .fc-barra{height:10px;background:var(--6f-teal-trilho);border-radius:6px;
+        overflow:hidden;margin:10px 0 8px;}
+      .fc-preench{height:100%;background:var(--6f-teal);width:0%;transition:width .4s ease;}
+      .fc-baixo{display:flex;justify-content:space-between;gap:12px;
+        color:var(--6f-texto-2);font-size:13px;}
+    """
+    head_extra = f"<style>{CSS_QR}{css_faixa}</style>" + """<script>
       document.addEventListener('DOMContentLoaded', function() {
         var board = document.getElementById('kanban-board');
         if (!board) return;
@@ -2736,6 +2764,37 @@ def kanban():
             }).catch(function() {});
         }
         setInterval(vivo, 1000);
+
+        // ── Faixa de velocidade da cópia AO VIVO (estilo ShotPut) ──────────────
+        // Busca o bilhete que o copiador escreve; mostra a faixa enquanto copia e
+        // a esconde quando fica ocioso. Só leitura — não interfere em nada.
+        var faixa = document.getElementById('faixa-copia');
+        function fmtTempo(seg) {
+          seg = Math.max(0, Math.round(seg));
+          if (seg < 60) return '~' + seg + ' s';
+          var m = Math.floor(seg / 60), s = seg % 60;
+          return '~' + m + ' min ' + (s < 10 ? '0' + s : s) + ' s';
+        }
+        function copiaVivo() {
+          if (!faixa) return;
+          fetch('/kanban/copia-status', {cache: 'no-store'})
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+              if (!d || d.estado !== 'copiando') { faixa.style.display = 'none'; return; }
+              document.getElementById('fc-job').textContent = d.job || '';
+              document.getElementById('fc-vel').textContent =
+                (d.velocidade_mbs != null ? d.velocidade_mbs.toFixed(0) : '—');
+              document.getElementById('fc-preench').style.width = (d.percentual || 0) + '%';
+              document.getElementById('fc-detalhe').textContent =
+                'Arquivo ' + (d.arquivo_indice || 0) + ' de ' + (d.arquivo_total || 0) +
+                (d.nome_atual ? ' · ' + d.nome_atual : '') + ' · ' + (d.percentual || 0) + '%';
+              document.getElementById('fc-restante').textContent =
+                (d.restante_seg > 0 ? fmtTempo(d.restante_seg) + ' restantes' : '');
+              faixa.style.display = 'block';
+            }).catch(function() {});
+        }
+        copiaVivo();
+        setInterval(copiaVivo, 1000);
       });
     </script>"""
     return _pagina("Mural", "kanban", corpo, head_extra), 200, {"Content-Type": "text/html; charset=utf-8"}
@@ -2759,6 +2818,35 @@ def kanban_board():
         logger.error(f"KANBAN BOARD | Erro ao ler cartões | {erro}")
         cartoes = []
     return _montar_colunas_kanban(cartoes), 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
+@app.route("/kanban/copia-status", methods=["GET"])
+def kanban_copia_status():
+    """
+    Bilhete da cópia AO VIVO, para a faixa de velocidade no Mural.
+
+    Lê o arquivo que o copiador.py escreve (.gma_copia_status.json) e o devolve
+    como JSON. É tolerante a tudo: se o arquivo não existe, está vazio, ou o
+    bilhete é velho (>8s sem atualizar — sinal de cópia que terminou ou travou),
+    responde "ocioso" e a faixa some da tela. Nunca quebra. Só na base (o portão
+    já barra o remoto, como toda rota fora de /ficha e /forms).
+    """
+    ocioso = {"estado": "ocioso"}
+    try:
+        with open(ARQUIVO_STATUS_COPIA, "r", encoding="utf-8") as f:
+            dados = json.load(f)
+    except (FileNotFoundError, ValueError, OSError):
+        return jsonify(ocioso)
+
+    if dados.get("estado") != "copiando":
+        return jsonify(ocioso)
+    # Bilhete velho = cópia que acabou sem fechar o bilhete, ou processo morto.
+    try:
+        if (datetime.now().timestamp() - float(dados.get("quando", 0))) > 8:
+            return jsonify(ocioso)
+    except (TypeError, ValueError):
+        return jsonify(ocioso)
+    return jsonify(dados)
 
 
 @app.route("/cartao/<int:cartao_id>/observacao", methods=["POST"])
