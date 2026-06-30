@@ -146,6 +146,19 @@ hardware real**, não rodar 3 cartões em paralelo no banco central (isso vem de
 - Preencher → o Post cai no banco da servidora. É o multi-máquina REAL que já roda hoje
   (várias pessoas preenchendo fichas no banco central, do Wi-Fi do set).
 
+### SEM o servidor de storage (NAS) no teste — não tem problema
+O NAS é só o DESTINO das cópias. A servidora do GMA é um dos Macs, não o NAS. O teste
+roda sem o servidor externo de duas formas:
+- **Saída 1 (mais simples):** cada máquina copia para o PRÓPRIO disco ("Pasta dos
+  materiais" = pasta local). Testa Blocos A, B e C; adia só a validação do storage
+  compartilhado. Suficiente para a recon de amanhã.
+- **Saída 2 (mais fiel, sem hardware):** um Mac vira "NAS de mentira" pelo
+  **Compartilhamento de Arquivos do macOS** (Ajustes → Geral → Compartilhamento →
+  Compartilhamento de Arquivos → adicionar uma pasta). Os outros montam via Finder →
+  Conectar ao servidor (⌘K) → `smb://<ip-do-mac-host>` e apontam a "Pasta dos
+  materiais" para ela. **Montar no MESMO caminho em todas** (regra do §7).
+- Recomendação: começar pela Saída 1; se sobrar tempo, subir a Saída 2.
+
 ### Bloco A — Rede e fundação (DEVE funcionar hoje)
 - [ ] **A1.** Numa máquina (a SERVIDORA), subir o GMA e ligar a escuta de rede
       (`GMA_HOST=0.0.0.0`). Anotar o **IP local** dela (ex. `192.168.x.y`).
