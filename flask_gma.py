@@ -338,11 +338,38 @@ def identificar_orfaos():
     agora = datetime.now()
     limite = timedelta(minutes=MINUTOS_ORFAO)
 
+    # O JSON da fila é o estado bruto e pode ficar PRESO: o material RECEBIDO pula o
+    # Matcher (que avançaria o JSON), então um Post já copiado/concluído continua
+    # marcado 'aguardando_material' no arquivo. O BANCO é a fonte de verdade — então
+    # cruzamos por id e escondemos do aviso de órfão o que o banco já resolveu.
+    # (Mesmo princípio dos filtros do painel de Operação — ver montar_painel.)
+    forms_resolvidos = set()
+    cartoes_concluidos = set()
+    if BANCO_DISPONIVEL:
+        try:
+            _conn_o = bd.obter_conexao()
+            forms_resolvidos = {
+                linha["id"] for linha in _conn_o.execute(
+                    "SELECT id FROM formularios "
+                    "WHERE status NOT IN ('aguardando_match', 'aguardando_material')"
+                ).fetchall()
+            }
+            cartoes_concluidos = {
+                linha["id"] for linha in _conn_o.execute(
+                    "SELECT id FROM cartoes WHERE status = 'concluido'"
+                ).fetchall()
+            }
+            _conn_o.close()
+        except Exception as _err_o:
+            logger.error(f"ORFAOS | Falha ao ler estado resolvido do banco | {_err_o}")
+
     materiais_orfaos = []
     forms_orfaos = []
 
-    # Verifica materiais aguardando formulário
+    # Verifica materiais aguardando formulário (esconde cartões já concluídos)
     for nome_arquivo, dados in ler_jsons_da_pasta(PASTA_FILA_MATERIAL, "aguardando_match"):
+        if dados.get("db_cartao_id") in cartoes_concluidos:
+            continue
         timestamp_str = dados.get("timestamp", "")
         try:
             timestamp_item = datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%S")
@@ -351,8 +378,10 @@ def identificar_orfaos():
         except ValueError:
             pass  # timestamp malformado — ignora
 
-    # Verifica formulários aguardando material
+    # Verifica formulários aguardando material (esconde Posts já resolvidos no banco)
     for nome_arquivo, dados in ler_jsons_da_pasta(PASTA_FILA_FORMS, "aguardando_material"):
+        if dados.get("db_formulario_id") in forms_resolvidos:
+            continue
         timestamp_str = dados.get("timestamp", "")
         try:
             timestamp_item = datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%S")
