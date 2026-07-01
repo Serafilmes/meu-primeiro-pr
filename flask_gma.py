@@ -109,6 +109,15 @@ try:
 except ImportError:
     BANCO_DISPONIVEL = False
 
+# Central de Entrada (Camada 1): importação de fontes externas de vocabulário
+# (planilha remota, etc.). Leitura mecânica, sem dependência nova. Se faltar, a
+# aba Programação segue funcionando — só o painel de importar fica indisponível.
+try:
+    import importador_fontes as imp
+    IMPORTADOR_DISPONIVEL = True
+except ImportError:
+    IMPORTADOR_DISPONIVEL = False
+
 # ── PAINEL DE CONTROLE (Camada 5) ─────────────────────────────────────────────
 # O painel_config já foi importado no topo (resolve as filas por projeto). Aqui
 # só garantimos o subprocess (usado pelos testes de conexão e criação de projeto).
@@ -7316,6 +7325,601 @@ JS_LISTAS_COLAPSAR = """
 </script>"""
 
 
+# ── CENTRAL DE ENTRADA — importar vocabulário de planilha remota (Camada 1) ───
+# Assistente de 3 passos: ler (mostra colunas) → revisar (checklist dos itens) →
+# confirmar (grava no grupo). Acesso só na base (o portão _portao_de_acesso barra
+# remoto). Nada entra cru: o operador escolhe a coluna e revisa cada item.
+
+_IMPORT_CAIXA = ("background:var(--6f-bg-superficie);border:1px solid var(--6f-borda);"
+                 "border-radius:8px;padding:22px 24px;max-width:760px")
+_IMPORT_BTN = ("background:var(--6f-teal);color:var(--6f-bg-base);border:none;border-radius:6px;"
+               "padding:10px 20px;font-weight:700;font-size:0.9em;cursor:pointer;letter-spacing:0.3px;"
+               "font-family:inherit")
+_IMPORT_SEL = ("width:100%;padding:9px 12px;border:1px solid var(--6f-borda);"
+               "background:var(--6f-bg-elevado);color:var(--6f-texto);border-radius:6px;"
+               "font-size:0.9em;font-family:inherit")
+
+
+def _grupos_lista_ativos():
+    """Grupos ativos de MODO LISTA — os destinos possíveis da importação."""
+    if not BANCO_DISPONIVEL:
+        return []
+    try:
+        _conn = bd.obter_conexao()
+        grupos = [g for g in bd.listar_grupos(_conn, apenas_ativos=True)
+                  if g.get("modo") != "texto"]
+        _conn.close()
+        return grupos
+    except Exception:
+        return []
+
+
+def _linhas_checklist(valores, existentes=frozenset()):
+    """Monta as linhas <label><checkbox> da tela de revisão. Itens já presentes
+    no grupo (em `existentes`, minúsculo) vêm desmarcados e apagados."""
+    html_linhas = ""
+    for v in valores:
+        ja = v.strip().lower() in existentes
+        marcado = "" if ja else " checked"
+        nota = ('<span style="color:var(--6f-texto-3);font-size:0.78em;margin-left:8px">já existe</span>'
+                if ja else "")
+        estilo = "opacity:0.55" if ja else ""
+        html_linhas += (
+            f'<label style="display:flex;align-items:center;gap:9px;padding:6px 10px;'
+            f'border-bottom:1px solid var(--6f-borda);{estilo}">'
+            f'<input type="checkbox" name="item" value="{_esc(v)}"{marcado} '
+            f'style="accent-color:var(--6f-teal);width:16px;height:16px">'
+            f'<span style="color:var(--6f-texto);font-size:0.9em">{_esc(v)}</span>{nota}</label>'
+        )
+    return html_linhas
+
+
+def _pagina_site_revisar(link, valores, grupos):
+    """Tela de revisão da PÁGINA DE SITE: como não há colunas, o operador escolhe
+    o grupo aqui mesmo e revisa a lista de candidatos numa só tela → confirmar."""
+    opcoes_grp = "".join(
+        f'<option value="{_esc(g["chave"])}">{_esc(g["rotulo"])}</option>'
+        for g in grupos
+    )
+    corpo = f"""
+    <div style="{_IMPORT_CAIXA}">
+      <p style="color:var(--6f-texto-2);font-size:0.9em;margin:0 0 6px;line-height:1.5">
+        A página trouxe <strong>{len(valores)}</strong> trecho(s) de texto. Escolha o
+        grupo de destino e <strong>desmarque o que não for item</strong> (menus, rodapé,
+        avisos costumam aparecer aqui).
+      </p>
+      <form action="/listas/importar/confirmar" method="post">
+        <div style="margin:12px 0 14px;max-width:320px">
+          <label style="display:block;font-size:0.85em;font-weight:600;color:var(--6f-texto-2);margin-bottom:5px">
+            Para qual grupo?</label>
+          <select name="grupo" style="{_IMPORT_SEL}">{opcoes_grp}</select>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <button type="button" onclick="gmaMarcarTodos(true)" style="{_IMPORT_SEL};width:auto;cursor:pointer;padding:5px 11px;font-size:0.82em">marcar todos</button>
+          <button type="button" onclick="gmaMarcarTodos(false)" style="{_IMPORT_SEL};width:auto;cursor:pointer;padding:5px 11px;font-size:0.82em">desmarcar todos</button>
+        </div>
+        <div style="border:1px solid var(--6f-borda);border-radius:8px;max-height:340px;overflow-y:auto;margin-bottom:18px">
+          {_linhas_checklist(valores)}
+        </div>
+        <button type="submit" style="{_IMPORT_BTN}">Confirmar importação</button>
+        <a href="/listas" style="color:var(--6f-texto-3);font-size:0.85em;margin-left:16px">← cancelar</a>
+      </form>
+    </div>
+    <script>
+      function gmaMarcarTodos(v){{
+        document.querySelectorAll('input[name="item"]').forEach(function(c){{ c.checked = v; }});
+      }}
+    </script>"""
+    return _pagina("Programação · revisar", "listas", corpo)
+
+
+def _item_id_ou_cria(conn, grupo, valor):
+    """Devolve (id, criado?) de um item numa lista, criando-o se não existir.
+    Idempotente — reaproveita o item que já estava lá (não duplica)."""
+    import sqlite3 as _sq
+    valor = (valor or "").strip()
+    if not valor:
+        return None, False
+    try:
+        r = bd.adicionar_item_lista(conn, grupo, valor)
+        return r["id"], True
+    except _sq.IntegrityError:
+        row = conn.execute(
+            "SELECT id FROM listas_contexto WHERE tipo = ? AND valor = ?",
+            (grupo, valor)
+        ).fetchone()
+        return (row[0] if row else None), False
+
+
+def _pagina_lineup_mapear(link, colunas, linhas, grupos):
+    """Tela de mapeamento do line-up: o operador diz qual coluna é o palco, qual é
+    o show e qual é o dia, e para quais grupos vão. Reusa a máquina da programação."""
+    def _palpite(chaves):
+        for i, nome in enumerate(colunas):
+            n = (nome or "").lower()
+            if any(k in n for k in chaves):
+                return i
+        return 0
+
+    def _sel_col(nome_campo, palpite):
+        opts = "".join(
+            f'<option value="{i}"{" selected" if i == palpite else ""}>{_esc(nome)}</option>'
+            for i, nome in enumerate(colunas)
+        )
+        return f'<select name="{nome_campo}" style="{_IMPORT_SEL}">{opts}</select>'
+
+    def _sel_grupo(nome_campo, chaves):
+        alvo = None
+        for g in grupos:
+            rot = (g["rotulo"] or "").lower()
+            if any(k in rot or k in g["chave"] for k in chaves):
+                alvo = g["chave"]; break
+        opts = "".join(
+            f'<option value="{_esc(g["chave"])}"{" selected" if g["chave"] == alvo else ""}>{_esc(g["rotulo"])}</option>'
+            for g in grupos
+        )
+        return f'<select name="{nome_campo}" style="{_IMPORT_SEL}">{opts}</select>'
+
+    corpo = f"""
+    <div style="{_IMPORT_CAIXA}">
+      <p style="color:var(--6f-texto-2);font-size:0.9em;margin:0 0 16px;line-height:1.5">
+        Planilha lida: <strong>{len(colunas)} coluna(s)</strong>, <strong>{len(linhas)} linha(s)</strong>.
+        Diga qual coluna é o palco, qual é o show e qual é o dia — cada linha vira uma
+        entrada na programação do dia.
+      </p>
+      <form action="/listas/importar/lineup/revisar" method="post">
+        <input type="hidden" name="link" value="{_esc(link)}">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 20px;margin-bottom:20px">
+          <div><label style="display:block;font-size:0.85em;font-weight:600;color:var(--6f-texto-2);margin-bottom:5px">Coluna do palco</label>{_sel_col("col_palco", _palpite(["palco","sala","local"]))}</div>
+          <div><label style="display:block;font-size:0.85em;font-weight:600;color:var(--6f-texto-2);margin-bottom:5px">Vai para o grupo</label>{_sel_grupo("grupo_palco", ["palco","sala"])}</div>
+          <div><label style="display:block;font-size:0.85em;font-weight:600;color:var(--6f-texto-2);margin-bottom:5px">Coluna do show</label>{_sel_col("col_show", _palpite(["show","artista","atra","palestra","evento"]))}</div>
+          <div><label style="display:block;font-size:0.85em;font-weight:600;color:var(--6f-texto-2);margin-bottom:5px">Vai para o grupo</label>{_sel_grupo("grupo_show", ["show","artista","palestra"])}</div>
+          <div><label style="display:block;font-size:0.85em;font-weight:600;color:var(--6f-texto-2);margin-bottom:5px">Coluna do dia</label>{_sel_col("col_dia", _palpite(["dia","data","date"]))}</div>
+        </div>
+        <button type="submit" style="{_IMPORT_BTN}">Revisar o line-up →</button>
+        <a href="/listas" style="color:var(--6f-texto-3);font-size:0.85em;margin-left:16px">← cancelar</a>
+      </form>
+    </div>"""
+    return _pagina("Programação · line-up", "listas", corpo)
+
+
+@app.route("/listas/importar/ler", methods=["POST"])
+def listas_importar_ler():
+    """Passo 1: lê a fonte (planilha ou página de site). Planilha → escolhe a
+    coluna; site → já cai na revisão (não há colunas)."""
+    if not IMPORTADOR_DISPONIVEL:
+        return _pagina_listas(erro="Importador indisponível (falta importador_fontes.py).")
+
+    link  = (request.form.get("link")  or "").strip()
+    fonte = (request.form.get("fonte") or "planilha").strip()
+
+    # ── Página de site: extrai o texto visível e vai direto à revisão ─────────
+    if fonte == "site":
+        grupos = _grupos_lista_ativos()
+        if not grupos:
+            return _pagina_listas(erro="Crie um grupo de lista antes de importar (ex.: Palcos).")
+        try:
+            valores = imp.ler_pagina_site(link)
+        except imp.ErroImportacao as e:
+            return _pagina_listas(erro=str(e))
+        except Exception as e:
+            return _pagina_listas(erro=f"Falha inesperada ao ler a página: {e}")
+        return _pagina_site_revisar(link, valores, grupos)
+
+    # ── Line-up: planilha com palco + show + dia → programação do dia ─────────
+    if fonte == "lineup":
+        grupos = _grupos_lista_ativos()
+        if len(grupos) < 1:
+            return _pagina_listas(erro="Crie os grupos de destino (ex.: Palcos e Shows) antes de importar um line-up.")
+        try:
+            colunas, linhas = imp.ler_planilha_remota(link)
+        except imp.ErroImportacao as e:
+            return _pagina_listas(erro=str(e))
+        except Exception as e:
+            return _pagina_listas(erro=f"Falha inesperada ao ler a planilha: {e}")
+        return _pagina_lineup_mapear(link, colunas, linhas, grupos)
+
+    # ── Planilha Google (fluxo com escolha de coluna) ─────────────────────────
+    try:
+        colunas, linhas = imp.ler_planilha_remota(link)
+    except imp.ErroImportacao as e:
+        return _pagina_listas(erro=str(e))
+    except Exception as e:
+        return _pagina_listas(erro=f"Falha inesperada ao ler a planilha: {e}")
+
+    grupos = _grupos_lista_ativos()
+    if not grupos:
+        return _pagina_listas(erro="Crie um grupo de lista antes de importar (ex.: Palcos).")
+
+    # Prévia: as primeiras linhas da planilha, para o operador reconhecer os dados.
+    max_linhas = 6
+    ths = "".join(
+        f'<th style="padding:7px 10px;text-align:left;background:var(--6f-bg-elevado);'
+        f'color:var(--6f-texto-2);font-size:0.78em;border-bottom:1px solid var(--6f-borda)">'
+        f'{_esc(nome)}</th>'
+        for nome in colunas
+    )
+    trs = ""
+    for linha in linhas[:max_linhas]:
+        tds = "".join(
+            f'<td style="padding:6px 10px;border-bottom:1px solid var(--6f-borda);'
+            f'font-size:0.84em;color:var(--6f-texto)">'
+            f'{_esc((linha[i] if i < len(linha) else ""))}</td>'
+            for i in range(len(colunas))
+        )
+        trs += f"<tr>{tds}</tr>"
+    resto = len(linhas) - max_linhas
+    nota_resto = (f'<p style="color:var(--6f-texto-3);font-size:0.8em;margin-top:6px">'
+                  f'… e mais {resto} linha(s).</p>') if resto > 0 else ""
+
+    # <option>s de coluna (com a contagem de itens únicos) e de grupo de destino.
+    opcoes_col = ""
+    for i, nome in enumerate(colunas):
+        n = len(imp.valores_da_coluna(colunas, linhas, i))
+        opcoes_col += f'<option value="{i}">{_esc(nome)} — {n} item(ns) único(s)</option>'
+    opcoes_grp = "".join(
+        f'<option value="{_esc(g["chave"])}">{_esc(g["rotulo"])}</option>'
+        for g in grupos
+    )
+
+    corpo = f"""
+    <div style="{_IMPORT_CAIXA}">
+      <p style="color:var(--6f-texto-2);font-size:0.9em;margin:0 0 16px;line-height:1.5">
+        Planilha lida: <strong>{len(colunas)} coluna(s)</strong>, <strong>{len(linhas)} linha(s)</strong>
+        de dados. Confira a prévia e diga qual coluna vira itens de qual grupo.
+      </p>
+      <div style="overflow-x:auto;border:1px solid var(--6f-borda);border-radius:8px;margin-bottom:20px">
+        <table style="width:100%;border-collapse:collapse;background:var(--6f-bg-superficie)">
+          <thead><tr>{ths}</tr></thead>
+          <tbody>{trs}</tbody>
+        </table>
+      </div>
+      {nota_resto}
+      <form action="/listas/importar/revisar" method="post"
+            style="display:flex;gap:14px;flex-wrap:wrap;align-items:end;margin-top:8px">
+        <input type="hidden" name="link" value="{_esc(link)}">
+        <div style="flex:1;min-width:220px">
+          <label style="display:block;font-size:0.85em;font-weight:600;color:var(--6f-texto-2);margin-bottom:5px">
+            Qual coluna importar?</label>
+          <select name="coluna" style="{_IMPORT_SEL}">{opcoes_col}</select>
+        </div>
+        <div style="flex:1;min-width:220px">
+          <label style="display:block;font-size:0.85em;font-weight:600;color:var(--6f-texto-2);margin-bottom:5px">
+            Para qual grupo?</label>
+          <select name="grupo" style="{_IMPORT_SEL}">{opcoes_grp}</select>
+        </div>
+        <button type="submit" style="{_IMPORT_BTN}">Revisar itens →</button>
+      </form>
+      <p style="margin-top:18px"><a href="/listas" style="color:var(--6f-texto-3);font-size:0.85em">← cancelar</a></p>
+    </div>"""
+    return _pagina("Programação · importar", "listas", corpo)
+
+
+@app.route("/listas/importar/revisar", methods=["POST"])
+def listas_importar_revisar():
+    """Passo 2: mostra os itens únicos da coluna como checklist (o operador tira
+    o lixo). Itens que já existem no grupo aparecem desmarcados, com nota."""
+    if not IMPORTADOR_DISPONIVEL:
+        return _pagina_listas(erro="Importador indisponível.")
+
+    link  = (request.form.get("link")  or "").strip()
+    grupo = (request.form.get("grupo") or "").strip()
+    try:
+        indice = int(request.form.get("coluna"))
+    except (TypeError, ValueError):
+        return _pagina_listas(erro="Escolha uma coluna para importar.")
+
+    try:
+        colunas, linhas = imp.ler_planilha_remota(link)
+    except imp.ErroImportacao as e:
+        return _pagina_listas(erro=str(e))
+    except Exception as e:
+        return _pagina_listas(erro=f"Falha ao reler a planilha: {e}")
+
+    if indice < 0 or indice >= len(colunas):
+        return _pagina_listas(erro="Coluna inválida.")
+    valores = imp.valores_da_coluna(colunas, linhas, indice)
+    if not valores:
+        return _pagina_listas(erro="Essa coluna não tem itens para importar.")
+
+    # Itens que já existem no grupo → pré-desmarca (evita re-adicionar) + rótulo.
+    existentes = set()
+    rotulo_grupo = grupo
+    if BANCO_DISPONIVEL:
+        try:
+            _conn = bd.obter_conexao()
+            existentes = {(i["valor"] or "").strip().lower()
+                          for i in bd.listar_itens_lista(_conn, tipo=grupo)}
+            for g in bd.listar_grupos(_conn):
+                if g["chave"] == grupo:
+                    rotulo_grupo = g["rotulo"]
+            _conn.close()
+        except Exception:
+            pass
+
+    novos = [v for v in valores if v.strip().lower() not in existentes]
+    linhas_check = _linhas_checklist(valores, existentes)
+
+    corpo = f"""
+    <div style="{_IMPORT_CAIXA}">
+      <p style="color:var(--6f-texto-2);font-size:0.9em;margin:0 0 6px;line-height:1.5">
+        <strong>{len(valores)}</strong> item(ns) na coluna “{_esc(colunas[indice])}”;
+        <strong>{len(novos)}</strong> novo(s) para o grupo <strong>{_esc(rotulo_grupo)}</strong>.
+      </p>
+      <p style="color:var(--6f-texto-3);font-size:0.8em;margin:0 0 16px">
+        Desmarque o que não quiser. Só os marcados entram na lista.
+      </p>
+      <form action="/listas/importar/confirmar" method="post">
+        <input type="hidden" name="grupo" value="{_esc(grupo)}">
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <button type="button" onclick="gmaMarcarTodos(true)" style="{_IMPORT_SEL};width:auto;cursor:pointer;padding:5px 11px;font-size:0.82em">marcar todos</button>
+          <button type="button" onclick="gmaMarcarTodos(false)" style="{_IMPORT_SEL};width:auto;cursor:pointer;padding:5px 11px;font-size:0.82em">desmarcar todos</button>
+        </div>
+        <div style="border:1px solid var(--6f-borda);border-radius:8px;max-height:340px;overflow-y:auto;margin-bottom:18px">
+          {linhas_check}
+        </div>
+        <button type="submit" style="{_IMPORT_BTN}">Confirmar importação</button>
+        <a href="/listas" style="color:var(--6f-texto-3);font-size:0.85em;margin-left:16px">← cancelar</a>
+      </form>
+    </div>
+    <script>
+      function gmaMarcarTodos(v){{
+        document.querySelectorAll('input[name="item"]').forEach(function(c){{ c.checked = v; }});
+      }}
+    </script>"""
+    return _pagina("Programação · revisar", "listas", corpo)
+
+
+@app.route("/listas/importar/confirmar", methods=["POST"])
+def listas_importar_confirmar():
+    """Passo 3: grava os itens marcados no grupo (idempotente) e mostra o resumo."""
+    grupo = (request.form.get("grupo") or "").strip()
+    itens = request.form.getlist("item")
+
+    if not grupo:
+        return _pagina_listas(erro="Grupo não informado.")
+    if not itens:
+        return _pagina_listas(erro="Nenhum item marcado — nada foi importado.")
+    if not BANCO_DISPONIVEL:
+        return _pagina_listas(erro="Banco de dados indisponível.")
+
+    import sqlite3 as _sq
+    adicionados = 0
+    ja_existiam = 0
+    erros = 0
+    rotulo_grupo = grupo
+    try:
+        _conn = bd.obter_conexao()
+        for g in bd.listar_grupos(_conn):
+            if g["chave"] == grupo:
+                rotulo_grupo = g["rotulo"]
+        for valor in itens:
+            valor = (valor or "").strip()
+            if not valor:
+                continue
+            try:
+                bd.adicionar_item_lista(_conn, grupo, valor)
+                adicionados += 1
+            except _sq.IntegrityError:
+                ja_existiam += 1
+            except Exception:
+                erros += 1
+        _conn.close()
+    except Exception as e:
+        return _pagina_listas(erro=f"Falha ao gravar os itens: {e}")
+
+    logger.info(f"IMPORTAR | grupo={grupo} novos={adicionados} "
+                f"ja_existiam={ja_existiam} erros={erros}")
+
+    aviso_erro = (f'<p style="color:var(--6f-erro);font-size:0.85em;margin-top:6px">'
+                  f'{erros} item(ns) não puderam ser gravados.</p>') if erros else ""
+    corpo = f"""
+    <div style="{_IMPORT_CAIXA}">
+      <h2 style="font-size:1.1em;color:var(--6f-texto);margin:0 0 12px">Importação concluída</h2>
+      <p style="color:var(--6f-texto);font-size:0.95em;margin:0 0 6px">
+        <strong style="color:var(--6f-teal)">{adicionados}</strong> item(ns) novo(s) em
+        <strong>{_esc(rotulo_grupo)}</strong>.
+      </p>
+      <p style="color:var(--6f-texto-2);font-size:0.88em;margin:0">
+        {ja_existiam} já existia(m) e foram ignorados.
+      </p>
+      {aviso_erro}
+      <p style="margin-top:20px">
+        <a href="/listas" style="{_IMPORT_BTN};text-decoration:none;display:inline-block">← Voltar à Programação</a>
+      </p>
+    </div>"""
+    return _pagina("Programação · importado", "listas", corpo)
+
+
+@app.route("/listas/importar/lineup/revisar", methods=["POST"])
+def listas_importar_lineup_revisar():
+    """Passo 2 do line-up: relê a planilha, monta as linhas (dia · palco · show),
+    normaliza a data e mostra tudo por dia como checklist para o operador revisar."""
+    if not IMPORTADOR_DISPONIVEL:
+        return _pagina_listas(erro="Importador indisponível.")
+
+    link        = (request.form.get("link") or "").strip()
+    grupo_palco = (request.form.get("grupo_palco") or "").strip()
+    grupo_show  = (request.form.get("grupo_show") or "").strip()
+    try:
+        c_palco = int(request.form.get("col_palco"))
+        c_show  = int(request.form.get("col_show"))
+        c_dia   = int(request.form.get("col_dia"))
+    except (TypeError, ValueError):
+        return _pagina_listas(erro="Escolha as colunas do palco, do show e do dia.")
+
+    try:
+        colunas, linhas = imp.ler_planilha_remota(link)
+    except imp.ErroImportacao as e:
+        return _pagina_listas(erro=str(e))
+    except Exception as e:
+        return _pagina_listas(erro=f"Falha ao reler a planilha: {e}")
+
+    # Monta as linhas (dia_iso, palco, show), deduplicando o trio. Guarda também
+    # as datas que não deram para ler, para avisar (nunca chuta o dia).
+    vistos = set()
+    ok = []            # [(dia_iso, palco, show)]
+    ruins = set()      # valores de dia não reconhecidos
+    for linha in linhas:
+        palco = (linha[c_palco] if c_palco < len(linha) else "").strip()
+        show  = (linha[c_show]  if c_show  < len(linha) else "").strip()
+        dia_raw = (linha[c_dia] if c_dia < len(linha) else "").strip()
+        if not palco or not show:
+            continue
+        dia_iso = imp.normalizar_data(dia_raw)
+        if not dia_iso:
+            if dia_raw:
+                ruins.add(dia_raw)
+            continue
+        trio = (dia_iso, palco.lower(), show.lower())
+        if trio in vistos:
+            continue
+        vistos.add(trio)
+        ok.append((dia_iso, palco, show))
+
+    if not ok:
+        return _pagina_listas(erro="Nenhuma linha com palco, show e dia válidos foi encontrada.")
+
+    ok.sort(key=lambda t: (t[0], t[1], t[2]))
+
+    # Agrupa por dia para a exibição
+    from collections import OrderedDict
+    por_dia = OrderedDict()
+    for dia_iso, palco, show in ok:
+        por_dia.setdefault(dia_iso, []).append((palco, show))
+
+    blocos = ""
+    for dia_iso, itens in por_dia.items():
+        linhas_html = ""
+        for palco, show in itens:
+            # o valor carrega o trio (tab-separado) para o passo de confirmação
+            valor = f"{dia_iso}\t{palco}\t{show}"
+            linhas_html += (
+                f'<label style="display:flex;align-items:center;gap:9px;padding:5px 10px;'
+                f'border-bottom:1px solid var(--6f-borda)">'
+                f'<input type="checkbox" name="linha" value="{_esc(valor)}" checked '
+                f'style="accent-color:var(--6f-teal);width:16px;height:16px">'
+                f'<span style="color:var(--6f-texto);font-size:0.88em">{_esc(palco)} '
+                f'<span style="color:var(--6f-texto-3)">·</span> {_esc(show)}</span></label>'
+            )
+        blocos += (
+            f'<div style="margin-bottom:14px">'
+            f'<div style="color:var(--6f-teal);font-weight:600;font-size:0.85em;margin-bottom:6px">'
+            f'{_esc(dia_iso)} <span style="color:var(--6f-texto-3);font-weight:400">· {len(itens)} show(s)</span></div>'
+            f'<div style="border:1px solid var(--6f-borda);border-radius:8px;overflow:hidden">{linhas_html}</div>'
+            f'</div>'
+        )
+
+    aviso_ruins = ""
+    if ruins:
+        amostra = ", ".join(sorted(ruins)[:6])
+        aviso_ruins = (
+            f'<div style="background:var(--6f-bg-elevado);border:1px solid var(--6f-aviso);'
+            f'color:var(--6f-aviso);border-radius:6px;padding:10px 14px;margin-bottom:14px;font-size:0.84em">'
+            f'{len(ruins)} data(s) não reconhecida(s) foram ignoradas: {_esc(amostra)}. '
+            f'Ajuste o formato na planilha (ex.: 04/09/2026) e reimporte, se precisar delas.</div>'
+        )
+
+    corpo = f"""
+    <div style="{_IMPORT_CAIXA}">
+      <p style="color:var(--6f-texto-2);font-size:0.9em;margin:0 0 6px;line-height:1.5">
+        <strong>{len(ok)}</strong> show(s) em <strong>{len(por_dia)}</strong> dia(s) vão para a
+        programação. Desmarque o que não quiser.
+      </p>
+      <p style="color:var(--6f-texto-3);font-size:0.8em;margin:0 0 16px">
+        Palcos novos entram no grupo escolhido; shows novos idem; o resto é ignorado
+        (não duplica).
+      </p>
+      {aviso_ruins}
+      <form action="/listas/importar/lineup/confirmar" method="post">
+        <input type="hidden" name="grupo_palco" value="{_esc(grupo_palco)}">
+        <input type="hidden" name="grupo_show" value="{_esc(grupo_show)}">
+        <div style="display:flex;gap:8px;margin-bottom:12px">
+          <button type="button" onclick="gmaMarcarTodos(true)" style="{_IMPORT_SEL};width:auto;cursor:pointer;padding:5px 11px;font-size:0.82em">marcar todos</button>
+          <button type="button" onclick="gmaMarcarTodos(false)" style="{_IMPORT_SEL};width:auto;cursor:pointer;padding:5px 11px;font-size:0.82em">desmarcar todos</button>
+        </div>
+        <div style="max-height:360px;overflow-y:auto;margin-bottom:18px">{blocos}</div>
+        <button type="submit" style="{_IMPORT_BTN}">Confirmar na programação</button>
+        <a href="/listas" style="color:var(--6f-texto-3);font-size:0.85em;margin-left:16px">← cancelar</a>
+      </form>
+    </div>
+    <script>
+      function gmaMarcarTodos(v){{
+        document.querySelectorAll('input[name="linha"]').forEach(function(c){{ c.checked = v; }});
+      }}
+    </script>"""
+    return _pagina("Programação · revisar line-up", "listas", corpo)
+
+
+@app.route("/listas/importar/lineup/confirmar", methods=["POST"])
+def listas_importar_lineup_confirmar():
+    """Passo 3 do line-up: cria os itens (palco/show) e liga cada show ao seu dia
+    na tabela programacao. Idempotente — reimportar não duplica."""
+    grupo_palco = (request.form.get("grupo_palco") or "").strip()
+    grupo_show  = (request.form.get("grupo_show") or "").strip()
+    linhas      = request.form.getlist("linha")
+
+    if not grupo_palco or not grupo_show:
+        return _pagina_listas(erro="Grupos de destino não informados.")
+    if not linhas:
+        return _pagina_listas(erro="Nenhuma linha marcada — nada foi importado.")
+    if not BANCO_DISPONIVEL:
+        return _pagina_listas(erro="Banco de dados indisponível.")
+
+    novos_palcos = 0
+    novos_shows = 0
+    ligacoes = 0
+    erros = 0
+    dias = set()
+    try:
+        _conn = bd.obter_conexao()
+        for bruto in linhas:
+            partes = (bruto or "").split("\t")
+            if len(partes) != 3:
+                continue
+            dia_iso, palco, show = (p.strip() for p in partes)
+            if not (dia_iso and palco and show):
+                continue
+            try:
+                id_palco, criou_p = _item_id_ou_cria(_conn, grupo_palco, palco)
+                id_show,  criou_s = _item_id_ou_cria(_conn, grupo_show, show)
+                if not id_palco or not id_show:
+                    erros += 1
+                    continue
+                bd.adicionar_programacao(_conn, dia_iso, id_palco, id_show)
+                ligacoes += 1
+                dias.add(dia_iso)
+                if criou_p: novos_palcos += 1
+                if criou_s: novos_shows += 1
+            except Exception:
+                erros += 1
+        _conn.close()
+    except Exception as e:
+        return _pagina_listas(erro=f"Falha ao gravar a programação: {e}")
+
+    logger.info(f"IMPORTAR LINE-UP | ligacoes={ligacoes} dias={len(dias)} "
+                f"novos_palcos={novos_palcos} novos_shows={novos_shows} erros={erros}")
+
+    aviso_erro = (f'<p style="color:var(--6f-erro);font-size:0.85em;margin-top:6px">'
+                  f'{erros} linha(s) não puderam ser gravadas.</p>') if erros else ""
+    corpo = f"""
+    <div style="{_IMPORT_CAIXA}">
+      <h2 style="font-size:1.1em;color:var(--6f-texto);margin:0 0 12px">Line-up importado</h2>
+      <p style="color:var(--6f-texto);font-size:0.95em;margin:0 0 6px">
+        <strong style="color:var(--6f-teal)">{ligacoes}</strong> show(s) na programação,
+        em <strong>{len(dias)}</strong> dia(s).
+      </p>
+      <p style="color:var(--6f-texto-2);font-size:0.88em;margin:0">
+        {novos_palcos} palco(s) novo(s) e {novos_shows} show(s) novo(s) criados nas listas.
+      </p>
+      {aviso_erro}
+      <p style="margin-top:20px">
+        <a href="/listas" style="{_IMPORT_BTN};text-decoration:none;display:inline-block">← Voltar à Programação</a>
+      </p>
+    </div>"""
+    return _pagina("Programação · line-up importado", "listas", corpo)
+
+
 def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
     """
     Renderiza a aba de Listas de Contexto.
@@ -7534,6 +8138,45 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
 
         <!-- Coluna de formulários (grupo + item) -->
         <div style="display:flex;flex-direction:column;gap:18px;position:sticky;top:20px">
+
+        <!-- Importar de planilha remota (Central de Entrada) -->
+        <div style="background:var(--6f-bg-superficie);border:1px solid var(--6f-teal-trilho);border-radius:8px;padding:20px 22px;
+                    box-shadow:none">
+            <h2 style="font-size:1em;font-weight:700;color:var(--6f-texto);margin-bottom:6px">
+                Importar de planilha
+            </h2>
+            <p style="color:var(--6f-texto-3);font-size:0.78em;margin-bottom:14px;line-height:1.5">
+                Cole o link de uma <strong>planilha Google</strong> (compartilhada como
+                “qualquer pessoa com o link pode ver”) ou de uma <strong>página de
+                site</strong>. Você revisa os itens antes de entrarem na lista — nada
+                entra sem sua confirmação.
+            </p>
+            <form action="/listas/importar/ler" method="post">
+                <select name="fonte"
+                        style="width:100%;padding:9px 12px;border:1px solid var(--6f-borda);
+                               background:var(--6f-bg-elevado);color:var(--6f-texto);
+                               border-radius:6px;font-size:0.9em;font-family:inherit;margin-bottom:10px">
+                    <option value="planilha">Planilha Google</option>
+                    <option value="lineup">Line-up (palco · show · dia)</option>
+                    <option value="site">Página de site</option>
+                </select>
+                <input type="url" name="link" autocomplete="off" required
+                       placeholder="Cole o link aqui…"
+                       style="width:100%;padding:9px 12px;border:1px solid var(--6f-borda);
+                              background:var(--6f-bg-elevado);color:var(--6f-texto);
+                              border-radius:6px;font-size:0.9em;font-family:inherit;margin-bottom:12px">
+                <p style="color:var(--6f-texto-3);font-size:0.72em;margin:-4px 0 12px;line-height:1.45">
+                    Sites feitos em JavaScript (ex.: line-up do Rock in Rio) trazem pouco
+                    texto — nesses, me peça a captura numa conversa de preparação.
+                </p>
+                <button type="submit"
+                        style="width:100%;background:var(--6f-teal);color:var(--6f-bg-base);border:none;
+                               border-radius:6px;padding:10px;font-weight:700;
+                               font-size:0.9em;cursor:pointer;letter-spacing:0.3px">
+                    Ler planilha
+                </button>
+            </form>
+        </div>
 
         <!-- Formulário de novo GRUPO -->
         <div style="background:var(--6f-bg-superficie);border:1px solid var(--6f-borda);border-radius:8px;padding:20px 22px;
