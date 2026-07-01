@@ -537,6 +537,29 @@ def _operador_logado():
     return session.get("operador")
 
 
+def _papel_logado():
+    """Papel da sessão: 'operador' (base inteira) ou 'editor' (só a Entrega)."""
+    return session.get("papel", "operador")
+
+
+def _eh_editor():
+    """True se quem está logado é um EDITOR (acesso limitado à aba Entrega)."""
+    return _operador_logado() is not None and _papel_logado() == "editor"
+
+
+# Rotas que o EDITOR pode acessar (só a Entrega + salvar a pós-produção + sair).
+# Gerir nomes (/planilha/pessoa/*) fica de fora DE PROPÓSITO: o editor só seleciona.
+ROTAS_EDITOR_EXATAS = ("/planilha", "/planilha/pos", "/login", "/logout", "/status")
+ROTAS_EDITOR_PREFIXOS = ("/static", "/forms")
+
+
+def _editor_pode_acessar(path):
+    """True se um editor logado pode acessar `path` (só o mundo da Entrega)."""
+    if path in ROTAS_EDITOR_EXATAS:
+        return True
+    return path.startswith(ROTAS_EDITOR_PREFIXOS)
+
+
 @app.before_request
 def _carimbar_operador():
     """
@@ -577,6 +600,10 @@ def _portao_de_acesso():
     if _host_local() and not _rota_livre_de_login(request.path):
         if not _operador_logado():
             return redirect("/login")
+        # Escopo do EDITOR: só a aba Entrega. Qualquer outra tela da base cai
+        # gentilmente na Entrega (ele não opera, só faz a pós-produção).
+        if _eh_editor() and not _editor_pode_acessar(request.path):
+            return redirect("/planilha")
 
     # ── 2) Autenticação por senha ─────────────────────────────────────────────
     senha_exigida = os.environ.get("GMA_SENHA", "").strip()
@@ -796,6 +823,7 @@ def login():
         except ValueError as e:
             return _pagina_login(erro=str(e))
         session["operador"] = nome
+        session["papel"] = "operador"   # o primeiro é sempre operador
         session.permanent = True
         logger.info(f"LOGIN | Primeiro operador criado e logado: {nome}")
         return redirect("/")
@@ -805,16 +833,19 @@ def login():
         logger.info(f"LOGIN | Falha de login para '{nome}'")
         return _pagina_login(erro="Nome ou senha incorretos.")
     session["operador"] = op["nome"]
+    session["papel"] = op.get("papel", "operador")
     session.permanent = True
-    logger.info(f"LOGIN | Operador logado: {op['nome']}")
-    return redirect("/")
+    logger.info(f"LOGIN | {op.get('papel','operador').capitalize()} logado: {op['nome']}")
+    # O editor não tem a operação; vai direto para a sua única tela.
+    return redirect("/planilha" if op.get("papel") == "editor" else "/")
 
 
 @app.route("/logout", methods=["GET", "POST"])
 def logout():
     quem = session.pop("operador", None)
+    session.pop("papel", None)
     if quem:
-        logger.info(f"LOGIN | Operador saiu: {quem}")
+        logger.info(f"LOGIN | Saiu: {quem}")
     return redirect("/login")
 
 
@@ -824,19 +855,25 @@ def _pagina_operadores(aviso=None, erro=None):
     erro_html = f"<div class='erro'>{_esc(erro)}</div>" if erro else ""
     aviso_html = f"<div class='ok'>{_esc(aviso)}</div>" if aviso else ""
 
+    # A trava protege só o acesso de OPERADOR (editor não opera): nunca deixar a
+    # base sem nenhum operador ativo.
+    n_operadores_ativos = sum(1 for x in operadores.listar() if x["papel"] == "operador")
     itens = []
     for o in operadores.listar(incluir_inativos=True):
         ativo = o["ativo"]
         marca_eu = " (você)" if o["nome"] == logado else ""
+        papel_badge = (" <span style='color:var(--6f-teal-claro);font-size:12px'>· editor</span>"
+                       if o["papel"] == "editor" else "")
         if ativo:
-            # Não deixa desativar a si mesmo nem o último operador ativo (tranca).
-            pode_desativar = (o["nome"] != logado) and (len(operadores.listar()) > 1)
+            # Não deixa desativar a si mesmo; nem o último OPERADOR ativo (tranca).
+            eh_ultimo_operador = (o["papel"] == "operador" and n_operadores_ativos <= 1)
+            pode_desativar = (o["nome"] != logado) and not eh_ultimo_operador
             acao = (
                 f"<form method='post' action='/operadores/{_esc(o['nome'])}/desativar' style='margin:0'>"
                 f"<button class='btn-mini' type='submit'>Desativar</button></form>"
                 if pode_desativar else "<span style='color:#6c727b;font-size:13px'>—</span>"
             )
-            itens.append(f"<li><span>{_esc(o['nome'])}{marca_eu}</span>{acao}</li>")
+            itens.append(f"<li><span>{_esc(o['nome'])}{marca_eu}{papel_badge}</span>{acao}</li>")
         else:
             acao = (
                 f"<form method='post' action='/operadores/{_esc(o['nome'])}/reativar' style='margin:0'>"
@@ -850,18 +887,27 @@ def _pagina_operadores(aviso=None, erro=None):
       {erro_html}{aviso_html}
       <ul class="lista-ops">{''.join(itens)}</ul>
       <form method="post" action="/operadores/criar" style="margin-top:18px">
-        <label>Novo operador</label>
+        <label>Nova conta</label>
         <input type="text" name="nome" placeholder="Nome" autocomplete="off" required>
+        <label style="margin-top:10px">Acesso</label>
+        <div style="display:flex;gap:16px;margin:2px 0 4px;font-size:14px">
+          <label style="display:flex;align-items:center;gap:6px;font-weight:400">
+            <input type="radio" name="papel" value="operador" checked> Operador
+            <span style="color:#6c727b;font-size:12px">(sistema todo)</span></label>
+          <label style="display:flex;align-items:center;gap:6px;font-weight:400">
+            <input type="radio" name="papel" value="editor"> Editor
+            <span style="color:#6c727b;font-size:12px">(só a Entrega)</span></label>
+        </div>
         <label>Senha</label>
         <input type="password" name="senha" required>
         <label>Repita a senha</label>
         <input type="password" name="senha2" required>
-        <button type="submit">Cadastrar operador</button>
+        <button type="submit">Cadastrar</button>
       </form>
     </div>
     <div class="rodape"><a href="/painel">← Voltar ao Sistema</a> &nbsp;·&nbsp;
       <a href="/logout">Sair ({_esc(logado or '')})</a></div>"""
-    return _pagina_acesso(corpo, titulo="Operadores", sub="Quem pode operar esta máquina")
+    return _pagina_acesso(corpo, titulo="Usuários", sub="Operadores e editores desta máquina")
 
 
 @app.route("/operadores", methods=["GET"])
@@ -874,21 +920,26 @@ def operadores_criar():
     nome = (request.form.get("nome") or "").strip()
     senha = request.form.get("senha") or ""
     senha2 = request.form.get("senha2") or ""
+    papel = (request.form.get("papel") or "operador").strip().lower()
     if senha != senha2:
         return _pagina_operadores(erro="As duas senhas não são iguais.")
     try:
-        operadores.criar(nome, senha)
+        operadores.criar(nome, senha, papel)
     except ValueError as e:
         return _pagina_operadores(erro=str(e))
-    logger.info(f"OPERADORES | Cadastrado: {nome} (por {_operador_logado()})")
-    return _pagina_operadores(aviso=f"Operador “{nome}” cadastrado.")
+    logger.info(f"OPERADORES | Cadastrado: {nome} ({papel}) (por {_operador_logado()})")
+    rotulo = "Editor" if papel == "editor" else "Operador"
+    return _pagina_operadores(aviso=f"{rotulo} “{nome}” cadastrado.")
 
 
 @app.route("/operadores/<nome>/desativar", methods=["POST"])
 def operadores_desativar(nome):
     if nome == _operador_logado():
         return _pagina_operadores(erro="Você não pode desativar a si mesmo enquanto está logado.")
-    if len(operadores.listar()) <= 1:
+    # Trava só o último OPERADOR ativo (editor não opera → desativar editor é livre).
+    alvo = next((o for o in operadores.listar(incluir_inativos=True) if o["nome"] == nome), None)
+    n_operadores_ativos = sum(1 for x in operadores.listar() if x["papel"] == "operador")
+    if alvo and alvo["papel"] == "operador" and n_operadores_ativos <= 1:
         return _pagina_operadores(erro="É o último operador ativo — não dá para desativar (trancaria a base).")
     operadores.desativar(nome)
     logger.info(f"OPERADORES | Desativado: {nome} (por {_operador_logado()})")
@@ -2232,6 +2283,14 @@ def barra_abas(ativa):
     PROPÓSITO (risco zero) — só o rótulo mudou."""
     def classe(nome):
         return "aba ativa" if nome == ativa else "aba"
+    # O editor só tem a Entrega — as demais abas nem aparecem pra ele (e o portão
+    # já barra o acesso direto). Mostra "Sair" no lugar, pra ele conseguir deslogar.
+    if _eh_editor():
+        return f"""
+    <nav class="abas">
+        <a class="{classe('planilha')}" href="/planilha">Entrega</a>
+        <a class="aba" href="/logout" style="margin-left:auto">Sair</a>
+    </nav>"""
     return f"""
     <nav class="abas">
         <a class="{classe('ficha')}" href="/ficha">Posts</a>
@@ -3854,11 +3913,10 @@ Múltiplas palavras = AND. Exemplo: sunset volkswagen">
         <p class="legenda" style="margin:0;flex:1;min-width:180px">
             Espelho local da entrega — é o que vai para o Google Sheets
             (só informação, nunca o vídeo).</p>
-        <a href="/molde" style="font-size:0.85em;color:var(--6f-teal);white-space:nowrap;align-self:center">
-          ⚙ Configurar colunas</a>
+        {"" if _eh_editor() else '<a href="/molde" style="font-size:0.85em;color:var(--6f-teal);white-space:nowrap;align-self:center">⚙ Configurar colunas</a>'}
     </div>
 
-    {_caixa_pessoas(pessoas)}
+    {"" if _eh_editor() else _caixa_pessoas(pessoas)}
 
     {bloco_ia}
     {barra_html}
@@ -9140,7 +9198,7 @@ def _pagina_painel(aviso=None, erro=None, resultado_teste=None):
             f"<div>Operando como <b>{_esc(_logado)}</b></div>"
             "<div style='display:flex;gap:10px'>"
             "<a class='btn btn-secund' href='/historico'>Histórico</a>"
-            "<a class='btn btn-secund' href='/operadores'>Operadores</a>"
+            "<a class='btn btn-secund' href='/operadores'>Usuários</a>"
             "<a class='btn btn-secund' href='/logout'>Sair</a>"
             "</div></div>"
         )

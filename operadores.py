@@ -103,10 +103,16 @@ def _conferir_hash(senha, guardado):
 
 # ── API pública ─────────────────────────────────────────────────────────────────
 
+# Papéis de acesso: "operador" = base inteira; "editor" = só a aba Entrega.
+PAPEIS = ("operador", "editor")
+
+
 def _publico(op):
     """Versão de um operador SEM o hash da senha (segura para telas/respostas)."""
     return {"id": op["id"], "nome": op["nome"],
-            "ativo": op.get("ativo", True), "criado_em": op.get("criado_em", "")}
+            "ativo": op.get("ativo", True), "criado_em": op.get("criado_em", ""),
+            # Contas antigas (sem o campo) são operadores por padrão.
+            "papel": op.get("papel", "operador")}
 
 
 def existe_algum():
@@ -131,27 +137,32 @@ def _achar(dados, nome):
     return None
 
 
-def criar(nome, senha):
+def criar(nome, senha, papel="operador"):
     """
-    Cadastra um operador novo. Levanta ValueError se o nome estiver vazio/duplicado
-    ou a senha for curta demais. Devolve o operador (sem o hash).
+    Cadastra uma conta nova. `papel` = "operador" (base inteira) ou "editor" (só a
+    aba Entrega). Levanta ValueError se o nome estiver vazio/duplicado, a senha for
+    curta demais ou o papel for inválido. Devolve a conta (sem o hash).
     """
     nome = (nome or "").strip()
     senha = senha or ""
+    papel = (papel or "operador").strip().lower()
     if not nome:
-        raise ValueError("O nome do operador não pode ficar em branco.")
+        raise ValueError("O nome não pode ficar em branco.")
+    if papel not in PAPEIS:
+        raise ValueError("Papel inválido (use operador ou editor).")
     if len(senha) < TAM_MIN_SENHA:
         raise ValueError(f"A senha precisa ter pelo menos {TAM_MIN_SENHA} caracteres.")
 
     dados = _carregar()
     if _achar(dados, nome) is not None:
-        raise ValueError(f"Já existe um operador chamado “{nome}”.")
+        raise ValueError(f"Já existe alguém chamado “{nome}”.")
 
     op = {
         "id": dados["proximo_id"],
         "nome": nome,
         "senha": _hash_senha(senha),
         "ativo": True,
+        "papel": papel,
         "criado_em": datetime.now().isoformat(timespec="seconds"),
     }
     dados["operadores"].append(op)
