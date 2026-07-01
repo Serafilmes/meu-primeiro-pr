@@ -2565,6 +2565,19 @@ def _pagina(titulo, aba, corpo, head_extra=""):
                                             border-radius:6px; padding:4px 10px; cursor:pointer; font-size:0.8em; }}
         .pag-planilha .ger-nota {{ flex-basis:100%; margin:2px 0 0; color:var(--6f-texto-3);
                                    font-size:0.76em; }}
+        /* Caixa "Gerar relatório de entrega" (Fatia 3) — mesmo visual da ger-pessoas */
+        .pag-planilha .ger-relatorios {{ background:var(--6f-bg-superficie); border:1px solid var(--6f-borda);
+                                         border-radius:8px; margin-bottom:12px; }}
+        .pag-planilha .ger-relatorios summary {{ cursor:pointer; padding:8px 14px; color:var(--6f-texto-2);
+                                                 font-size:0.85em; user-select:none; }}
+        .pag-planilha .ger-relatorios summary:hover {{ color:var(--6f-teal); }}
+        .pag-planilha .rel-form {{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; }}
+        .pag-planilha .rel-form strong {{ color:var(--6f-texto); font-size:0.82em; }}
+        .pag-planilha .rel-form select {{ background:var(--6f-bg-elevado); border:1px solid var(--6f-borda);
+                                          color:var(--6f-texto); border-radius:6px; padding:4px 8px;
+                                          font-size:0.8em; }}
+        .pag-planilha .rel-form button {{ background:var(--6f-teal); color:var(--6f-bg-base); border:none;
+                                          border-radius:6px; padding:5px 12px; cursor:pointer; font-size:0.8em; }}
 
         /* ── TEMA ESCURO 6floor — escopado à aba Sistema (Painel + Histórico) ──
            O corpo do Painel é estilizado por PAINEL_CSS (injetado via head_extra,
@@ -3559,6 +3572,56 @@ def _caixa_pessoas(pessoas):
     )
 
 
+def _caixa_relatorios(dias):
+    """Caixa "Gerar relatório de entrega" (AÇÃO DO OPERADOR — Fatia 3).
+
+    Dois documentos CONGELADOS (XLSX + PDF), foto do momento que nunca muda:
+      • Diário — o recorte de UM dia (seletor: hoje por padrão, reimprime qualquer dia).
+      • Final  — o evento inteiro.
+    O editor não vê esta caixa (é ação do operador). Cada geração salva um arquivo
+    novo com carimbo de hora e baixa na hora (o Sheets segue vivo ao lado).
+    """
+    hoje = datetime.now().date().isoformat()
+    # O seletor oferece os dias que têm material; garante "hoje" no topo mesmo sem linha.
+    opcoes_dias = list(dict.fromkeys([hoje] + list(dias)))
+    opcoes_html = "".join(
+        f'<option value="{_esc(d)}"{" selected" if d == hoje else ""}>'
+        f'{_esc(_fmt_data_br(d))}</option>'
+        for d in opcoes_dias
+    )
+    return (
+        '<details class="ger-relatorios"><summary>📄 Gerar relatório de entrega '
+        '(documento final)</summary>'
+        '<div class="ger-corpo" style="gap:14px">'
+        # ── Diário ──
+        '<form class="rel-form" method="POST" action="/planilha/relatorio">'
+        '<input type="hidden" name="tipo" value="diario">'
+        '<strong>Relatório do dia</strong>'
+        f'<select name="dia" title="Dia do recorte">{opcoes_html}</select>'
+        '<button type="submit">gerar XLSX + PDF</button>'
+        '</form>'
+        # ── Final ──
+        '<form class="rel-form" method="POST" action="/planilha/relatorio">'
+        '<input type="hidden" name="tipo" value="final">'
+        '<strong>Relatório final</strong>'
+        '<span class="ger-nota" style="margin:0">o evento inteiro</span>'
+        '<button type="submit">gerar XLSX + PDF</button>'
+        '</form>'
+        '<p class="ger-nota">Cada relatório é uma foto CONGELADA (nunca muda) e '
+        'baixa na hora; uma cópia fica guardada na pasta do projeto. O Google '
+        'Sheets segue como espelho ao vivo.</p>'
+        '</div></details>'
+    )
+
+
+def _fmt_data_br(iso):
+    """'AAAA-MM-DD' → 'DD/MM/AAAA' (tolerante: devolve como veio se não casar)."""
+    try:
+        return datetime.strptime(iso, "%Y-%m-%d").strftime("%d/%m/%Y")
+    except (ValueError, TypeError):
+        return iso
+
+
 def _celula_planilha(col, linha, chips, textos=None, pessoas=None):
     """
     Renderiza o valor de uma célula da planilha em HTML.
@@ -3713,6 +3776,8 @@ def planilha():
         # Catálogos da pós-produção (menus Editor/Upload — listas independentes).
         pessoas = {"editor": bd.listar_pessoas_pos(conn, "editor"),
                    "upload": bd.listar_pessoas_pos(conn, "upload")}
+        # Dias com material (para o seletor do relatório diário — Fatia 3).
+        dias_relatorio = bd.dias_da_planilha(conn)
 
         # Busca profunda: monta o índice de resultados antes de renderizar as linhas.
         # resultados_busca: {(cartao_id, form_id) → dict com campos_bateram e arquivos}
@@ -3738,6 +3803,7 @@ def planilha():
         textos_map = {}
         resultados_busca = {}
         pessoas = {"editor": [], "upload": []}
+        dias_relatorio = []
 
     # ── Renderização das linhas ───────────────────────────────────────────────
     # Com busca ativa: só exibe linhas que bateram, com destaque e painel de arquivos.
@@ -3917,6 +3983,7 @@ Múltiplas palavras = AND. Exemplo: sunset volkswagen">
     </div>
 
     {"" if _eh_editor() else _caixa_pessoas(pessoas)}
+    {"" if _eh_editor() else _caixa_relatorios(dias_relatorio)}
 
     {bloco_ia}
     {barra_html}
@@ -4219,6 +4286,96 @@ def planilha_pessoa_excluir():
         return jsonify(ok=False, erro="erro_interno"), 500
     logger.info(f"PLANILHA PESSOA EXCLUIR | {funcao} | {nome!r} | removeu={removeu}")
     return jsonify(ok=True, funcao=funcao, nome=nome, removeu=removeu)
+
+
+# ── RELATÓRIO DE ENTREGA (Fatia 3) — documento final congelado (XLSX + PDF) ────
+# Ação do OPERADOR (o editor cai fora pelo portão). Gera uma FOTO do momento:
+# diário (um dia) ou final (tudo). Salva com carimbo de hora na pasta do projeto
+# e mostra os dois arquivos para baixar. Nunca toca mídia — só lê metadados.
+
+def _pasta_relatorios():
+    """Pasta relatorios/ ao lado do banco REALMENTE lido (bd.CAMINHO_BANCO).
+
+    Ancorar no banco em uso (e não no estado do saguão) garante que pasta, nome e
+    dados do relatório venham sempre do MESMO projeto — no app real coincidem.
+    """
+    return os.path.join(os.path.dirname(os.path.abspath(bd.CAMINHO_BANCO)), "relatorios")
+
+
+def _nome_projeto_ativo():
+    """Nome legível do projeto do banco em uso (para a capa/arquivo do relatório)."""
+    slug = os.path.basename(os.path.dirname(os.path.abspath(bd.CAMINHO_BANCO)))
+    if not slug or slug == "GMA":
+        return "GMA"
+    return slug.replace("_", " ").title()
+
+
+@app.route("/planilha/relatorio", methods=["POST"])
+def planilha_relatorio():
+    """Gera o relatório de entrega congelado (XLSX + PDF) e mostra p/ baixar."""
+    if not BANCO_DISPONIVEL:
+        corpo = "<p class='vazio'>Banco de dados indisponível.</p>"
+        return _pagina("Entrega", "planilha", corpo), 503
+
+    tipo = (request.form.get("tipo") or "final").strip()
+    dia = (request.form.get("dia") or "").strip() if tipo == "diario" else None
+
+    try:
+        import relatorios_entrega as rel
+        conn = bd.obter_conexao()
+        resultado = rel.gerar(
+            conn, _nome_projeto_ativo(), _pasta_relatorios(),
+            dia=dia, gerado_por=_operador_logado() or "",
+        )
+        conn.close()
+    except ValueError as e:            # ex.: nenhuma coluna visível
+        corpo = (f"<div class='ger-corpo' style='margin-top:16px'>"
+                 f"<p class='vazio'>Não foi possível gerar: {_esc(str(e))}</p>"
+                 f"<p><a href='/planilha'>← voltar à Entrega</a></p></div>")
+        return _pagina("Entrega", "planilha", corpo), 200
+    except Exception as e:
+        logger.error(f"RELATORIO | Erro ao gerar | {e}")
+        corpo = ("<div class='ger-corpo' style='margin-top:16px'>"
+                 "<p class='vazio'>Erro ao gerar o relatório. Veja o log do sistema.</p>"
+                 "<p><a href='/planilha'>← voltar à Entrega</a></p></div>")
+        return _pagina("Entrega", "planilha", corpo), 500
+
+    xlsx = os.path.basename(resultado["xlsx"])
+    pdf = os.path.basename(resultado["pdf"])
+    logger.info(f"RELATORIO | {resultado['titulo']} | {resultado['n_linhas']} takes "
+                f"| {xlsx} + {pdf} (por {_operador_logado()})")
+
+    corpo = f"""
+    <div class="ger-corpo" style="margin-top:16px;gap:16px">
+      <h2 style="margin:0;color:var(--6f-teal)">✓ {_esc(resultado['titulo'])} gerado</h2>
+      <p style="margin:0;color:var(--6f-texto-2)">
+        {resultado['n_linhas']} take(s) · foto congelada deste momento.
+        Uma cópia ficou guardada na pasta do projeto.</p>
+      <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <a class="btn-download" href="/planilha/relatorio/baixar?nome={_esc(xlsx)}"
+           style="padding:10px 18px;background:var(--6f-teal);color:var(--6f-bg-base);
+                  border-radius:6px;text-decoration:none;font-weight:600">⬇ Planilha (XLSX)</a>
+        <a class="btn-download" href="/planilha/relatorio/baixar?nome={_esc(pdf)}"
+           style="padding:10px 18px;background:var(--6f-bg-elevado);color:var(--6f-teal);
+                  border:1px solid var(--6f-teal);border-radius:6px;text-decoration:none;
+                  font-weight:600">⬇ Apresentável (PDF)</a>
+      </div>
+      <p style="margin:0"><a href="/planilha" style="color:var(--6f-texto-2)">← voltar à Entrega</a></p>
+    </div>"""
+    return _pagina("Entrega", "planilha", corpo), 200
+
+
+@app.route("/planilha/relatorio/baixar", methods=["GET"])
+def planilha_relatorio_baixar():
+    """Baixa um relatório já gerado (apenas arquivos da pasta do projeto)."""
+    from flask import send_file
+    nome = os.path.basename(request.args.get("nome", ""))   # trava travessia de path
+    if not nome or not (nome.endswith(".xlsx") or nome.endswith(".pdf")):
+        return "Arquivo inválido.", 400
+    caminho = os.path.join(_pasta_relatorios(), nome)
+    if not os.path.isfile(caminho):
+        return "Arquivo não encontrado.", 404
+    return send_file(caminho, as_attachment=True, download_name=nome)
 
 
 # ── ROTA: MOLDE DA PLANILHA (/molde) ─────────────────────────────────────────

@@ -4236,6 +4236,51 @@ def montar_planilha(conn):
     return colunas, linhas
 
 
+def montar_planilha_com_datas(conn):
+    """Como montar_planilha, mas devolve também a DATA de cada linha.
+
+    Usado pelos relatórios de entrega (relatorios_entrega.py) para recortar
+    "só de um dia". A data é o `criado_em` do cartão (quando entrou no sistema),
+    fatiado em 'AAAA-MM-DD' — a mesma ordenação que a Entrega já usa.
+
+    Returns:
+        (colunas, linhas, datas):
+          colunas — igual a montar_planilha.
+          linhas  — igual a montar_planilha (lista de listas de strings).
+          datas   — lista paralela às linhas: a data 'AAAA-MM-DD' de cada uma
+                    (ou "" se o cartão não tiver criado_em).
+    """
+    colunas = colunas_planilha(conn)
+    rows = conn.execute(_SQL_PLANILHA).fetchall()
+
+    form_ids = [r["form_id"] for r in rows if r["form_id"]]
+    chips_map = chips_por_formulario(conn, form_ids) if form_ids else {}
+    textos_map = textos_por_formulario(conn, form_ids) if form_ids else {}
+
+    linhas, datas = [], []
+    for r in rows:
+        chips = chips_map.get(r["form_id"], [])
+        textos = textos_map.get(r["form_id"], {})
+        linhas.append([valor_celula_planilha(c, r, chips, textos) for c in colunas])
+        bruta = r["_ordenacao"] or ""
+        datas.append(bruta[:10])   # 'AAAA-MM-DD HH:MM:SS' → 'AAAA-MM-DD'
+    return colunas, linhas, datas
+
+
+def dias_da_planilha(conn):
+    """Datas distintas (AAAA-MM-DD) que têm ao menos uma linha na Entrega.
+
+    Alimenta o seletor de dia do relatório diário. Do mais recente ao mais antigo.
+    """
+    try:
+        rows = conn.execute(_SQL_PLANILHA).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    dias = {(r["_ordenacao"] or "")[:10] for r in rows}
+    dias.discard("")
+    return sorted(dias, reverse=True)
+
+
 # ── CAMADA 6 — BUSCA TEXTUAL (Missão A, Fatia 1) ────────────────────────────
 #
 # Fundação mecânica da busca conversacional: 100% offline, sem LLM/API.
