@@ -194,6 +194,11 @@ def inicializar_banco():
                 -- Tamanho total efetivamente copiado em bytes
                 tamanho_transferido_bytes       INTEGER,
 
+                -- Histórico de velocidade da cópia (Relatório de cópias, s65):
+                -- quanto a cópia levou (segundos) e a MB/s média daquela cópia.
+                duracao_copia_segundos          REAL,
+                velocidade_media_mbs            REAL,
+
                 -- Caminho do arquivo PDF de relatório gerado pela Camada 2
                 transferencia_relatorio_pdf     TEXT,
 
@@ -4517,6 +4522,16 @@ def migrar_schema_cartoes(conn):
         conn.execute(
             "ALTER TABLE cartoes ADD COLUMN transcricao_tentada_em TEXT"
         )
+        conn.commit()
+    # Camada 2 — Relatório de cópias (s65): histórico de velocidade por cartão.
+    # duracao_copia_segundos = quanto a cópia levou (REAL, segundos);
+    # velocidade_media_mbs    = MB/s média daquela cópia (tamanho ÷ duração).
+    # NULL em cartões antigos / Post-in (mostram "—" no relatório).
+    if "duracao_copia_segundos" not in colunas_existentes:
+        conn.execute("ALTER TABLE cartoes ADD COLUMN duracao_copia_segundos REAL")
+        conn.commit()
+    if "velocidade_media_mbs" not in colunas_existentes:
+        conn.execute("ALTER TABLE cartoes ADD COLUMN velocidade_media_mbs REAL")
         conn.commit()
 
 

@@ -109,6 +109,15 @@ try:
 except ImportError:
     BANCO_DISPONIVEL = False
 
+# Central de Entrada (Camada 1): importação de fontes externas de vocabulário
+# (planilha remota, etc.). Leitura mecânica, sem dependência nova. Se faltar, a
+# aba Programação segue funcionando — só o painel de importar fica indisponível.
+try:
+    import importador_fontes as imp
+    IMPORTADOR_DISPONIVEL = True
+except ImportError:
+    IMPORTADOR_DISPONIVEL = False
+
 # ── PAINEL DE CONTROLE (Camada 5) ─────────────────────────────────────────────
 # O painel_config já foi importado no topo (resolve as filas por projeto). Aqui
 # só garantimos o subprocess (usado pelos testes de conexão e criação de projeto).
@@ -338,11 +347,38 @@ def identificar_orfaos():
     agora = datetime.now()
     limite = timedelta(minutes=MINUTOS_ORFAO)
 
+    # O JSON da fila é o estado bruto e pode ficar PRESO: o material RECEBIDO pula o
+    # Matcher (que avançaria o JSON), então um Post já copiado/concluído continua
+    # marcado 'aguardando_material' no arquivo. O BANCO é a fonte de verdade — então
+    # cruzamos por id e escondemos do aviso de órfão o que o banco já resolveu.
+    # (Mesmo princípio dos filtros do painel de Operação — ver montar_painel.)
+    forms_resolvidos = set()
+    cartoes_concluidos = set()
+    if BANCO_DISPONIVEL:
+        try:
+            _conn_o = bd.obter_conexao()
+            forms_resolvidos = {
+                linha["id"] for linha in _conn_o.execute(
+                    "SELECT id FROM formularios "
+                    "WHERE status NOT IN ('aguardando_match', 'aguardando_material')"
+                ).fetchall()
+            }
+            cartoes_concluidos = {
+                linha["id"] for linha in _conn_o.execute(
+                    "SELECT id FROM cartoes WHERE status = 'concluido'"
+                ).fetchall()
+            }
+            _conn_o.close()
+        except Exception as _err_o:
+            logger.error(f"ORFAOS | Falha ao ler estado resolvido do banco | {_err_o}")
+
     materiais_orfaos = []
     forms_orfaos = []
 
-    # Verifica materiais aguardando formulário
+    # Verifica materiais aguardando formulário (esconde cartões já concluídos)
     for nome_arquivo, dados in ler_jsons_da_pasta(PASTA_FILA_MATERIAL, "aguardando_match"):
+        if dados.get("db_cartao_id") in cartoes_concluidos:
+            continue
         timestamp_str = dados.get("timestamp", "")
         try:
             timestamp_item = datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%S")
@@ -351,8 +387,10 @@ def identificar_orfaos():
         except ValueError:
             pass  # timestamp malformado — ignora
 
-    # Verifica formulários aguardando material
+    # Verifica formulários aguardando material (esconde Posts já resolvidos no banco)
     for nome_arquivo, dados in ler_jsons_da_pasta(PASTA_FILA_FORMS, "aguardando_material"):
+        if dados.get("db_formulario_id") in forms_resolvidos:
+            continue
         timestamp_str = dados.get("timestamp", "")
         try:
             timestamp_item = datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%S")
@@ -1460,7 +1498,9 @@ def painel():
 
     # ── Gera as linhas das tabelas ─────────────────────────────────────────────
     def linha_material(nome_arquivo, dados):
-        """Gera uma linha <tr> para um item de material."""
+        """Gera uma linha <tr> para um cartão aguardando ficha.
+        Ganha a coluna 'Ações' (s65): descartar + nota (post-it) — as duas que
+        saíram do Mural (telão só-leitura) e voltaram para a fila do Controle."""
         tempo = tempo_desde(dados.get("timestamp", ""))
         marca = dados.get("marca_camera") or "—"
         nome = dados.get("nome", "—")
@@ -1472,6 +1512,22 @@ def painel():
             f"<input type='radio' name='cartao_sel' value='{cid}' onclick='gmaMatchRefresh()'>"
             if cid is not None else "<span style='color:var(--6f-texto-3)'>—</span>"
         )
+        # Ações por cartão: descartar (lixo) + nota livre. Só com id no banco.
+        if cid is not None:
+            obs_atual = _esc(obs_por_cid.get(cid, ""))
+            acoes = (
+                "<div class='acoes-cartao'>"
+                f"<form action='/cartao/{cid}/descartar' method='post' "
+                "onsubmit=\"return confirm('Descartar este cartão? Ele sai das telas "
+                "e fica registrado no Log do sistema.');\">"
+                "<button type='submit' class='link-descartar'>descartar</button></form>"
+                f"<form action='/cartao/{cid}/observacao' method='post' class='nota-form'>"
+                f"<input type='text' name='observacao' class='nota-input' placeholder='nota…' value='{obs_atual}'>"
+                "<button type='submit' class='nota-salvar'>ok</button></form>"
+                "</div>"
+            )
+        else:
+            acoes = "<span style='color:var(--6f-texto-3)'>—</span>"
         return (
             f"<tr>"
             f"<td style='text-align:center'>{sel}</td>"
@@ -1479,6 +1535,7 @@ def painel():
             f"<td>{marca}</td>"
             f"<td>{origem}</td>"
             f"<td>{tempo}</td>"
+            f"<td>{acoes}</td>"
             f"</tr>"
         )
 
@@ -1716,14 +1773,48 @@ def painel():
             {blocos_candidatos}
         </div>"""
 
+    # Observações (post-it) atuais dos cartões da fila — para preencher a nota na
+    # linha (a nota voltou do Mural para o Controle na s65). Um lookup só, em lote.
+    obs_por_cid = {}
+    _cids_fila = [d.get("db_cartao_id") for _, d in material_aguardando
+                  if d.get("db_cartao_id") is not None]
+    if BANCO_DISPONIVEL and _cids_fila:
+        try:
+            _conn_obs = bd.obter_conexao()
+            _ph = ",".join("?" * len(_cids_fila))
+            for _r in _conn_obs.execute(
+                f"SELECT id, observacoes FROM cartoes WHERE id IN ({_ph})", _cids_fila):
+                if _r["observacoes"]:
+                    obs_por_cid[_r["id"]] = _r["observacoes"]
+            _conn_obs.close()
+        except Exception as _e:
+            logger.error(f"CONTROLE | Falha ao ler observações dos cartões | {_e}")
+
+    # Material recebido (sem cartão) PRONTO para copiar — atalho operacional trazido
+    # da aba Posts (s65): origem 'recebido' + recebido_pronto e ainda sem cópia.
+    recebidos_prontos = []
+    if BANCO_DISPONIVEL:
+        try:
+            _conn_rec = bd.obter_conexao()
+            recebidos_prontos = _conn_rec.execute("""
+                SELECT id, nome, tipo_material FROM formularios
+                WHERE origem_material='recebido' AND recebido_pronto=1
+                  AND status <> 'cancelado'
+                  AND NOT EXISTS (SELECT 1 FROM matches m WHERE m.formulario_id = formularios.id)
+                ORDER BY id DESC
+            """).fetchall()
+            _conn_rec.close()
+        except Exception as _e:
+            logger.error(f"CONTROLE | Falha ao ler recebidos prontos | {_e}")
+
     # Renderiza as linhas de cada seção
     linhas_material = "".join(
         linha_material(n, d) for n, d in material_aguardando
-    ) or "<tr><td colspan='4' style='color:var(--6f-texto-3);text-align:center'>Nenhum material aguardando</td></tr>"
+    ) or "<tr><td colspan='6' style='color:var(--6f-texto-3);text-align:center'>Nenhum cartão aguardando ficha</td></tr>"
 
     linhas_forms = "".join(
         linha_form(n, d) for n, d in forms_aguardando
-    ) or "<tr><td colspan='6' style='color:var(--6f-texto-3);text-align:center'>Nenhum Post aguardando</td></tr>"
+    ) or "<tr><td colspan='7' style='color:var(--6f-texto-3);text-align:center'>Nenhuma ficha aguardando cartão</td></tr>"
 
     linhas_matches = "".join(
         linha_match(n, d) for n, d in matches_recentes
@@ -1756,6 +1847,41 @@ def painel():
     # Posts cancelados (restaurar/excluir) migraram para o centro de controle na
     # Nova Ficha; a Operação não monta mais esse bloco.
 
+    # "Precisa de você" (empates a resolver) — só aparece quando há algum, para o
+    # Controle ficar limpo quando não há nada pendente (s65).
+    secao_confirmacao = ""
+    if aguardando_confirmacao:
+        secao_confirmacao = f"""
+        <div class="card card-full">
+            <div class="card-header header-confirmacao">
+                Precisa de você &mdash; empates a resolver
+                <span class="badge" style="background:var(--6f-bg-hover);color:var(--6f-aviso)">{len(aguardando_confirmacao)}</span>
+            </div>
+            <div style="padding:12px 16px">{blocos_confirmacao}</div>
+        </div>"""
+
+    # Seção "Material recebido — pronto para copiar" (atalho operacional, s65).
+    secao_recebidos = ""
+    if recebidos_prontos:
+        _linhas_rec = "".join(
+            "<div class='rec-item'>"
+            f"<span><strong>{_esc(r['nome'] or '—')}</strong>"
+            f"<span class='rec-tipo'>{_esc(r['tipo_material'] or 'recebido')}</span></span>"
+            f"<form action='/post/{r['id']}/copiar-recebido' method='post' "
+            "onsubmit=\"var b=this.querySelector('button');b.disabled=true;b.textContent='Copiando…';\">"
+            "<button type='submit' class='btn-copiar-rec'>Copiar agora</button></form>"
+            "</div>"
+            for r in recebidos_prontos
+        )
+        secao_recebidos = f"""
+        <div class="card card-full">
+            <div class="card-header header-recebidos">
+                Material recebido &mdash; pronto para copiar
+                <span class="badge">{len(recebidos_prontos)}</span>
+            </div>
+            <div style="padding:10px 16px">{_linhas_rec}</div>
+        </div>"""
+
     # ── Monta a página pelo molde da marca (_pagina) ───────────────────────────
     # A aba Match agora usa o MESMO molde das outras 7 telas: o _pagina cuida do
     # cabeçalho 6floor (∞ + título), das abas e das variáveis da marca. Aqui fica
@@ -1777,6 +1903,7 @@ def painel():
                                             border-radius:12px; padding:2px 10px; font-size:0.85em; font-weight:700; }
         .pag-operacao .header-matches     { border-bottom:2px solid var(--6f-teal); }
         .pag-operacao .header-confirmacao { border-bottom:2px solid var(--6f-aviso); }
+        .pag-operacao .header-recebidos   { border-bottom:2px solid var(--6f-teal); }
         .pag-operacao table { width:100%; border-collapse:collapse; font-size:0.88em; }
         .pag-operacao th { padding:8px 12px; text-align:left; background:var(--6f-bg-superficie);
                            border-bottom:1px solid var(--6f-borda); font-weight:600; color:var(--6f-texto-2);
@@ -1795,7 +1922,33 @@ def painel():
         .pag-operacao .btn-match { background:var(--6f-teal); color:var(--6f-bg-base); font-weight:700;
                                    letter-spacing:0.5px; padding:8px 28px; }
         .pag-operacao .btn-match:disabled { opacity:0.4; cursor:not-allowed; }
+        .pag-operacao .match-dica { font-size:0.8em; color:var(--6f-texto-3); margin-left:10px; }
         .pag-operacao .status-porteiro { font-size:0.85em; color:var(--6f-texto-2); }
+        /* Relatório de cópias: portal operacional (link teal discreto na barra) */
+        .pag-operacao .btn-relatorio { background:var(--6f-bg-elevado); color:var(--6f-teal-claro);
+                                       border:1px solid var(--6f-teal-forte); }
+        /* Ações por cartão na fila (descartar + nota) — voltaram do Mural (s65) */
+        .pag-operacao .acoes-cartao { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+        .pag-operacao .link-descartar { background:none; border:none; color:var(--6f-erro);
+                                        font-size:0.8em; cursor:pointer; padding:0; text-decoration:underline; }
+        .pag-operacao .nota-form { display:flex; gap:4px; align-items:center; }
+        .pag-operacao .nota-input { width:108px; background:var(--6f-bg-superficie);
+                                    border:1px solid var(--6f-borda); color:var(--6f-texto);
+                                    border-radius:5px; padding:3px 7px; font-size:0.8em; font-family:inherit; }
+        .pag-operacao .nota-input::placeholder { color:var(--6f-texto-3); }
+        .pag-operacao .nota-salvar { background:var(--6f-bg-hover); color:var(--6f-texto-2);
+                                     border:1px solid var(--6f-borda); border-radius:5px;
+                                     padding:3px 9px; font-size:0.78em; cursor:pointer; }
+        /* Seção de material recebido pronto pra copiar */
+        .pag-operacao .rec-item { display:flex; justify-content:space-between; align-items:center;
+                                  gap:12px; padding:8px 0; border-bottom:1px solid var(--6f-borda); }
+        .pag-operacao .rec-item:last-child { border-bottom:none; }
+        .pag-operacao .rec-tipo { color:var(--6f-texto-3); font-size:0.82em; margin-left:8px; }
+        .pag-operacao .btn-copiar-rec { background:var(--6f-teal); color:var(--6f-bg-base);
+                                        border:none; border-radius:6px; padding:6px 16px;
+                                        font-size:0.85em; font-weight:600; cursor:pointer; }
+        /* Matches recentes no rodapé = referência passiva, um degrau abaixo */
+        .pag-operacao .card-rodape-matches { margin-top:20px; }
     """
     head_extra = f"<style>{css_operacao}</style>" + """<script>
     // ── Match manual: liga o botão só quando há 1 cartão + 1 ficha escolhidos ──
@@ -1812,11 +1965,14 @@ def painel():
         document.getElementById('match-ficha-id').value = f.value;
         document.getElementById('form-match').submit();
     }
-    // Auto-refresh de 5s — PAUSA enquanto há uma bolinha marcada (match na mão em curso).
+    // Auto-refresh de 5s — PAUSA enquanto há uma bolinha marcada (match na mão em
+    // curso) OU enquanto o operador digita uma nota (não apaga o que está escrevendo).
     setTimeout(function() {
         var c = document.querySelector('input[name=cartao_sel]:checked');
         var f = document.querySelector('input[name=ficha_sel]:checked');
         if (c || f) return;
+        var a = document.activeElement;
+        if (a && a.tagName === 'INPUT' && a.type === 'text') return;  // digitando uma nota
         location.reload();
     }, 5000);
     </script>"""
@@ -1825,6 +1981,7 @@ def painel():
         {bloco_feedback}
         {bloco_orfaos}
 
+        <!-- 1 · Barra fixa: porteiro + Relatório de cópias + contadores -->
         <div class="controles">
             <form action="/porteiro/ativar" method="post" style="display:inline">
                 <button type="submit" class="btn btn-ativar">Ativar Porteiro</button>
@@ -1832,10 +1989,11 @@ def painel():
             <form action="/porteiro/desativar" method="post" style="display:inline">
                 <button type="submit" class="btn btn-desativar">Desativar Porteiro</button>
             </form>
+            <a href="/relatorio-copias" class="btn btn-relatorio">Relatório de cópias</a>
             <span class="status-porteiro">
                 Porteiro: <strong style="color:{porteiro_cor}">{porteiro_status_texto}</strong>
                 &nbsp;|&nbsp;
-                Material aguardando: <strong>{len(material_aguardando)}</strong>
+                Cartões aguardando: <strong>{len(material_aguardando)}</strong>
                 &nbsp;|&nbsp;
                 Posts aguardando: <strong>{len(forms_aguardando)}</strong>
                 &nbsp;|&nbsp;
@@ -1843,13 +2001,16 @@ def painel():
             </span>
         </div>
 
-        <!-- Botão do match manual (último recurso do princípio nº 3): aparece sempre, -->
-        <!-- mas só LIGA quando há 1 cartão (esq.) + 1 Post (dir.) marcados. -->
+        <!-- 2 · Precisa de você: empates a resolver (só aparece quando há algum) -->
+        {secao_confirmacao}
+
+        <!-- 3 · Parear na mão: botão MATCH (liga com 1 cartão + 1 ficha) + as duas filas -->
         <div class="match-acao">
             <button type="button" id="btn-match" class="btn btn-match" disabled
                     onclick="gmaMatchSubmit()">
                 MATCH
             </button>
+            <span class="match-dica">escolha 1 cartão e 1 ficha para parear na mão</span>
         </div>
         <form id="form-match" action="/match-manual/confirmar" method="post" style="display:none">
             <input type="hidden" name="cartao_id" id="match-cartao-id">
@@ -1857,81 +2018,181 @@ def painel():
         </form>
 
         <div class="grid">
-            <!-- Bloco: Material aguardando formulário -->
             <div class="card">
                 <div class="card-header header-material">
-                    Material aguardando Post
+                    Cartões sem ficha
                     <span class="badge">{len(material_aguardando)}</span>
                 </div>
                 <table>
                     <tr>
                         <th style="width:34px"></th>
                         <th>Volume / Item</th>
-                        <th>Camera</th>
+                        <th>Câmera</th>
                         <th>Origem</th>
-                        <th>Ha quanto tempo</th>
+                        <th>Há quanto tempo</th>
+                        <th>Ações</th>
                     </tr>
                     {linhas_material}
                 </table>
             </div>
 
-            <!-- Bloco: Formulários aguardando material -->
             <div class="card">
                 <div class="card-header header-forms">
-                    Posts aguardando material
+                    Fichas sem cartão
                     <span class="badge">{len(forms_aguardando)}</span>
                 </div>
                 <table>
                     <tr>
                         <th style="width:34px"></th>
                         <th>Nome</th>
-                        <th>Camera</th>
-                        <th>Conteudo</th>
+                        <th>Câmera</th>
+                        <th>Conteúdo</th>
                         <th>Prioridade</th>
                         <th>Operador</th>
-                        <th>Ha quanto tempo</th>
+                        <th>Há quanto tempo</th>
                     </tr>
                     {linhas_forms}
                 </table>
             </div>
+        </div>
 
-            <!-- Bloco: Matches recentes (ocupa largura total) -->
-            <div class="card card-full">
-                <div class="card-header header-matches">
-                    Matches recentes (ultimos 10)
-                    <span class="badge">{len(matches_recentes)}</span>
-                </div>
-                <table>
-                    <tr>
-                        <th>Volume / Item</th>
-                        <th>Camera</th>
-                        <th>ID do Post</th>
-                        <th>Recebido ha</th>
-                    </tr>
-                    {linhas_matches}
-                </table>
-            </div>
+        <!-- 4 · Material recebido pronto para copiar (só aparece quando há algum) -->
+        {secao_recebidos}
 
-            <!-- Bloco: Aguardando confirmacao humana (match ambiguo — ocupa largura total) -->
-            <!-- O Matcher nao conseguiu dar match automaticamente porque havia dois ou mais -->
-            <!-- candidatos com pontuacoes muito proximas. O operador escolhe aqui.        -->
-            <div class="card card-full">
-                <div class="card-header header-confirmacao">
-                    Aguardando confirmacao
-                    <span class="badge" style="background:var(--6f-bg-hover);color:var(--6f-aviso)">{len(aguardando_confirmacao)}</span>
-                </div>
-                <div style="padding:12px 16px">
-                    {blocos_confirmacao}
-                </div>
+        <!-- 5 · Rodapé: matches recentes — referência passiva (o fluxo vivo é o Mural) -->
+        <div class="card card-full card-rodape-matches">
+            <div class="card-header header-matches">
+                Matches recentes (últimos 10)
+                <span class="badge">{len(matches_recentes)}</span>
             </div>
+            <table>
+                <tr>
+                    <th>Volume / Item</th>
+                    <th>Câmera</th>
+                    <th>ID do Post</th>
+                    <th>Recebido há</th>
+                </tr>
+                {linhas_matches}
+            </table>
         </div>
 
         <p class="rodape">
-            GMA Camada 1 &mdash; Atualiza automaticamente a cada 5 segundos &mdash;
+            GMA &mdash; Controle &mdash; Atualiza automaticamente a cada 5 segundos &mdash;
             <a href="/status" style="color:var(--6f-texto-3)">JSON de status</a>
         </p>"""
 
-    return _pagina("Match", "operacao", corpo, head_extra), 200, {"Content-Type": "text/html; charset=utf-8"}
+    return _pagina("Controle", "operacao", corpo, head_extra), 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
+def _fmt_duracao_relatorio(segundos):
+    """Segundos → texto legível: '38 s' · '2 min 47 s' · '1 h 03 min'. '—' se vazio."""
+    try:
+        s = int(round(float(segundos)))
+    except (TypeError, ValueError):
+        return "—"
+    if s <= 0:
+        return "—"
+    if s < 60:
+        return f"{s} s"
+    if s < 3600:
+        return f"{s // 60} min {s % 60:02d} s"
+    return f"{s // 3600} h {(s % 3600) // 60:02d} min"
+
+
+@app.route("/relatorio-copias", methods=["GET"])
+def relatorio_copias():
+    """
+    Relatório de cópias (Camada 2, s65): histórico OPERACIONAL de cada cópia já
+    feita — tempo total e MB/s média por cartão. Vive DENTRO do Controle (mundo do
+    operador); NÃO entra na Entrega (que é só do editor). É a "Fatia 2 da
+    velocidade": a Fatia 1 (ao vivo) está no Mural. Só na base (o portão barra remoto).
+    """
+    if not BANCO_DISPONIVEL:
+        corpo = "<div class='relatorio'><a href='/' class='voltar'>← Voltar ao Controle</a>" \
+                "<p class='vazio'>Banco de dados indisponível.</p></div>"
+        return _pagina("Relatório de cópias", "operacao", corpo), 200, {"Content-Type": "text/html; charset=utf-8"}
+
+    rows = []
+    try:
+        conn = bd.obter_conexao()
+        rows = conn.execute("""
+            SELECT c.numero_cartao, c.volume, c.tamanho_transferido_bytes AS tam,
+                   c.total_arquivos_transferidos AS narq,
+                   c.duracao_copia_segundos AS dur, c.velocidade_media_mbs AS vel,
+                   c.transferencia_timestamp_fim AS quando, c.origem_material AS origem,
+                   f.nome AS post_nome
+            FROM cartoes c
+            LEFT JOIN matches m ON m.id = (
+                SELECT id FROM matches WHERE cartao_id = c.id ORDER BY id DESC LIMIT 1)
+            LEFT JOIN formularios f ON f.id = m.formulario_id
+            WHERE c.duracao_copia_segundos IS NOT NULL
+            ORDER BY c.transferencia_timestamp_fim DESC, c.id DESC
+        """).fetchall()
+        conn.close()
+    except Exception as erro:
+        logger.error(f"RELATORIO COPIAS | Erro ao ler | {erro}")
+        rows = []
+
+    linhas, total_bytes, soma_vel, n_vel = [], 0, 0.0, 0
+    for r in rows:
+        nome = (r["post_nome"] or "").strip() or (r["numero_cartao"] or r["volume"] or "—")
+        tam = r["tam"] or 0
+        total_bytes += tam
+        if r["vel"]:
+            soma_vel += r["vel"]; n_vel += 1
+        origem_selo = " <span class='rel-origem'>recebido</span>" if (r["origem"] == "recebido") else ""
+        vel_txt = f"{round(r['vel'])} MB/s" if r["vel"] else "—"
+        quando = (r["quando"] or "").replace("T", " ")[:16] or "—"
+        linhas.append(
+            "<tr>"
+            f"<td>{_esc(nome)}{origem_selo}</td>"
+            f"<td class='mono'>{_esc(r['numero_cartao'] or '—')}</td>"
+            f"<td>{bd._fmt_tamanho_planilha(tam) if tam else '—'}</td>"
+            f"<td>{r['narq'] if r['narq'] else '—'}</td>"
+            f"<td>{_fmt_duracao_relatorio(r['dur'])}</td>"
+            f"<td class='rel-vel'>{vel_txt}</td>"
+            f"<td>{_esc(quando)}</td>"
+            "</tr>"
+        )
+    corpo_linhas = "".join(linhas) or (
+        "<tr><td colspan='7' style='text-align:center;color:var(--6f-texto-3);padding:18px'>"
+        "Nenhuma cópia registrada ainda. As cópias passam a aparecer aqui assim que "
+        "rodarem (cartões antigos, copiados antes desta versão, não têm o tempo gravado)."
+        "</td></tr>"
+    )
+    media_geral = f"{round(soma_vel / n_vel)} MB/s" if n_vel else "—"
+    resumo = (f"{len(rows)} cópia(s) &middot; "
+              f"{bd._fmt_tamanho_planilha(total_bytes) if total_bytes else '—'} no total "
+              f"&middot; velocidade média {media_geral}")
+
+    css = """
+        .relatorio .voltar { color:var(--6f-teal-claro); text-decoration:none; font-size:0.9em; }
+        .relatorio .resumo { color:var(--6f-texto-2); font-size:0.92em; margin:12px 0 18px; }
+        .relatorio table { width:100%; border-collapse:collapse; font-size:0.88em;
+                           background:var(--6f-bg-elevado); border:1px solid var(--6f-borda);
+                           border-radius:8px; overflow:hidden; }
+        .relatorio th { text-align:left; padding:9px 12px; background:var(--6f-bg-superficie);
+                        color:var(--6f-texto-2); text-transform:uppercase; font-size:0.78em;
+                        letter-spacing:0.4px; border-bottom:1px solid var(--6f-borda); }
+        .relatorio td { padding:9px 12px; border-bottom:1px solid var(--6f-borda); color:var(--6f-texto); }
+        .relatorio tr:last-child td { border-bottom:none; }
+        .relatorio tr:hover td { background:var(--6f-bg-hover); }
+        .relatorio .mono { font-family:ui-monospace,Menlo,monospace; color:var(--6f-texto-2); }
+        .relatorio .rel-vel { color:var(--6f-teal-claro); font-weight:500; font-variant-numeric:tabular-nums; }
+        .relatorio .rel-origem { color:var(--6f-texto-3); font-size:0.82em; }
+    """
+    corpo = f"""
+        <div class="relatorio">
+        <a href="/" class="voltar">← Voltar ao Controle</a>
+        <p class="resumo">{resumo}</p>
+        <table>
+            <tr><th>Cartão / Pessoa</th><th>Nº cartão</th><th>Tamanho</th><th>Arquivos</th>
+                <th>Duração</th><th>MB/s média</th><th>Quando</th></tr>
+            {corpo_linhas}
+        </table>
+        </div>"""
+    head_extra = f"<style>{css}</style>"
+    return _pagina("Relatório de cópias", "operacao", corpo, head_extra), 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1965,8 +2226,8 @@ CSS_ABAS = """
 def barra_abas(ativa):
     """Barra de navegação entre as telas.
     'ativa' = ficha|operacao|kanban|planilha|molde|profissionais|listas|painel
-    Chave interna → rótulo visível (s57): ficha→Posts · operacao→Match ·
-    kanban→Mural · planilha→Entrega · profissionais→Cadastros ·
+    Chave interna → rótulo visível (s57; operacao→Controle na s65): ficha→Posts ·
+    operacao→Controle · kanban→Mural · planilha→Entrega · profissionais→Cadastros ·
     listas→Programação · painel→Sistema. As URLs/chaves seguem as antigas DE
     PROPÓSITO (risco zero) — só o rótulo mudou."""
     def classe(nome):
@@ -1974,7 +2235,7 @@ def barra_abas(ativa):
     return f"""
     <nav class="abas">
         <a class="{classe('ficha')}" href="/ficha">Posts</a>
-        <a class="{classe('operacao')}" href="/">Match</a>
+        <a class="{classe('operacao')}" href="/">Controle</a>
         <a class="{classe('kanban')}" href="/kanban">Mural</a>
         <a class="{classe('planilha')}" href="/planilha">Entrega</a>
         <a class="{classe('profissionais')}" href="/profissionais">Cadastros</a>
@@ -2038,36 +2299,36 @@ def _garantir_molde():
 
 
 # ── COLUNAS DO KANBAN ─────────────────────────────────────────────────────────
-COLUNAS_KANBAN = [
-    ("detectado",  "Detectado",  "#6c757d"),
-    ("match",      "Match",      "#2196f3"),
-    ("copiando",   "Copiando",   "#f59e0b"),
-    ("verificado", "Verificado", "#0ea5e9"),
-    ("concluido",  "Concluído",  "#27ae60"),
+# As três ETAPAS do Mural — telão de acompanhamento POR POST (s65). Antes era um
+# Kanban de 5 colunas POR CARTÃO; virou um telão de 3 etapas, só leitura, pensado
+# para a segunda tela do set entender de longe o que está acontecendo:
+#   Chegando — ficha recebida sem cartão E/OU cartão detectado sem ficha (o que vem)
+#   Copiando — em transferência, com barra + MB/s + tempo restante ao vivo
+#   Copiado  — verificado/concluído (o que já está seguro)
+# (chave, rótulo, cor do topo)
+ETAPAS_MURAL = [
+    ("chegando", "Chegando", "var(--6f-texto-2)"),
+    ("copiando", "Copiando", "var(--6f-aviso)"),
+    ("copiado",  "Copiado",  "var(--6f-teal)"),
 ]
 
-# De cada status real do banco para a coluna onde o card deve aparecer.
-STATUS_PARA_COLUNA = {
-    "detectado":              "detectado",
-    "aguardando_match":       "detectado",
-    # Cartão sem mídia (conteúdo trivial — config/sistema, ex.: XMLs de framelines ARRI):
-    # aparece em "Detectado" como fim de linha explícito, badge laranja "sem mídia — ignorado".
-    "sem_midia":              "detectado",
-    # Cartão com arquivos não reconhecidos como mídia mas de tamanho suspeito:
-    # pode ser footage num formato não mapeado na lista EXTENSOES. Aparece em "Detectado"
-    # com badge vermelho "verificar — arquivos não reconhecidos" para o operador conferir.
-    # NÃO entra no Matcher nem na Transferência automática.
-    "revisar":                "detectado",
-    "matched":                "match",
-    "aguardando_confirmacao": "match",
+# De cada status real do banco para a ETAPA do Mural. Status FORA deste mapa
+# (sem_midia, descartado, ausente) NÃO aparecem no telão — são assunto do Controle
+# (a ação do operador), não do acompanhamento público.
+STATUS_PARA_ETAPA = {
+    "detectado":              "chegando",
+    "aguardando_match":       "chegando",
+    "revisar":                "chegando",   # arquivos não reconhecidos — chega com alerta
+    "matched":                "chegando",   # pareado, a cópia ainda não começou
+    "aguardando_confirmacao": "chegando",
     "copiando":               "copiando",
     "falhou":                 "copiando",
-    "transferencia_falhou":   "copiando",   # falha de cópia: fica em "Copiando" com badge vermelho
-    "transferencia_ok":       "verificado",
-    "verificado_parashoot":   "verificado",
-    "verificacao_falhou":     "verificado",
-    "erase_falhou":           "verificado",
-    "concluido":              "concluido",
+    "transferencia_falhou":   "copiando",   # falha de cópia: fica em "Copiando" com alerta vermelho
+    "transferencia_ok":       "copiado",
+    "verificado_parashoot":   "copiado",
+    "verificacao_falhou":     "copiado",
+    "erase_falhou":           "copiado",
+    "concluido":              "copiado",
 }
 
 
@@ -2098,44 +2359,35 @@ def _pagina(titulo, aba, corpo, head_extra=""):
         main {{ padding:20px 24px; max-width:1320px; margin:0 auto; }}
         .legenda {{ color:#6c757d; font-size:0.9em; margin-bottom:16px; line-height:1.5; }}
         .vazio, .coluna-vazia {{ color:#adb5bd; text-align:center; padding:18px; font-size:0.85em; }}
-        /* ── Kanban ── */
-        .kanban {{ display:grid; grid-template-columns:repeat(5,1fr); gap:12px; align-items:start; }}
-        .coluna {{ background:#e9edf2; border-radius:8px; overflow:hidden; }}
-        .coluna-head {{ padding:10px 12px; font-weight:700; font-size:0.85em; background:#fff;
+        /* ── Mural (telão por Post — 3 etapas, só leitura) ── */
+        .kanban {{ display:grid; grid-template-columns:repeat(3,1fr); gap:14px; align-items:start; }}
+        .coluna {{ background:#e9edf2; border-radius:10px; overflow:hidden; }}
+        .coluna-head {{ padding:11px 14px; font-weight:500; font-size:0.92em; background:#fff;
                         display:flex; justify-content:space-between; align-items:center; }}
         .contador {{ background:#e9ecef; color:#495057; border-radius:12px;
                      padding:1px 9px; font-size:0.9em; }}
-        .coluna-corpo {{ padding:10px; display:flex; flex-direction:column; gap:10px; min-height:40px; }}
-        /* Coluna "Concluído" — barras agrupadas por dia (estilo ShotPut Pro) */
-        .dia-grupo {{ margin-bottom:8px; }}
-        .dia-head {{ cursor:pointer; font-size:0.82em; font-weight:600; color:#495057;
-                     padding:4px 2px; list-style:none; user-select:none; }}
-        .dia-head::-webkit-details-marker {{ display:none; }}
-        .dia-head::before {{ content:'\\25B8'; display:inline-block; margin-right:6px; color:#adb5bd; }}
-        .dia-grupo[open] > .dia-head::before {{ content:'\\25BE'; }}
-        .dia-cont {{ color:#adb5bd; font-weight:400; margin-left:6px; }}
-        .dia-corpo {{ display:flex; flex-direction:column; gap:8px; padding:6px 0 2px; }}
-        .bar-concluido {{ background:#d6f0d8; border:1px solid #b6e0ba; border-radius:8px; padding:10px 12px; }}
-        .bar-topo {{ display:flex; justify-content:space-between; align-items:center; gap:8px; }}
-        .bar-titulo {{ font-weight:700; color:#1a1a2e; font-size:0.95em; }}
-        .bar-tipo {{ font-size:0.7em; font-weight:700; color:#2e6b32; background:#bfe6c3;
-                     border-radius:10px; padding:1px 8px; flex:none; white-space:nowrap; }}
-        .bar-tam {{ color:#5f6b62; font-size:0.82em; margin-top:2px; }}
-        .bar-rodape {{ color:#5f6b62; font-size:0.82em; margin-top:6px; }}
-        .card-kanban {{ background:#fff; border-radius:6px; box-shadow:0 1px 3px rgba(0,0,0,0.1); padding:10px; }}
-        .card-titulo {{ font-weight:700; font-size:0.95em; }}
-        .card-meta {{ color:#6c757d; font-size:0.82em; margin:3px 0 7px; }}
-        .card-badges {{ display:flex; gap:5px; flex-wrap:wrap; margin-bottom:8px; }}
-        .badge-status {{ color:#fff; border-radius:10px; padding:1px 8px; font-size:0.72em; font-weight:700; }}
-        .selo-alerta {{ background:#f59e0b; color:#fff; border-radius:10px; padding:1px 8px; font-size:0.72em; font-weight:700; }}
-        .postit-form {{ display:flex; flex-direction:column; gap:5px; }}
-        .postit {{ width:100%; min-height:46px; border:1px solid #ffe08a; background:#fffbea;
-                   border-radius:5px; padding:6px; font-family:inherit; font-size:0.82em; resize:vertical; }}
-        .btn-postit {{ align-self:flex-end; background:#27ae60; color:#fff; border:none;
-                       border-radius:5px; padding:4px 14px; font-weight:600; font-size:0.8em; cursor:pointer; }}
-        .descartar-form {{ margin-top:6px; text-align:right; }}
-        .btn-descartar {{ background:none; border:none; color:#c0392b; font-size:0.74em;
-                          cursor:pointer; padding:0; text-decoration:underline; }}
+        .coluna-corpo {{ padding:12px; display:flex; flex-direction:column; gap:10px; min-height:40px; }}
+        .mais-copiados {{ text-align:center; font-size:0.82em; color:#adb5bd; padding:6px; }}
+        /* Azulejo do Mural — uma captação (Post) */
+        .card-kanban {{ background:#fff; border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,0.1); padding:12px; }}
+        .card-kanban.cru {{ border:1px dashed #ced4da; box-shadow:none; }}
+        .card-row {{ display:flex; justify-content:space-between; align-items:center; gap:8px; }}
+        .card-titulo {{ font-weight:500; font-size:1.05em; }}
+        .card-meta {{ color:#6c757d; font-size:0.84em; margin-top:3px; }}
+        .card-status {{ font-size:0.8em; color:#6c757d; margin-top:8px; }}
+        .card-status.alerta {{ color:#9a6a00; }}
+        .card-status.erro {{ color:#c0392b; }}
+        /* Selo no canto do título (etapa Copiado) */
+        .card-tag {{ font-size:0.72em; font-weight:500; border-radius:10px; padding:1px 9px;
+                     flex:none; white-space:nowrap; }}
+        .card-tag.ok {{ color:#0f6e56; background:#9fe1cb; }}
+        .card-tag.set {{ color:#854f0b; background:#fac775; }}
+        /* Barra de cópia AO VIVO dentro do azulejo (etapa Copiando) */
+        .card-bar {{ height:8px; background:#e9ecef; border-radius:99px; overflow:hidden; margin:11px 0 7px; }}
+        .card-fill {{ height:100%; width:0%; background:#1D9E75; transition:width .4s ease; }}
+        .card-vivo {{ display:flex; justify-content:space-between; align-items:baseline; gap:8px; }}
+        .card-vel {{ font-weight:500; font-size:0.92em; color:#1D9E75; font-variant-numeric:tabular-nums; }}
+        .card-eta {{ font-size:0.82em; color:#6c757d; }}
         /* ── Planilha ── */
         .filtro {{ width:100%; max-width:360px; padding:8px 12px; border:1px solid #ced4da;
                    border-radius:6px; margin-bottom:14px; font-size:0.9em; }}
@@ -2153,30 +2405,27 @@ def _pagina(titulo, aba, corpo, head_extra=""):
            própria fatia. Overrides depois das regras claras p/ vencer por ordem. */
         body.pag-kanban {{ background:var(--6f-bg-base); color:var(--6f-texto); }}
         .pag-kanban .legenda {{ color:var(--6f-texto-2); }}
-        .pag-kanban .vazio, .pag-kanban .coluna-vazia {{ color:var(--6f-texto-3); }}
+        .pag-kanban .vazio, .pag-kanban .coluna-vazia, .pag-kanban .mais-copiados {{ color:var(--6f-texto-3); }}
         .pag-kanban .coluna {{ background:var(--6f-bg-superficie); }}
         .pag-kanban .coluna-head {{ background:var(--6f-bg-elevado); color:var(--6f-texto);
                                     border-bottom:1px solid var(--6f-borda); }}
         .pag-kanban .contador {{ background:var(--6f-bg-hover); color:var(--6f-texto-2); }}
-        .pag-kanban .dia-head {{ color:var(--6f-texto-2); }}
-        .pag-kanban .dia-head::before {{ color:var(--6f-texto-3); }}
-        .pag-kanban .dia-cont {{ color:var(--6f-texto-3); }}
         .pag-kanban .card-kanban {{ background:var(--6f-bg-elevado);
                                     border:1px solid var(--6f-borda); box-shadow:none; }}
+        .pag-kanban .card-kanban.cru {{ border:1px dashed var(--6f-borda); background:var(--6f-bg-superficie); }}
         .pag-kanban .card-titulo {{ color:var(--6f-texto); }}
         .pag-kanban .card-meta {{ color:var(--6f-texto-2); }}
-        /* Concluído = mundo de sucesso → tinta teal apagada, não verde claro */
-        .pag-kanban .bar-concluido {{ background:var(--6f-teal-trilho);
-                                      border:1px solid #2f5a45; }}
-        .pag-kanban .bar-titulo {{ color:var(--6f-texto); }}
-        .pag-kanban .bar-tipo {{ color:var(--6f-bg-base); background:var(--6f-teal); }}
-        .pag-kanban .bar-tam, .pag-kanban .bar-rodape {{ color:var(--6f-texto-2); }}
-        /* Post-it: nota discreta no escuro (nada de amarelo gritante) */
-        .pag-kanban .postit {{ background:var(--6f-bg-superficie); border:1px solid var(--6f-borda);
-                               color:var(--6f-texto); }}
-        .pag-kanban .postit::placeholder {{ color:var(--6f-texto-3); }}
-        .pag-kanban .btn-postit {{ background:var(--6f-teal); color:var(--6f-bg-base); }}
-        .pag-kanban .btn-descartar {{ color:var(--6f-erro); }}
+        .pag-kanban .card-status {{ color:var(--6f-texto-2); }}
+        .pag-kanban .card-status.alerta {{ color:var(--6f-aviso); }}
+        .pag-kanban .card-status.erro {{ color:var(--6f-erro); }}
+        /* Selos do Copiado: liberado = teal apagado; cartão no set = âmbar apagado */
+        .pag-kanban .card-tag.ok {{ color:var(--6f-teal-claro); background:var(--6f-teal-trilho); }}
+        .pag-kanban .card-tag.set {{ color:var(--6f-aviso); background:#3a2e12; }}
+        /* Barra de cópia ao vivo no azulejo */
+        .pag-kanban .card-bar {{ background:var(--6f-teal-trilho); }}
+        .pag-kanban .card-fill {{ background:var(--6f-teal); }}
+        .pag-kanban .card-vel {{ color:var(--6f-teal-claro); }}
+        .pag-kanban .card-eta {{ color:var(--6f-texto-2); }}
 
         /* ── TEMA ESCURO 6floor — escopado à tela Entrega (Planilha) ──
            Mesmo padrão do Kanban: só vale em body.pag-planilha; as demais telas
@@ -2244,188 +2493,101 @@ def _pagina(titulo, aba, corpo, head_extra=""):
 </html>"""
 
 
-def _fmt_data_extenso(iso):
-    """'2026-05-31' -> '31 de maio de 2026' (cabeçalho de dia, estilo ShotPut Pro)."""
-    from datetime import datetime
-    meses = ["janeiro", "fevereiro", "março", "abril", "maio", "junho",
-             "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
-    try:
-        dt = datetime.strptime((iso or "")[:10], "%Y-%m-%d")
-        return f"{dt.day} de {meses[dt.month - 1]} de {dt.year}"
-    except Exception:
-        return "Sem data"
-
-
-def _fmt_data_curta(iso):
-    """'2026-05-31' -> '31/05/2026'."""
-    from datetime import datetime
-    try:
-        return datetime.strptime((iso or "")[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
-    except Exception:
-        return "—"
-
-
-def _tipos_post(row):
-    """
-    Tipos de material ANUNCIADOS no Post (foto/vídeo/áudio). Vêm dos booleanos do
-    formulário (tem_foto/tem_audio/tem_video) que o JOIN do Kanban trouxe; se a
-    ficha não veio (cartão sem match), cai para o tipo_material detectado no cartão.
-    Retorna uma lista, ex.: ["Vídeo"] ou ["Foto", "Vídeo"].
-    """
+def _tipo_post(item):
+    """Rótulo curto do tipo de material do item do Mural (vídeo/áudio/foto).
+    Prefere os booleanos anunciados na ficha; sem ficha, cai no tipo_material."""
     tipos = []
-    def _campo(nome):
-        try:
-            return row[nome]
-        except (KeyError, IndexError):
-            return None
-    if _campo("tem_video"):
-        tipos.append("Vídeo")
-    if _campo("tem_foto"):
-        tipos.append("Foto")
-    if _campo("tem_audio"):
-        tipos.append("Áudio")
-    if not tipos:
-        mapa = {"VIDEO": "Vídeo", "FOTO": "Foto", "AUDIO": "Áudio"}
-        tm = (row["tipo_material"] or "").strip().upper()
-        if tm in mapa:
-            tipos.append(mapa[tm])
-    return tipos
+    if item.get("tem_video"):
+        tipos.append("vídeo")
+    if item.get("tem_audio"):
+        tipos.append("áudio")
+    if item.get("tem_foto"):
+        tipos.append("foto")
+    if tipos:
+        return " + ".join(tipos)
+    return (item.get("tipo_material") or "").strip() or ""
 
 
-def _data_logagem(cartao):
-    """
-    Data em que o material foi LOGADO no sistema — a data que deve aparecer (e
-    agrupar) na coluna "Concluído".
-
-    Usa SEMPRE um carimbo do relógio do sistema, na ordem: fim da cópia →
-    início da cópia → criação do registro. NUNCA usa data_inicio/data_fim, que
-    são mtimes dos arquivos do cartão: com o relógio da câmera errado (ex.: GoPro
-    travada em 2016) eles mentem a data e jogavam o Post em "01/01/2016". A pasta
-    de destino já acertava porque usa a data informada na ficha; a coluna não.
-    """
-    def _campo(nome):
-        try:
-            return cartao[nome]
-        except (KeyError, IndexError):
-            return None
-    return (_campo("transferencia_timestamp_fim")
-            or _campo("transferencia_timestamp_inicio")
-            or _campo("criado_em"))
+def _nome_post(item):
+    """O nome HUMANO do item (o telão é POR POST, não por cartão).
+    Ordem: nome da ficha → raiz do profissional → raiz do número do cartão.
+    Devolve None quando é um cartão CRU (detectado sem ficha) — aí o telão mostra
+    "Cartão detectado" no lugar da pessoa."""
+    nome = (item.get("post_nome") or item.get("prof_raiz") or "").strip()
+    if nome:
+        return nome
+    num = (item.get("numero_cartao") or "").strip()
+    if num:
+        return num.rsplit("_", 1)[0]   # JOAO_003 → JOAO
+    return None
 
 
-def _bar_concluido(cartao):
-    """
-    Barra compacta de um Post CONCLUÍDO (cartão ejetado), no estilo da barra
-    lateral do ShotPut Pro: NOME_NNN + tipo (foto/vídeo/áudio) + tamanho · nº de
-    arquivos + "Concluído | DD/MM/AAAA". O cartão já saiu do fluxo operacional;
-    aqui é só o registro do que foi entregue.
-    """
-    titulo = cartao["numero_cartao"] or cartao["volume"] or f"Cartão {cartao['id']}"
-    tam_bytes = cartao["tamanho_transferido_bytes"] or cartao["tamanho_total_bytes_detectado"]
-    tamanho = bd._fmt_tamanho_planilha(tam_bytes) if tam_bytes else "—"
-    n_arq = cartao["total_arquivos_transferidos"] or cartao["total_arquivos_detectados"]
-    info_tam = tamanho + (f" · {n_arq} arq." if n_arq else "")
-    # Data da LOGAGEM (relógio do sistema), não o mtime dos arquivos (#4 s39).
-    data = _data_logagem(cartao)
-    tipos = _tipos_post(cartao)
-    tipo_html = (f"<span class='bar-tipo'>{_esc(' · '.join(tipos))}</span>"
-                 if tipos else "")
+def _tile_mural(item):
+    """HTML de um azulejo do Mural (telão por Post). Só leitura — zero botão.
+    A cara muda conforme a etapa: Chegando (o que vem), Copiando (barra ao vivo)
+    ou Copiado (o que já está seguro)."""
+    status = item["status"]
+    etapa = "chegando" if item["fonte"] == "postin" else STATUS_PARA_ETAPA.get(status, "chegando")
+    nome = _nome_post(item)
+    tipo = _tipo_post(item)
+    num = (item.get("numero_cartao") or "").strip()
+
+    # Título = a PESSOA; cartão cru (sem ficha) mostra "Cartão detectado".
+    cru = nome is None
+    titulo = "Cartão detectado" if cru else _esc(nome)
+
+    # Subtítulo: tipo · número-do-cartão (ou marca da câmera, se ainda sem número).
+    sub_partes = [tipo]
+    if num:
+        sub_partes.append(_esc(num))
+    elif item.get("marca_camera"):
+        sub_partes.append(_esc(item["marca_camera"]))
+    sub = " · ".join(p for p in sub_partes if p) or "—"
+
+    classe_extra = " cru" if cru else ""
+    tag = ""        # selo no canto direito do título (Copiado)
+    corpo = ""      # linha de status / barra ao vivo
+
+    if etapa == "chegando":
+        if item["fonte"] == "postin":
+            corpo = "<div class='card-status'>ficha recebida · aguarda cartão</div>"
+        elif status == "revisar":
+            corpo = "<div class='card-status alerta'>verificar — arquivos não reconhecidos</div>"
+        elif cru:
+            corpo = "<div class='card-status'>cartão detectado · aguarda ficha</div>"
+        else:
+            corpo = "<div class='card-status'>pronto · vai copiar</div>"
+
+    elif etapa == "copiando":
+        if "falh" in status:
+            corpo = "<div class='card-status erro'>falha na cópia — verifique</div>"
+        else:
+            # Barra preenchida AO VIVO pelo poll (casada pelo data-job = número).
+            corpo = ("<div class='card-bar'><div class='card-fill' style='width:0%'></div></div>"
+                     "<div class='card-vivo'><span class='card-vel'>copiando…</span>"
+                     "<span class='card-eta'></span></div>")
+
+    else:  # copiado
+        if "falh" in status:
+            tag = "<span class='card-tag set'>conferir</span>"
+        elif status == "concluido":
+            tag = "<span class='card-tag ok'>liberado</span>"
+        else:
+            tag = "<span class='card-tag set'>cartão no set</span>"
+        tam = bd._fmt_tamanho_planilha(item.get("tamanho_bytes")) if item.get("tamanho_bytes") else ""
+        n = item.get("n_arquivos")
+        info = " · ".join(p for p in [tam, (f"{n} arquivos" if n else ""), "MD5 ok"] if p)
+        corpo = f"<div class='card-status'>{_esc(info)}</div>"
+
+    data_job = f" data-job=\"{_esc(num)}\"" if (etapa == 'copiando' and num) else ""
     return f"""
-        <div class="bar-concluido">
-            <div class="bar-topo">
-                <span class="bar-titulo">{_esc(titulo)}</span>
-                {tipo_html}
+        <div class="card-kanban{classe_extra}"{data_job}>
+            <div class="card-row">
+                <span class="card-titulo">{titulo}</span>
+                {tag}
             </div>
-            <div class="bar-tam">{_esc(info_tam)}</div>
-            <div class="bar-rodape">Concluído | {_esc(_fmt_data_curta(data))}</div>
-        </div>"""
-
-
-def _coluna_concluido_corpo(cards):
-    """
-    Corpo da coluna "Concluído": agrupa os Posts por dia DA LOGAGEM (relógio do
-    sistema — ver _data_logagem) em blocos recolhíveis (<details> nativo, sem JS),
-    mais recentes no topo — exatamente como a barra lateral do ShotPut Pro.
-    """
-    if not cards:
-        return "<p class='coluna-vazia'>—</p>"
-    grupos = {}
-    for c in cards:
-        dia = (_data_logagem(c) or "")[:10]
-        grupos.setdefault(dia, []).append(c)
-    # Dias em ordem decrescente; "sem data" (string vazia) vai para o fim
-    dias_ord = sorted(grupos.keys(), key=lambda d: d or "0000-00-00", reverse=True)
-    html = ""
-    for dia in dias_ord:
-        barras = "".join(_bar_concluido(c) for c in grupos[dia])
-        html += f"""
-        <details class="dia-grupo" data-dia="{_esc(dia or 'sem-data')}" open>
-            <summary class="dia-head">{_esc(_fmt_data_extenso(dia))}<span class="dia-cont">{len(grupos[dia])}</span></summary>
-            <div class="dia-corpo">{barras}</div>
-        </details>"""
-    return html
-
-
-def _card_kanban(cartao):
-    """HTML de um card do Kanban a partir de uma linha da tabela cartoes."""
-    titulo = cartao["numero_cartao"] or cartao["volume"] or f"Cartão {cartao['id']}"
-    status = cartao["status"] or ""
-
-    # Cores do badge de status:
-    #   vermelho escuro → qualquer falha técnica (transferência, verificação)
-    #   vermelho vivo   → "revisar": conteúdo não reconhecido mas suspeito de footage;
-    #                     exige atenção IMEDIATA do operador — não pode ser ignorado
-    #   laranja         → "sem_midia": conteúdo trivial confirmado (config/sistema);
-    #                     fim de linha explícito, não é erro mas chama atenção
-    #   cinza           → estado normal de espera no fluxo
-    if "falh" in status:
-        cor_status = "#c0392b"   # vermelho escuro — falha técnica
-    elif status == "revisar":
-        cor_status = "#e74c3c"   # vermelho vivo — operador DEVE verificar
-    elif status == "sem_midia":
-        cor_status = "#e67e22"   # laranja — ignorado com segurança
-    else:
-        cor_status = "#6c757d"   # cinza — espera normal
-
-    # Rótulo legível para o badge — traduz os status internos para texto claro
-    if status == "sem_midia":
-        rotulo_status = "sem mídia — ignorado"
-    elif status == "revisar":
-        rotulo_status = "verificar — arquivos não reconhecidos"
-    else:
-        rotulo_status = status
-
-    meta = " · ".join(p for p in [cartao["marca_camera"], cartao["tipo_material"]] if p)
-
-    selo_multidia = "<span class='selo-alerta'>multi-dia</span>" if cartao["alerta_multidia"] else ""
-    obs = cartao["observacoes"] or ""
-
-    # Botão "descartar": só para cartão DETECTADO que ainda não virou entrega
-    # (sem número, fora do fluxo de cópia). É a saída para sujeira/cartão errado.
-    descartavel = (status in ("detectado", "aguardando_match", "sem_midia", "revisar")
-                   and not cartao["numero_cartao"])
-    botao_descartar = ""
-    if descartavel:
-        botao_descartar = (
-            f"<form class='descartar-form' action='/cartao/{cartao['id']}/descartar' method='post' "
-            f"onsubmit=\"return confirm('Descartar este cartão detectado? Ele sai das telas e "
-            f"fica registrado no Log do sistema.');\">"
-            f"<button type='submit' class='btn-descartar'>descartar</button></form>"
-        )
-
-    return f"""
-        <div class="card-kanban">
-            <div class="card-titulo">{_esc(titulo)}</div>
-            <div class="card-meta">{_esc(meta) or '—'}</div>
-            <div class="card-badges">
-                <span class="badge-status" style="background:{cor_status}">{_esc(rotulo_status) or '—'}</span>
-                {selo_multidia}
-            </div>
-            <form class="postit-form" action="/cartao/{cartao['id']}/observacao" method="post">
-                <textarea name="observacao" class="postit" placeholder="post-it: observação livre…">{_esc(obs)}</textarea>
-                <button type="submit" class="btn-postit">Salvar</button>
-            </form>
-            {botao_descartar}
+            <div class="card-meta">{sub}</div>
+            {corpo}
         </div>"""
 
 
@@ -2463,7 +2625,7 @@ def _qr_data_uri(texto, scale=5):
         return None
 
 
-# Cache curto da URL descoberta do ngrok (evita consultar a API a cada refresh).
+# Cache curto da URL descoberta do túnel (evita ler o arquivo a cada refresh).
 _cache_link_ficha = {"url": None, "ts": 0.0}
 
 
@@ -2471,33 +2633,36 @@ def _descobrir_link_ficha():
     """
     Descobre o link público da ficha, nesta ordem de prioridade:
       1. GMA_LINK_FICHA no ambiente (override manual — ex.: domínio fixo).
-      2. AUTO: pergunta à API local do ngrok (127.0.0.1:4040) qual é a URL ativa
-         e monta <url>/ficha. Assim, quando o ngrok reinicia e muda de endereço,
-         o QR se atualiza sozinho — sem editar o .env.
+      2. AUTO: lê /tmp/cloudflared_gma_url.txt gravado pelo maestro (inicializar_gma.py)
+         ou pelo cloudflared_gma.sh. Arquivo presente = túnel Cloudflare vivo;
+         ausente = sem túnel. O Cloudflare Quick Tunnel não exibe tela de aviso,
+         então o QR Code leva direto à ficha (sem clique extra).
       3. None, se não houver túnel nem override.
+
+    Nota: o ngrok foi removido do projeto (sessão 63) — gerava conflito com o
+    Cloudflare (dois QRs diferentes) e exibia tela de aviso antes da ficha.
     """
     # 1) override manual sempre vence
     manual = os.environ.get("GMA_LINK_FICHA", "").strip()
     if manual:
         return manual
 
-    # 2) auto-detecção via ngrok (com cache de ~20s)
+    # cache de ~20s — evita abrir o arquivo a cada refresh do painel
     import time
     agora = time.time()
     if _cache_link_ficha["url"] and (agora - _cache_link_ficha["ts"] < 20):
         return _cache_link_ficha["url"]
 
     url = None
+
+    # 2) Cloudflare: lê o arquivo de estado gravado pelo inicializar_gma.py
     try:
-        import urllib.request
-        resposta = urllib.request.urlopen("http://127.0.0.1:4040/api/tunnels", timeout=1.5)
-        dados = json.loads(resposta.read().decode("utf-8"))
-        for tunel in dados.get("tunnels", []):
-            if tunel.get("proto") == "https":
-                url = tunel["public_url"].rstrip("/") + "/ficha"
-                break
+        with open("/tmp/cloudflared_gma_url.txt", "r") as _f:
+            conteudo = _f.read().strip()
+        if conteudo.startswith("https://"):
+            url = conteudo.rstrip("/") + "/ficha"
     except Exception:
-        url = None  # ngrok parado / sem API → sem link (painel mostra aviso)
+        url = None  # arquivo ausente, vazio ou inválido → sem link público
 
     _cache_link_ficha["url"] = url
     _cache_link_ficha["ts"] = agora
@@ -2508,15 +2673,18 @@ def _painel_qr_ficha():
     """
     Painel com o QR Code do link público da ficha (para os câmeras escanearem).
     O link é resolvido por _descobrir_link_ficha() (override manual OU auto-detecção
-    do ngrok). Sem túnel no ar nem override, mostra um aviso curto em vez do QR.
+    do Cloudflare). Sem túnel no ar nem override, mostra um aviso curto em vez do QR.
     """
     link = _descobrir_link_ficha()
     if not link:
         return """
         <div class="qr-painel">
           <div class="qr-titulo">📷 Ficha para os câmeras</div>
-          <div class="qr-aviso">Suba o túnel (ngrok) que o QR aparece sozinho —
-             ou defina <b>GMA_LINK_FICHA</b> no <code>.env</code> (domínio fixo).</div>
+          <div class="qr-aviso">O túnel Cloudflare sobe automaticamente com o sistema.
+             Se não subiu, verifique se o <code>cloudflared</code> está instalado
+             (<code>brew install cloudflared</code>) e a ficha remota está ligada
+             no projeto — ou defina <b>GMA_LINK_FICHA</b> no
+             <code>.env</code> (domínio fixo).</div>
         </div>"""
 
     data_uri = _qr_data_uri(link, scale=5)
@@ -2536,44 +2704,96 @@ def _painel_qr_ficha():
     </div>"""
 
 
-def _ler_cartoes_kanban(conn):
+def _ler_itens_mural(conn):
     """
-    Lê os cartões para o Kanban já com os tipos ANUNCIADOS no Post (foto/áudio/
-    vídeo), via LEFT JOIN matches→formularios (1 match por cartão). Cartão sem
-    ficha vem com os campos de tipo nulos (a barra cai para o tipo_material).
+    Lê os ITENS do Mural (telão POR POST) de duas fontes, já normalizados em dicts
+    uniformes que _tile_mural sabe desenhar:
+      (1) cartões — o material real, com a ficha/profissional do match mais recente;
+      (2) "a caminho" — fichas (Posts) recebidas que ainda NÃO têm cartão.
+    Fonte única usada pela página /kanban E pela rota ao vivo /kanban/board.
+    Mais recentes primeiro (campo "quando": criado_em do cartão / recebido_em da ficha).
     """
-    return conn.execute("""
-        SELECT c.*, f.tem_foto, f.tem_audio, f.tem_video
+    itens = []
+
+    # (1) Cartões + match mais recente (subquery, evita duplicar com >1 match) + nome.
+    for c in conn.execute("""
+        SELECT c.*, f.nome AS post_nome, f.nome_audio AS post_nome_audio,
+               f.tem_foto, f.tem_audio, f.tem_video, p.nome_raiz AS prof_raiz
         FROM cartoes c
-        LEFT JOIN matches m ON m.cartao_id = c.id
+        LEFT JOIN matches m ON m.id = (
+            SELECT id FROM matches WHERE cartao_id = c.id ORDER BY id DESC LIMIT 1)
         LEFT JOIN formularios f ON f.id = m.formulario_id
+        LEFT JOIN profissionais p ON UPPER(TRIM(p.nome)) = UPPER(TRIM(f.nome))
         ORDER BY c.id DESC
-    """).fetchall()
+    """).fetchall():
+        itens.append({
+            "fonte": "cartao", "status": c["status"] or "",
+            "quando": c["criado_em"] or "",
+            "post_nome": c["post_nome"], "prof_raiz": c["prof_raiz"],
+            "numero_cartao": c["numero_cartao"], "volume": c["volume"],
+            "marca_camera": c["marca_camera"], "tipo_material": c["tipo_material"],
+            "tem_foto": c["tem_foto"], "tem_audio": c["tem_audio"], "tem_video": c["tem_video"],
+            "tamanho_bytes": c["tamanho_transferido_bytes"],
+            "n_arquivos": c["total_arquivos_transferidos"],
+        })
+
+    # (2) Posts (fichas) ainda SEM cartão = "a caminho" (entram só na etapa Chegando).
+    for f in conn.execute("""
+        SELECT f.id, f.recebido_em, f.nome AS post_nome, f.nome_audio AS post_nome_audio,
+               f.camera AS marca_camera, f.tipo_material,
+               f.tem_foto, f.tem_audio, f.tem_video, p.nome_raiz AS prof_raiz
+        FROM formularios f
+        LEFT JOIN profissionais p ON UPPER(TRIM(p.nome)) = UPPER(TRIM(f.nome))
+        WHERE NOT EXISTS (SELECT 1 FROM matches m WHERE m.formulario_id = f.id)
+          AND f.status <> 'cancelado'
+        ORDER BY f.id DESC
+    """).fetchall():
+        itens.append({
+            "fonte": "postin", "status": "",
+            "quando": f["recebido_em"] or "",
+            "post_nome": f["post_nome"], "prof_raiz": f["prof_raiz"],
+            "numero_cartao": None, "volume": None,
+            "marca_camera": f["marca_camera"], "tipo_material": f["tipo_material"],
+            "tem_foto": f["tem_foto"], "tem_audio": f["tem_audio"], "tem_video": f["tem_video"],
+            "tamanho_bytes": None, "n_arquivos": None,
+        })
+
+    return itens
 
 
-def _montar_colunas_kanban(cartoes):
+def _montar_colunas_mural(itens):
     """
-    Distribui os cartões nas colunas conforme o status e devolve o HTML das
-    colunas (sem o wrapper). Fonte única usada pela página /kanban E pela rota
-    ao vivo /kanban/board — os dois nunca divergem.
+    Distribui os itens nas 3 etapas do telão e devolve o HTML das colunas (sem o
+    wrapper). Fonte única usada pela página /kanban E pela rota ao vivo
+    /kanban/board — os dois nunca divergem. Itens fora do fluxo do telão
+    (sem_midia/descartado/ausente) não entram (não estão no STATUS_PARA_ETAPA).
     """
-    baldes = {chave: [] for chave, _, _ in COLUNAS_KANBAN}
-    for cartao in cartoes:
-        if cartao["status"] in ("descartado", "ausente"):   # dispensado/invalidado → some das telas
-            continue
-        coluna = STATUS_PARA_COLUNA.get(cartao["status"], "detectado")
-        if coluna not in baldes:   # status sem coluna (defensivo) — ignora
-            continue
-        baldes[coluna].append(cartao)
+    baldes = {chave: [] for chave, _, _ in ETAPAS_MURAL}
+    for item in itens:
+        if item["fonte"] == "postin":
+            etapa = "chegando"
+        else:
+            if item["status"] in ("descartado", "ausente", "sem_midia"):
+                continue   # fora do telão público
+            etapa = STATUS_PARA_ETAPA.get(item["status"])
+            if etapa is None:
+                continue   # status desconhecido — não arrisca o telão
+        baldes[etapa].append(item)
+
+    # Dentro de cada etapa, mais recentes no topo (campo "quando").
+    for chave in baldes:
+        baldes[chave].sort(key=lambda i: i.get("quando") or "", reverse=True)
 
     colunas_html = ""
-    for chave, rotulo, cor in COLUNAS_KANBAN:
+    for chave, rotulo, cor in ETAPAS_MURAL:
         cards = baldes[chave]
-        if chave == "concluido":
-            # Coluna "Concluído" = Posts entregues, em barras por dia (estilo ShotPut Pro)
-            cards_html = _coluna_concluido_corpo(cards)
+        # "Copiado" pode crescer muito num evento: mostra os mais recentes + resumo.
+        if chave == "copiado" and len(cards) > 8:
+            visiveis, resto = cards[:8], len(cards) - 8
+            cards_html = "".join(_tile_mural(c) for c in visiveis)
+            cards_html += f"<p class='mais-copiados'>+ {resto} copiados</p>"
         else:
-            cards_html = "".join(_card_kanban(c) for c in cards) or "<p class='coluna-vazia'>—</p>"
+            cards_html = "".join(_tile_mural(c) for c in cards) or "<p class='coluna-vazia'>—</p>"
         colunas_html += f"""
         <div class="coluna">
             <div class="coluna-head" style="border-top:3px solid {cor}">
@@ -2602,28 +2822,19 @@ def kanban():
 
     try:
         conn = bd.obter_conexao()
-        cartoes = _ler_cartoes_kanban(conn)
+        itens = _ler_itens_mural(conn)
         conn.close()
     except Exception as erro:
-        logger.error(f"KANBAN | Erro ao ler cartões | {erro}")
-        cartoes = []
+        logger.error(f"MURAL | Erro ao ler itens | {erro}")
+        itens = []
 
-    colunas_html = _montar_colunas_kanban(cartoes)
+    colunas_html = _montar_colunas_mural(itens)
 
     corpo = f"""
-    <p class="legenda">Cada cartão é um card; ele anda da esquerda para a direita conforme o status muda no banco.
-       Escreva um post-it em qualquer card e clique em <strong>Salvar</strong> — fica gravado na fonte única.</p>
-    <div id="faixa-copia" class="faixa-copia" style="display:none">
-      <div class="fc-topo">
-        <span class="fc-titulo">📦 Copiando <strong id="fc-job"></strong></span>
-        <span class="fc-vel"><strong id="fc-vel">—</strong> MB/s</span>
-      </div>
-      <div class="fc-barra"><div class="fc-preench" id="fc-preench"></div></div>
-      <div class="fc-baixo">
-        <span id="fc-detalhe"></span>
-        <span id="fc-restante"></span>
-      </div>
-    </div>
+    <p class="legenda">Telão de acompanhamento por captação (Post). Cada azulejo é uma
+       pessoa; ele anda da esquerda para a direita conforme o material <strong>chega</strong>,
+       é <strong>copiado</strong> e fica <strong>seguro</strong>. Só leitura — as ações
+       ficam na aba <strong>Controle</strong>.</p>
     {_painel_qr_ficha()}
     <div class="kanban" id="kanban-board">{colunas_html}</div>"""
 
@@ -2631,79 +2842,50 @@ def kanban():
     # inteira, busca só o quadro a cada 1s e troca quando muda. Pausa enquanto
     # você digita um post-it; preserva os grupos de dia recolhidos na coluna
     # "Concluído" (lembra pelo data-dia).
-    css_faixa = """
-      .faixa-copia{background:var(--6f-bg-elevado);border:1px solid var(--6f-teal);
-        border-radius:10px;padding:12px 16px;margin:0 0 16px;}
-      .fc-topo{display:flex;justify-content:space-between;align-items:baseline;gap:12px;}
-      .fc-titulo{color:var(--6f-texto);font-size:15px;}
-      .fc-vel{color:var(--6f-teal-claro);font-size:15px;white-space:nowrap;}
-      .fc-vel strong{font-size:22px;font-variant-numeric:tabular-nums;}
-      .fc-barra{height:10px;background:var(--6f-teal-trilho);border-radius:6px;
-        overflow:hidden;margin:10px 0 8px;}
-      .fc-preench{height:100%;background:var(--6f-teal);width:0%;transition:width .4s ease;}
-      .fc-baixo{display:flex;justify-content:space-between;gap:12px;
-        color:var(--6f-texto-2);font-size:13px;}
-    """
-    head_extra = f"<style>{CSS_QR}{css_faixa}</style>" + """<script>
+    head_extra = f"<style>{CSS_QR}</style>" + """<script>
       document.addEventListener('DOMContentLoaded', function() {
         var board = document.getElementById('kanban-board');
         if (!board) return;
         var ultimo = null;
-        var fechados = new Set();
-        document.addEventListener('toggle', function(e) {
-          var d = e.target;
-          if (d.tagName === 'DETAILS' && d.dataset && d.dataset.dia) {
-            if (d.open) fechados.delete(d.dataset.dia); else fechados.add(d.dataset.dia);
-          }
-        }, true);
-        function reaplicar() {
-          board.querySelectorAll('details.dia-grupo').forEach(function(d) {
-            if (fechados.has(d.dataset.dia)) d.open = false;
-          });
-        }
+
+        // Acompanhamento AO VIVO: busca só o quadro a cada 1s e troca quando muda
+        // (sem recarregar a página). Em regime de cópia o HTML do quadro fica igual,
+        // então não há troca — a barra ao vivo do azulejo flui suave, sem piscar.
         function vivo() {
-          var a = document.activeElement;
-          if (a && a.tagName === 'TEXTAREA') return;  // pausa: você está digitando um post-it
           fetch('/kanban/board', {cache: 'no-store'})
             .then(function(r) { return r.text(); })
             .then(function(html) {
-              if (html && html !== ultimo) {
-                ultimo = html;
-                board.innerHTML = html;
-                reaplicar();
-              }
+              if (html && html !== ultimo) { ultimo = html; board.innerHTML = html; copiaVivo(); }
             }).catch(function() {});
         }
-        setInterval(vivo, 1000);
 
-        // ── Faixa de velocidade da cópia AO VIVO (estilo ShotPut) ──────────────
-        // Busca o bilhete que o copiador escreve; mostra a faixa enquanto copia e
-        // a esconde quando fica ocioso. Só leitura — não interfere em nada.
-        var faixa = document.getElementById('faixa-copia');
+        // ── Barra de velocidade da cópia AO VIVO (estilo ShotPut) ──────────────
+        // Lê o bilhete que o copiador escreve e pinta o azulejo que está copiando
+        // (casado pelo data-job = número do cartão). Só leitura — não interfere.
         function fmtTempo(seg) {
           seg = Math.max(0, Math.round(seg));
-          if (seg < 60) return '~' + seg + ' s';
+          if (seg < 60) return 'faltam ~' + seg + ' s';
           var m = Math.floor(seg / 60), s = seg % 60;
-          return '~' + m + ' min ' + (s < 10 ? '0' + s : s) + ' s';
+          return 'faltam ~' + m + ' min ' + (s < 10 ? '0' + s : s) + ' s';
         }
         function copiaVivo() {
-          if (!faixa) return;
           fetch('/kanban/copia-status', {cache: 'no-store'})
             .then(function(r) { return r.json(); })
             .then(function(d) {
-              if (!d || d.estado !== 'copiando') { faixa.style.display = 'none'; return; }
-              document.getElementById('fc-job').textContent = d.job || '';
-              document.getElementById('fc-vel').textContent =
-                (d.velocidade_mbs != null ? d.velocidade_mbs.toFixed(0) : '—');
-              document.getElementById('fc-preench').style.width = (d.percentual || 0) + '%';
-              document.getElementById('fc-detalhe').textContent =
-                'Arquivo ' + (d.arquivo_indice || 0) + ' de ' + (d.arquivo_total || 0) +
-                (d.nome_atual ? ' · ' + d.nome_atual : '') + ' · ' + (d.percentual || 0) + '%';
-              document.getElementById('fc-restante').textContent =
-                (d.restante_seg > 0 ? fmtTempo(d.restante_seg) + ' restantes' : '');
-              faixa.style.display = 'block';
+              if (!d || d.estado !== 'copiando') return;
+              var tile = (d.job && board.querySelector('.card-kanban[data-job="' + d.job + '"]'))
+                         || board.querySelector('.card-kanban[data-job]');
+              if (!tile) return;
+              var fill = tile.querySelector('.card-fill');
+              var vel = tile.querySelector('.card-vel');
+              var eta = tile.querySelector('.card-eta');
+              if (fill) fill.style.width = (d.percentual || 0) + '%';
+              if (vel) vel.textContent =
+                (d.velocidade_mbs != null ? d.velocidade_mbs.toFixed(0) + ' MB/s' : 'copiando…');
+              if (eta) eta.textContent = (d.restante_seg > 0 ? fmtTempo(d.restante_seg) : '');
             }).catch(function() {});
         }
+        setInterval(vivo, 1000);
         copiaVivo();
         setInterval(copiaVivo, 1000);
       });
@@ -2723,12 +2905,12 @@ def kanban_board():
         return "", 200, {"Content-Type": "text/html; charset=utf-8"}
     try:
         conn = bd.obter_conexao()
-        cartoes = _ler_cartoes_kanban(conn)
+        itens = _ler_itens_mural(conn)
         conn.close()
     except Exception as erro:
-        logger.error(f"KANBAN BOARD | Erro ao ler cartões | {erro}")
-        cartoes = []
-    return _montar_colunas_kanban(cartoes), 200, {"Content-Type": "text/html; charset=utf-8"}
+        logger.error(f"MURAL BOARD | Erro ao ler itens | {erro}")
+        itens = []
+    return _montar_colunas_mural(itens), 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
 @app.route("/kanban/copia-status", methods=["GET"])
@@ -2765,7 +2947,8 @@ def salvar_observacao(cartao_id):
     """
     Grava o post-it (observação livre) de um cartão na fonte única (gma.db),
     na coluna 'observacoes' da tabela cartoes. A função atualizar_cartao já
-    registra o evento de auditoria. Depois volta para o Kanban.
+    registra o evento de auditoria. Depois volta para o Controle (s65: a nota
+    saiu do Mural — telão só-leitura — e passou a viver na fila do Controle).
     """
     texto = (request.form.get("observacao") or "").strip()
     if BANCO_DISPONIVEL:
@@ -2776,7 +2959,7 @@ def salvar_observacao(cartao_id):
             logger.info(f"POST-IT | Cartão {cartao_id} | observação salva no banco")
         except Exception as erro:
             logger.error(f"POST-IT | Erro ao salvar no cartão {cartao_id} | {erro}")
-    return redirect("/kanban")
+    return redirect("/")
 
 
 def _arquivar_json_material(cartao_id):
@@ -2812,7 +2995,7 @@ def descartar_cartao_rota(cartao_id):
     """
     Descarta um cartão DETECTADO que não vai ser usado (sujeira, cartão errado).
     Soft-delete no banco (status 'descartado' + evento no Log) e arquiva o JSON
-    da fila — o cartão sai da Operação e do Acompanhamento, mas nada é apagado.
+    da fila — o cartão sai do Controle e do Mural, mas nada é apagado.
     Acesso só na base (o portão barra remoto).
     """
     resultado = {"ok": False, "motivo": "banco_indisponivel"}
@@ -2836,7 +3019,7 @@ def descartar_cartao_rota(cartao_id):
             f"DESCARTAR CARTAO | Não descartado | cartão {cartao_id} | "
             f"motivo={resultado.get('motivo')}"
         )
-    return redirect("/kanban")
+    return redirect("/")
 
 
 @app.route("/cartao/<int:cartao_id>/transcrever", methods=["POST"])
@@ -7142,6 +7325,601 @@ JS_LISTAS_COLAPSAR = """
 </script>"""
 
 
+# ── CENTRAL DE ENTRADA — importar vocabulário de planilha remota (Camada 1) ───
+# Assistente de 3 passos: ler (mostra colunas) → revisar (checklist dos itens) →
+# confirmar (grava no grupo). Acesso só na base (o portão _portao_de_acesso barra
+# remoto). Nada entra cru: o operador escolhe a coluna e revisa cada item.
+
+_IMPORT_CAIXA = ("background:var(--6f-bg-superficie);border:1px solid var(--6f-borda);"
+                 "border-radius:8px;padding:22px 24px;max-width:760px")
+_IMPORT_BTN = ("background:var(--6f-teal);color:var(--6f-bg-base);border:none;border-radius:6px;"
+               "padding:10px 20px;font-weight:700;font-size:0.9em;cursor:pointer;letter-spacing:0.3px;"
+               "font-family:inherit")
+_IMPORT_SEL = ("width:100%;padding:9px 12px;border:1px solid var(--6f-borda);"
+               "background:var(--6f-bg-elevado);color:var(--6f-texto);border-radius:6px;"
+               "font-size:0.9em;font-family:inherit")
+
+
+def _grupos_lista_ativos():
+    """Grupos ativos de MODO LISTA — os destinos possíveis da importação."""
+    if not BANCO_DISPONIVEL:
+        return []
+    try:
+        _conn = bd.obter_conexao()
+        grupos = [g for g in bd.listar_grupos(_conn, apenas_ativos=True)
+                  if g.get("modo") != "texto"]
+        _conn.close()
+        return grupos
+    except Exception:
+        return []
+
+
+def _linhas_checklist(valores, existentes=frozenset()):
+    """Monta as linhas <label><checkbox> da tela de revisão. Itens já presentes
+    no grupo (em `existentes`, minúsculo) vêm desmarcados e apagados."""
+    html_linhas = ""
+    for v in valores:
+        ja = v.strip().lower() in existentes
+        marcado = "" if ja else " checked"
+        nota = ('<span style="color:var(--6f-texto-3);font-size:0.78em;margin-left:8px">já existe</span>'
+                if ja else "")
+        estilo = "opacity:0.55" if ja else ""
+        html_linhas += (
+            f'<label style="display:flex;align-items:center;gap:9px;padding:6px 10px;'
+            f'border-bottom:1px solid var(--6f-borda);{estilo}">'
+            f'<input type="checkbox" name="item" value="{_esc(v)}"{marcado} '
+            f'style="accent-color:var(--6f-teal);width:16px;height:16px">'
+            f'<span style="color:var(--6f-texto);font-size:0.9em">{_esc(v)}</span>{nota}</label>'
+        )
+    return html_linhas
+
+
+def _pagina_site_revisar(link, valores, grupos):
+    """Tela de revisão da PÁGINA DE SITE: como não há colunas, o operador escolhe
+    o grupo aqui mesmo e revisa a lista de candidatos numa só tela → confirmar."""
+    opcoes_grp = "".join(
+        f'<option value="{_esc(g["chave"])}">{_esc(g["rotulo"])}</option>'
+        for g in grupos
+    )
+    corpo = f"""
+    <div style="{_IMPORT_CAIXA}">
+      <p style="color:var(--6f-texto-2);font-size:0.9em;margin:0 0 6px;line-height:1.5">
+        A página trouxe <strong>{len(valores)}</strong> trecho(s) de texto. Escolha o
+        grupo de destino e <strong>desmarque o que não for item</strong> (menus, rodapé,
+        avisos costumam aparecer aqui).
+      </p>
+      <form action="/listas/importar/confirmar" method="post">
+        <div style="margin:12px 0 14px;max-width:320px">
+          <label style="display:block;font-size:0.85em;font-weight:600;color:var(--6f-texto-2);margin-bottom:5px">
+            Para qual grupo?</label>
+          <select name="grupo" style="{_IMPORT_SEL}">{opcoes_grp}</select>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <button type="button" onclick="gmaMarcarTodos(true)" style="{_IMPORT_SEL};width:auto;cursor:pointer;padding:5px 11px;font-size:0.82em">marcar todos</button>
+          <button type="button" onclick="gmaMarcarTodos(false)" style="{_IMPORT_SEL};width:auto;cursor:pointer;padding:5px 11px;font-size:0.82em">desmarcar todos</button>
+        </div>
+        <div style="border:1px solid var(--6f-borda);border-radius:8px;max-height:340px;overflow-y:auto;margin-bottom:18px">
+          {_linhas_checklist(valores)}
+        </div>
+        <button type="submit" style="{_IMPORT_BTN}">Confirmar importação</button>
+        <a href="/listas" style="color:var(--6f-texto-3);font-size:0.85em;margin-left:16px">← cancelar</a>
+      </form>
+    </div>
+    <script>
+      function gmaMarcarTodos(v){{
+        document.querySelectorAll('input[name="item"]').forEach(function(c){{ c.checked = v; }});
+      }}
+    </script>"""
+    return _pagina("Programação · revisar", "listas", corpo)
+
+
+def _item_id_ou_cria(conn, grupo, valor):
+    """Devolve (id, criado?) de um item numa lista, criando-o se não existir.
+    Idempotente — reaproveita o item que já estava lá (não duplica)."""
+    import sqlite3 as _sq
+    valor = (valor or "").strip()
+    if not valor:
+        return None, False
+    try:
+        r = bd.adicionar_item_lista(conn, grupo, valor)
+        return r["id"], True
+    except _sq.IntegrityError:
+        row = conn.execute(
+            "SELECT id FROM listas_contexto WHERE tipo = ? AND valor = ?",
+            (grupo, valor)
+        ).fetchone()
+        return (row[0] if row else None), False
+
+
+def _pagina_lineup_mapear(link, colunas, linhas, grupos):
+    """Tela de mapeamento do line-up: o operador diz qual coluna é o palco, qual é
+    o show e qual é o dia, e para quais grupos vão. Reusa a máquina da programação."""
+    def _palpite(chaves):
+        for i, nome in enumerate(colunas):
+            n = (nome or "").lower()
+            if any(k in n for k in chaves):
+                return i
+        return 0
+
+    def _sel_col(nome_campo, palpite):
+        opts = "".join(
+            f'<option value="{i}"{" selected" if i == palpite else ""}>{_esc(nome)}</option>'
+            for i, nome in enumerate(colunas)
+        )
+        return f'<select name="{nome_campo}" style="{_IMPORT_SEL}">{opts}</select>'
+
+    def _sel_grupo(nome_campo, chaves):
+        alvo = None
+        for g in grupos:
+            rot = (g["rotulo"] or "").lower()
+            if any(k in rot or k in g["chave"] for k in chaves):
+                alvo = g["chave"]; break
+        opts = "".join(
+            f'<option value="{_esc(g["chave"])}"{" selected" if g["chave"] == alvo else ""}>{_esc(g["rotulo"])}</option>'
+            for g in grupos
+        )
+        return f'<select name="{nome_campo}" style="{_IMPORT_SEL}">{opts}</select>'
+
+    corpo = f"""
+    <div style="{_IMPORT_CAIXA}">
+      <p style="color:var(--6f-texto-2);font-size:0.9em;margin:0 0 16px;line-height:1.5">
+        Planilha lida: <strong>{len(colunas)} coluna(s)</strong>, <strong>{len(linhas)} linha(s)</strong>.
+        Diga qual coluna é o palco, qual é o show e qual é o dia — cada linha vira uma
+        entrada na programação do dia.
+      </p>
+      <form action="/listas/importar/lineup/revisar" method="post">
+        <input type="hidden" name="link" value="{_esc(link)}">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px 20px;margin-bottom:20px">
+          <div><label style="display:block;font-size:0.85em;font-weight:600;color:var(--6f-texto-2);margin-bottom:5px">Coluna do palco</label>{_sel_col("col_palco", _palpite(["palco","sala","local"]))}</div>
+          <div><label style="display:block;font-size:0.85em;font-weight:600;color:var(--6f-texto-2);margin-bottom:5px">Vai para o grupo</label>{_sel_grupo("grupo_palco", ["palco","sala"])}</div>
+          <div><label style="display:block;font-size:0.85em;font-weight:600;color:var(--6f-texto-2);margin-bottom:5px">Coluna do show</label>{_sel_col("col_show", _palpite(["show","artista","atra","palestra","evento"]))}</div>
+          <div><label style="display:block;font-size:0.85em;font-weight:600;color:var(--6f-texto-2);margin-bottom:5px">Vai para o grupo</label>{_sel_grupo("grupo_show", ["show","artista","palestra"])}</div>
+          <div><label style="display:block;font-size:0.85em;font-weight:600;color:var(--6f-texto-2);margin-bottom:5px">Coluna do dia</label>{_sel_col("col_dia", _palpite(["dia","data","date"]))}</div>
+        </div>
+        <button type="submit" style="{_IMPORT_BTN}">Revisar o line-up →</button>
+        <a href="/listas" style="color:var(--6f-texto-3);font-size:0.85em;margin-left:16px">← cancelar</a>
+      </form>
+    </div>"""
+    return _pagina("Programação · line-up", "listas", corpo)
+
+
+@app.route("/listas/importar/ler", methods=["POST"])
+def listas_importar_ler():
+    """Passo 1: lê a fonte (planilha ou página de site). Planilha → escolhe a
+    coluna; site → já cai na revisão (não há colunas)."""
+    if not IMPORTADOR_DISPONIVEL:
+        return _pagina_listas(erro="Importador indisponível (falta importador_fontes.py).")
+
+    link  = (request.form.get("link")  or "").strip()
+    fonte = (request.form.get("fonte") or "planilha").strip()
+
+    # ── Página de site: extrai o texto visível e vai direto à revisão ─────────
+    if fonte == "site":
+        grupos = _grupos_lista_ativos()
+        if not grupos:
+            return _pagina_listas(erro="Crie um grupo de lista antes de importar (ex.: Palcos).")
+        try:
+            valores = imp.ler_pagina_site(link)
+        except imp.ErroImportacao as e:
+            return _pagina_listas(erro=str(e))
+        except Exception as e:
+            return _pagina_listas(erro=f"Falha inesperada ao ler a página: {e}")
+        return _pagina_site_revisar(link, valores, grupos)
+
+    # ── Line-up: planilha com palco + show + dia → programação do dia ─────────
+    if fonte == "lineup":
+        grupos = _grupos_lista_ativos()
+        if len(grupos) < 1:
+            return _pagina_listas(erro="Crie os grupos de destino (ex.: Palcos e Shows) antes de importar um line-up.")
+        try:
+            colunas, linhas = imp.ler_planilha_remota(link)
+        except imp.ErroImportacao as e:
+            return _pagina_listas(erro=str(e))
+        except Exception as e:
+            return _pagina_listas(erro=f"Falha inesperada ao ler a planilha: {e}")
+        return _pagina_lineup_mapear(link, colunas, linhas, grupos)
+
+    # ── Planilha Google (fluxo com escolha de coluna) ─────────────────────────
+    try:
+        colunas, linhas = imp.ler_planilha_remota(link)
+    except imp.ErroImportacao as e:
+        return _pagina_listas(erro=str(e))
+    except Exception as e:
+        return _pagina_listas(erro=f"Falha inesperada ao ler a planilha: {e}")
+
+    grupos = _grupos_lista_ativos()
+    if not grupos:
+        return _pagina_listas(erro="Crie um grupo de lista antes de importar (ex.: Palcos).")
+
+    # Prévia: as primeiras linhas da planilha, para o operador reconhecer os dados.
+    max_linhas = 6
+    ths = "".join(
+        f'<th style="padding:7px 10px;text-align:left;background:var(--6f-bg-elevado);'
+        f'color:var(--6f-texto-2);font-size:0.78em;border-bottom:1px solid var(--6f-borda)">'
+        f'{_esc(nome)}</th>'
+        for nome in colunas
+    )
+    trs = ""
+    for linha in linhas[:max_linhas]:
+        tds = "".join(
+            f'<td style="padding:6px 10px;border-bottom:1px solid var(--6f-borda);'
+            f'font-size:0.84em;color:var(--6f-texto)">'
+            f'{_esc((linha[i] if i < len(linha) else ""))}</td>'
+            for i in range(len(colunas))
+        )
+        trs += f"<tr>{tds}</tr>"
+    resto = len(linhas) - max_linhas
+    nota_resto = (f'<p style="color:var(--6f-texto-3);font-size:0.8em;margin-top:6px">'
+                  f'… e mais {resto} linha(s).</p>') if resto > 0 else ""
+
+    # <option>s de coluna (com a contagem de itens únicos) e de grupo de destino.
+    opcoes_col = ""
+    for i, nome in enumerate(colunas):
+        n = len(imp.valores_da_coluna(colunas, linhas, i))
+        opcoes_col += f'<option value="{i}">{_esc(nome)} — {n} item(ns) único(s)</option>'
+    opcoes_grp = "".join(
+        f'<option value="{_esc(g["chave"])}">{_esc(g["rotulo"])}</option>'
+        for g in grupos
+    )
+
+    corpo = f"""
+    <div style="{_IMPORT_CAIXA}">
+      <p style="color:var(--6f-texto-2);font-size:0.9em;margin:0 0 16px;line-height:1.5">
+        Planilha lida: <strong>{len(colunas)} coluna(s)</strong>, <strong>{len(linhas)} linha(s)</strong>
+        de dados. Confira a prévia e diga qual coluna vira itens de qual grupo.
+      </p>
+      <div style="overflow-x:auto;border:1px solid var(--6f-borda);border-radius:8px;margin-bottom:20px">
+        <table style="width:100%;border-collapse:collapse;background:var(--6f-bg-superficie)">
+          <thead><tr>{ths}</tr></thead>
+          <tbody>{trs}</tbody>
+        </table>
+      </div>
+      {nota_resto}
+      <form action="/listas/importar/revisar" method="post"
+            style="display:flex;gap:14px;flex-wrap:wrap;align-items:end;margin-top:8px">
+        <input type="hidden" name="link" value="{_esc(link)}">
+        <div style="flex:1;min-width:220px">
+          <label style="display:block;font-size:0.85em;font-weight:600;color:var(--6f-texto-2);margin-bottom:5px">
+            Qual coluna importar?</label>
+          <select name="coluna" style="{_IMPORT_SEL}">{opcoes_col}</select>
+        </div>
+        <div style="flex:1;min-width:220px">
+          <label style="display:block;font-size:0.85em;font-weight:600;color:var(--6f-texto-2);margin-bottom:5px">
+            Para qual grupo?</label>
+          <select name="grupo" style="{_IMPORT_SEL}">{opcoes_grp}</select>
+        </div>
+        <button type="submit" style="{_IMPORT_BTN}">Revisar itens →</button>
+      </form>
+      <p style="margin-top:18px"><a href="/listas" style="color:var(--6f-texto-3);font-size:0.85em">← cancelar</a></p>
+    </div>"""
+    return _pagina("Programação · importar", "listas", corpo)
+
+
+@app.route("/listas/importar/revisar", methods=["POST"])
+def listas_importar_revisar():
+    """Passo 2: mostra os itens únicos da coluna como checklist (o operador tira
+    o lixo). Itens que já existem no grupo aparecem desmarcados, com nota."""
+    if not IMPORTADOR_DISPONIVEL:
+        return _pagina_listas(erro="Importador indisponível.")
+
+    link  = (request.form.get("link")  or "").strip()
+    grupo = (request.form.get("grupo") or "").strip()
+    try:
+        indice = int(request.form.get("coluna"))
+    except (TypeError, ValueError):
+        return _pagina_listas(erro="Escolha uma coluna para importar.")
+
+    try:
+        colunas, linhas = imp.ler_planilha_remota(link)
+    except imp.ErroImportacao as e:
+        return _pagina_listas(erro=str(e))
+    except Exception as e:
+        return _pagina_listas(erro=f"Falha ao reler a planilha: {e}")
+
+    if indice < 0 or indice >= len(colunas):
+        return _pagina_listas(erro="Coluna inválida.")
+    valores = imp.valores_da_coluna(colunas, linhas, indice)
+    if not valores:
+        return _pagina_listas(erro="Essa coluna não tem itens para importar.")
+
+    # Itens que já existem no grupo → pré-desmarca (evita re-adicionar) + rótulo.
+    existentes = set()
+    rotulo_grupo = grupo
+    if BANCO_DISPONIVEL:
+        try:
+            _conn = bd.obter_conexao()
+            existentes = {(i["valor"] or "").strip().lower()
+                          for i in bd.listar_itens_lista(_conn, tipo=grupo)}
+            for g in bd.listar_grupos(_conn):
+                if g["chave"] == grupo:
+                    rotulo_grupo = g["rotulo"]
+            _conn.close()
+        except Exception:
+            pass
+
+    novos = [v for v in valores if v.strip().lower() not in existentes]
+    linhas_check = _linhas_checklist(valores, existentes)
+
+    corpo = f"""
+    <div style="{_IMPORT_CAIXA}">
+      <p style="color:var(--6f-texto-2);font-size:0.9em;margin:0 0 6px;line-height:1.5">
+        <strong>{len(valores)}</strong> item(ns) na coluna “{_esc(colunas[indice])}”;
+        <strong>{len(novos)}</strong> novo(s) para o grupo <strong>{_esc(rotulo_grupo)}</strong>.
+      </p>
+      <p style="color:var(--6f-texto-3);font-size:0.8em;margin:0 0 16px">
+        Desmarque o que não quiser. Só os marcados entram na lista.
+      </p>
+      <form action="/listas/importar/confirmar" method="post">
+        <input type="hidden" name="grupo" value="{_esc(grupo)}">
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <button type="button" onclick="gmaMarcarTodos(true)" style="{_IMPORT_SEL};width:auto;cursor:pointer;padding:5px 11px;font-size:0.82em">marcar todos</button>
+          <button type="button" onclick="gmaMarcarTodos(false)" style="{_IMPORT_SEL};width:auto;cursor:pointer;padding:5px 11px;font-size:0.82em">desmarcar todos</button>
+        </div>
+        <div style="border:1px solid var(--6f-borda);border-radius:8px;max-height:340px;overflow-y:auto;margin-bottom:18px">
+          {linhas_check}
+        </div>
+        <button type="submit" style="{_IMPORT_BTN}">Confirmar importação</button>
+        <a href="/listas" style="color:var(--6f-texto-3);font-size:0.85em;margin-left:16px">← cancelar</a>
+      </form>
+    </div>
+    <script>
+      function gmaMarcarTodos(v){{
+        document.querySelectorAll('input[name="item"]').forEach(function(c){{ c.checked = v; }});
+      }}
+    </script>"""
+    return _pagina("Programação · revisar", "listas", corpo)
+
+
+@app.route("/listas/importar/confirmar", methods=["POST"])
+def listas_importar_confirmar():
+    """Passo 3: grava os itens marcados no grupo (idempotente) e mostra o resumo."""
+    grupo = (request.form.get("grupo") or "").strip()
+    itens = request.form.getlist("item")
+
+    if not grupo:
+        return _pagina_listas(erro="Grupo não informado.")
+    if not itens:
+        return _pagina_listas(erro="Nenhum item marcado — nada foi importado.")
+    if not BANCO_DISPONIVEL:
+        return _pagina_listas(erro="Banco de dados indisponível.")
+
+    import sqlite3 as _sq
+    adicionados = 0
+    ja_existiam = 0
+    erros = 0
+    rotulo_grupo = grupo
+    try:
+        _conn = bd.obter_conexao()
+        for g in bd.listar_grupos(_conn):
+            if g["chave"] == grupo:
+                rotulo_grupo = g["rotulo"]
+        for valor in itens:
+            valor = (valor or "").strip()
+            if not valor:
+                continue
+            try:
+                bd.adicionar_item_lista(_conn, grupo, valor)
+                adicionados += 1
+            except _sq.IntegrityError:
+                ja_existiam += 1
+            except Exception:
+                erros += 1
+        _conn.close()
+    except Exception as e:
+        return _pagina_listas(erro=f"Falha ao gravar os itens: {e}")
+
+    logger.info(f"IMPORTAR | grupo={grupo} novos={adicionados} "
+                f"ja_existiam={ja_existiam} erros={erros}")
+
+    aviso_erro = (f'<p style="color:var(--6f-erro);font-size:0.85em;margin-top:6px">'
+                  f'{erros} item(ns) não puderam ser gravados.</p>') if erros else ""
+    corpo = f"""
+    <div style="{_IMPORT_CAIXA}">
+      <h2 style="font-size:1.1em;color:var(--6f-texto);margin:0 0 12px">Importação concluída</h2>
+      <p style="color:var(--6f-texto);font-size:0.95em;margin:0 0 6px">
+        <strong style="color:var(--6f-teal)">{adicionados}</strong> item(ns) novo(s) em
+        <strong>{_esc(rotulo_grupo)}</strong>.
+      </p>
+      <p style="color:var(--6f-texto-2);font-size:0.88em;margin:0">
+        {ja_existiam} já existia(m) e foram ignorados.
+      </p>
+      {aviso_erro}
+      <p style="margin-top:20px">
+        <a href="/listas" style="{_IMPORT_BTN};text-decoration:none;display:inline-block">← Voltar à Programação</a>
+      </p>
+    </div>"""
+    return _pagina("Programação · importado", "listas", corpo)
+
+
+@app.route("/listas/importar/lineup/revisar", methods=["POST"])
+def listas_importar_lineup_revisar():
+    """Passo 2 do line-up: relê a planilha, monta as linhas (dia · palco · show),
+    normaliza a data e mostra tudo por dia como checklist para o operador revisar."""
+    if not IMPORTADOR_DISPONIVEL:
+        return _pagina_listas(erro="Importador indisponível.")
+
+    link        = (request.form.get("link") or "").strip()
+    grupo_palco = (request.form.get("grupo_palco") or "").strip()
+    grupo_show  = (request.form.get("grupo_show") or "").strip()
+    try:
+        c_palco = int(request.form.get("col_palco"))
+        c_show  = int(request.form.get("col_show"))
+        c_dia   = int(request.form.get("col_dia"))
+    except (TypeError, ValueError):
+        return _pagina_listas(erro="Escolha as colunas do palco, do show e do dia.")
+
+    try:
+        colunas, linhas = imp.ler_planilha_remota(link)
+    except imp.ErroImportacao as e:
+        return _pagina_listas(erro=str(e))
+    except Exception as e:
+        return _pagina_listas(erro=f"Falha ao reler a planilha: {e}")
+
+    # Monta as linhas (dia_iso, palco, show), deduplicando o trio. Guarda também
+    # as datas que não deram para ler, para avisar (nunca chuta o dia).
+    vistos = set()
+    ok = []            # [(dia_iso, palco, show)]
+    ruins = set()      # valores de dia não reconhecidos
+    for linha in linhas:
+        palco = (linha[c_palco] if c_palco < len(linha) else "").strip()
+        show  = (linha[c_show]  if c_show  < len(linha) else "").strip()
+        dia_raw = (linha[c_dia] if c_dia < len(linha) else "").strip()
+        if not palco or not show:
+            continue
+        dia_iso = imp.normalizar_data(dia_raw)
+        if not dia_iso:
+            if dia_raw:
+                ruins.add(dia_raw)
+            continue
+        trio = (dia_iso, palco.lower(), show.lower())
+        if trio in vistos:
+            continue
+        vistos.add(trio)
+        ok.append((dia_iso, palco, show))
+
+    if not ok:
+        return _pagina_listas(erro="Nenhuma linha com palco, show e dia válidos foi encontrada.")
+
+    ok.sort(key=lambda t: (t[0], t[1], t[2]))
+
+    # Agrupa por dia para a exibição
+    from collections import OrderedDict
+    por_dia = OrderedDict()
+    for dia_iso, palco, show in ok:
+        por_dia.setdefault(dia_iso, []).append((palco, show))
+
+    blocos = ""
+    for dia_iso, itens in por_dia.items():
+        linhas_html = ""
+        for palco, show in itens:
+            # o valor carrega o trio (tab-separado) para o passo de confirmação
+            valor = f"{dia_iso}\t{palco}\t{show}"
+            linhas_html += (
+                f'<label style="display:flex;align-items:center;gap:9px;padding:5px 10px;'
+                f'border-bottom:1px solid var(--6f-borda)">'
+                f'<input type="checkbox" name="linha" value="{_esc(valor)}" checked '
+                f'style="accent-color:var(--6f-teal);width:16px;height:16px">'
+                f'<span style="color:var(--6f-texto);font-size:0.88em">{_esc(palco)} '
+                f'<span style="color:var(--6f-texto-3)">·</span> {_esc(show)}</span></label>'
+            )
+        blocos += (
+            f'<div style="margin-bottom:14px">'
+            f'<div style="color:var(--6f-teal);font-weight:600;font-size:0.85em;margin-bottom:6px">'
+            f'{_esc(dia_iso)} <span style="color:var(--6f-texto-3);font-weight:400">· {len(itens)} show(s)</span></div>'
+            f'<div style="border:1px solid var(--6f-borda);border-radius:8px;overflow:hidden">{linhas_html}</div>'
+            f'</div>'
+        )
+
+    aviso_ruins = ""
+    if ruins:
+        amostra = ", ".join(sorted(ruins)[:6])
+        aviso_ruins = (
+            f'<div style="background:var(--6f-bg-elevado);border:1px solid var(--6f-aviso);'
+            f'color:var(--6f-aviso);border-radius:6px;padding:10px 14px;margin-bottom:14px;font-size:0.84em">'
+            f'{len(ruins)} data(s) não reconhecida(s) foram ignoradas: {_esc(amostra)}. '
+            f'Ajuste o formato na planilha (ex.: 04/09/2026) e reimporte, se precisar delas.</div>'
+        )
+
+    corpo = f"""
+    <div style="{_IMPORT_CAIXA}">
+      <p style="color:var(--6f-texto-2);font-size:0.9em;margin:0 0 6px;line-height:1.5">
+        <strong>{len(ok)}</strong> show(s) em <strong>{len(por_dia)}</strong> dia(s) vão para a
+        programação. Desmarque o que não quiser.
+      </p>
+      <p style="color:var(--6f-texto-3);font-size:0.8em;margin:0 0 16px">
+        Palcos novos entram no grupo escolhido; shows novos idem; o resto é ignorado
+        (não duplica).
+      </p>
+      {aviso_ruins}
+      <form action="/listas/importar/lineup/confirmar" method="post">
+        <input type="hidden" name="grupo_palco" value="{_esc(grupo_palco)}">
+        <input type="hidden" name="grupo_show" value="{_esc(grupo_show)}">
+        <div style="display:flex;gap:8px;margin-bottom:12px">
+          <button type="button" onclick="gmaMarcarTodos(true)" style="{_IMPORT_SEL};width:auto;cursor:pointer;padding:5px 11px;font-size:0.82em">marcar todos</button>
+          <button type="button" onclick="gmaMarcarTodos(false)" style="{_IMPORT_SEL};width:auto;cursor:pointer;padding:5px 11px;font-size:0.82em">desmarcar todos</button>
+        </div>
+        <div style="max-height:360px;overflow-y:auto;margin-bottom:18px">{blocos}</div>
+        <button type="submit" style="{_IMPORT_BTN}">Confirmar na programação</button>
+        <a href="/listas" style="color:var(--6f-texto-3);font-size:0.85em;margin-left:16px">← cancelar</a>
+      </form>
+    </div>
+    <script>
+      function gmaMarcarTodos(v){{
+        document.querySelectorAll('input[name="linha"]').forEach(function(c){{ c.checked = v; }});
+      }}
+    </script>"""
+    return _pagina("Programação · revisar line-up", "listas", corpo)
+
+
+@app.route("/listas/importar/lineup/confirmar", methods=["POST"])
+def listas_importar_lineup_confirmar():
+    """Passo 3 do line-up: cria os itens (palco/show) e liga cada show ao seu dia
+    na tabela programacao. Idempotente — reimportar não duplica."""
+    grupo_palco = (request.form.get("grupo_palco") or "").strip()
+    grupo_show  = (request.form.get("grupo_show") or "").strip()
+    linhas      = request.form.getlist("linha")
+
+    if not grupo_palco or not grupo_show:
+        return _pagina_listas(erro="Grupos de destino não informados.")
+    if not linhas:
+        return _pagina_listas(erro="Nenhuma linha marcada — nada foi importado.")
+    if not BANCO_DISPONIVEL:
+        return _pagina_listas(erro="Banco de dados indisponível.")
+
+    novos_palcos = 0
+    novos_shows = 0
+    ligacoes = 0
+    erros = 0
+    dias = set()
+    try:
+        _conn = bd.obter_conexao()
+        for bruto in linhas:
+            partes = (bruto or "").split("\t")
+            if len(partes) != 3:
+                continue
+            dia_iso, palco, show = (p.strip() for p in partes)
+            if not (dia_iso and palco and show):
+                continue
+            try:
+                id_palco, criou_p = _item_id_ou_cria(_conn, grupo_palco, palco)
+                id_show,  criou_s = _item_id_ou_cria(_conn, grupo_show, show)
+                if not id_palco or not id_show:
+                    erros += 1
+                    continue
+                bd.adicionar_programacao(_conn, dia_iso, id_palco, id_show)
+                ligacoes += 1
+                dias.add(dia_iso)
+                if criou_p: novos_palcos += 1
+                if criou_s: novos_shows += 1
+            except Exception:
+                erros += 1
+        _conn.close()
+    except Exception as e:
+        return _pagina_listas(erro=f"Falha ao gravar a programação: {e}")
+
+    logger.info(f"IMPORTAR LINE-UP | ligacoes={ligacoes} dias={len(dias)} "
+                f"novos_palcos={novos_palcos} novos_shows={novos_shows} erros={erros}")
+
+    aviso_erro = (f'<p style="color:var(--6f-erro);font-size:0.85em;margin-top:6px">'
+                  f'{erros} linha(s) não puderam ser gravadas.</p>') if erros else ""
+    corpo = f"""
+    <div style="{_IMPORT_CAIXA}">
+      <h2 style="font-size:1.1em;color:var(--6f-texto);margin:0 0 12px">Line-up importado</h2>
+      <p style="color:var(--6f-texto);font-size:0.95em;margin:0 0 6px">
+        <strong style="color:var(--6f-teal)">{ligacoes}</strong> show(s) na programação,
+        em <strong>{len(dias)}</strong> dia(s).
+      </p>
+      <p style="color:var(--6f-texto-2);font-size:0.88em;margin:0">
+        {novos_palcos} palco(s) novo(s) e {novos_shows} show(s) novo(s) criados nas listas.
+      </p>
+      {aviso_erro}
+      <p style="margin-top:20px">
+        <a href="/listas" style="{_IMPORT_BTN};text-decoration:none;display:inline-block">← Voltar à Programação</a>
+      </p>
+    </div>"""
+    return _pagina("Programação · line-up importado", "listas", corpo)
+
+
 def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
     """
     Renderiza a aba de Listas de Contexto.
@@ -7360,6 +8138,45 @@ def _pagina_listas(erro=None, tipo_digitado="", valor_digitado=""):
 
         <!-- Coluna de formulários (grupo + item) -->
         <div style="display:flex;flex-direction:column;gap:18px;position:sticky;top:20px">
+
+        <!-- Importar de planilha remota (Central de Entrada) -->
+        <div style="background:var(--6f-bg-superficie);border:1px solid var(--6f-teal-trilho);border-radius:8px;padding:20px 22px;
+                    box-shadow:none">
+            <h2 style="font-size:1em;font-weight:700;color:var(--6f-texto);margin-bottom:6px">
+                Importar de planilha
+            </h2>
+            <p style="color:var(--6f-texto-3);font-size:0.78em;margin-bottom:14px;line-height:1.5">
+                Cole o link de uma <strong>planilha Google</strong> (compartilhada como
+                “qualquer pessoa com o link pode ver”) ou de uma <strong>página de
+                site</strong>. Você revisa os itens antes de entrarem na lista — nada
+                entra sem sua confirmação.
+            </p>
+            <form action="/listas/importar/ler" method="post">
+                <select name="fonte"
+                        style="width:100%;padding:9px 12px;border:1px solid var(--6f-borda);
+                               background:var(--6f-bg-elevado);color:var(--6f-texto);
+                               border-radius:6px;font-size:0.9em;font-family:inherit;margin-bottom:10px">
+                    <option value="planilha">Planilha Google</option>
+                    <option value="lineup">Line-up (palco · show · dia)</option>
+                    <option value="site">Página de site</option>
+                </select>
+                <input type="url" name="link" autocomplete="off" required
+                       placeholder="Cole o link aqui…"
+                       style="width:100%;padding:9px 12px;border:1px solid var(--6f-borda);
+                              background:var(--6f-bg-elevado);color:var(--6f-texto);
+                              border-radius:6px;font-size:0.9em;font-family:inherit;margin-bottom:12px">
+                <p style="color:var(--6f-texto-3);font-size:0.72em;margin:-4px 0 12px;line-height:1.45">
+                    Sites feitos em JavaScript (ex.: line-up do Rock in Rio) trazem pouco
+                    texto — nesses, me peça a captura numa conversa de preparação.
+                </p>
+                <button type="submit"
+                        style="width:100%;background:var(--6f-teal);color:var(--6f-bg-base);border:none;
+                               border-radius:6px;padding:10px;font-weight:700;
+                               font-size:0.9em;cursor:pointer;letter-spacing:0.3px">
+                    Ler planilha
+                </button>
+            </form>
+        </div>
 
         <!-- Formulário de novo GRUPO -->
         <div style="background:var(--6f-bg-superficie);border:1px solid var(--6f-borda);border-radius:8px;padding:20px 22px;
@@ -7649,17 +8466,20 @@ def _testar_conexao(chave):
         return painel_config.checar_recebidos(caminho)
 
     if chave == "tunel":
+        # O Cloudflare não tem API local — verifica o arquivo de estado gravado
+        # pelo maestro (inicializar_gma.py) quando o túnel sobe.
         try:
-            import urllib.request
-            with urllib.request.urlopen("http://127.0.0.1:4040/api/tunnels", timeout=3) as resp:
-                dados = json.loads(resp.read().decode())
-            for t in dados.get("tunnels", []):
-                url = t.get("public_url", "")
-                if url.startswith("https"):
-                    return True, f"Túnel ativo: {url}"
-            return False, "O ngrok responde, mas não há túnel HTTPS ativo."
-        except Exception:
-            return False, "O ngrok não está rodando (rode ./ngrok_gma.sh em outro terminal)."
+            with open("/tmp/cloudflared_gma_url.txt", "r") as _f:
+                url = _f.read().strip()
+            if url.startswith("https://"):
+                return True, f"Túnel ativo: {url}"
+            return False, "Arquivo de estado do túnel existe mas está vazio ou inválido."
+        except FileNotFoundError:
+            return False, ("Túnel Cloudflare não está no ar — o sistema tenta subir "
+                           "automaticamente; verifique se o cloudflared está instalado "
+                           "(brew install cloudflared) e a ficha remota está ligada.")
+        except Exception as erro:
+            return False, f"Erro ao verificar o túnel: {erro}"
 
     return False, "Conexão desconhecida."
 
@@ -7769,16 +8589,13 @@ def _conexoes_cockpit():
     tunel_ativo = cfg.get("tunel_ativo", True)
     tunel_url_real = tunel_link
     if not tunel_link and tunel_ativo:
-        # Verifica ngrok ao vivo (timeout curto para não travar o carregamento)
+        # Verifica o Cloudflare ao vivo lendo o arquivo de estado do maestro
+        # (não tem timeout de rede — é só leitura de arquivo local, sempre rápida).
         try:
-            import urllib.request as _ur
-            with _ur.urlopen("http://127.0.0.1:4040/api/tunnels", timeout=2) as resp:
-                dados = json.loads(resp.read().decode())
-            for t in dados.get("tunnels", []):
-                url = t.get("public_url", "")
-                if url.startswith("https"):
-                    tunel_url_real = url + "/ficha"
-                    break
+            with open("/tmp/cloudflared_gma_url.txt", "r") as _cf:
+                _url_cf = _cf.read().strip()
+            if _url_cf.startswith("https://"):
+                tunel_url_real = _url_cf.rstrip("/") + "/ficha"
         except Exception:
             pass
     if not tunel_ativo:
@@ -7786,7 +8603,7 @@ def _conexoes_cockpit():
     elif tunel_url_real:
         tunel_status, tunel_txt = "ok", tunel_url_real
     else:
-        tunel_status, tunel_txt = "aviso", "ngrok não encontrado — suba o túnel"
+        tunel_status, tunel_txt = "aviso", "túnel Cloudflare não encontrado — sistema tenta subir automaticamente"
 
     # Porta / host — estado global ou fallback no .env
     host = (estado.get("host") or os.environ.get("GMA_HOST", "127.0.0.1")).strip() or "127.0.0.1"
@@ -7827,10 +8644,11 @@ def _conexoes_cockpit():
          "ajuda_html": _ajuda_sheets_html(),
          "ativavel": True, "ativo": sheets_ativo, "acao_ativar": "/painel/sheets-ativo"},
         {"chave": "tunel", "rot": "Túnel / ficha remota", "val": tunel_txt,
-         "desc": "Link público da ficha (ngrok). Vazio = detecta automaticamente.",
+         "desc": "Link público da ficha (Cloudflare). Sobe automaticamente com o sistema. "
+                 "Vazio = detectado automaticamente.",
          "status": tunel_status, "testavel": True,
          "direcionar": True, "campo": tunel_link, "acao": "/painel/tunel-link",
-         "placeholder": "Link override (ex.: https://xyz.ngrok.io) — vazio = auto",
+         "placeholder": "Link override (ex.: https://xyz.trycloudflare.com) — vazio = auto",
          "ativavel": True, "ativo": tunel_ativo, "acao_ativar": "/painel/tunel-ativo"},
         {"chave": "senha", "rot": "Senha das telas", "val": senha_txt,
          "desc": "Portão para a internet. Vazia = uso local livre.",
@@ -8129,7 +8947,7 @@ def painel_tunel_link():
         painel_config.definir_tunel_link(slug, valor)
         logger.info(f"PAINEL | Link do túnel de '{slug}' → {valor or '(auto)'}")
         msg = (f"Link do túnel configurado." if valor
-               else "Link removido — o painel vai detectar o ngrok automaticamente.")
+               else "Link removido — o painel vai detectar o Cloudflare automaticamente.")
         return _pagina_painel(aviso=msg)
     except Exception as e:
         logger.warning(f"PAINEL | Falha ao atualizar link do túnel: {e}")

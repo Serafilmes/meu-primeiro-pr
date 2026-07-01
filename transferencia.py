@@ -810,6 +810,11 @@ def processar_material(caminho_json_material, dados_material):
     try:
         import banco_dados as _bd
         if _db_cartao_id:
+            # Histórico de velocidade (Relatório de cópias, s65): duração medida
+            # pela cópia + MB/s média (tamanho ÷ duração). Aditivo e defensivo.
+            _dur = resultado_copia.get("duracao_segundos") or 0
+            _tam = resultado_validacao.get("tamanho_bytes", 0) or 0
+            _vel = ((_tam / 1024 / 1024) / _dur) if (_dur > 0 and _tam > 0) else None
             _conn_transf2 = _bd.inicializar_banco()
             _bd.atualizar_cartao(_conn_transf2, _db_cartao_id, {
                 "status": "transferencia_ok" if transferencia_ok else "transferencia_falhou",
@@ -818,6 +823,8 @@ def processar_material(caminho_json_material, dados_material):
                 "total_arquivos_transferidos": resultado_validacao.get("total_arquivos", 0),
                 "total_falhos": resultado_validacao.get("total_falhos", 0),
                 "tamanho_transferido_bytes": resultado_validacao.get("tamanho_bytes", 0),
+                "duracao_copia_segundos": round(_dur, 1) if _dur else None,
+                "velocidade_media_mbs": round(_vel, 1) if _vel else None,
                 "transferencia_relatorio_pdf": caminho_pdf,
             })
             # Popula a tabela 'arquivos' com cada arquivo do .sppo
@@ -1034,6 +1041,10 @@ def copiar_material_recebido(formulario_id):
     transferencia_ok = resultado_validacao.get("ok", False)
 
     try:
+        # Histórico de velocidade (Relatório de cópias, s65) — igual ao fluxo do cartão.
+        _dur = resultado_copia.get("duracao_segundos") or 0
+        _tam = resultado_validacao.get("tamanho_bytes", 0) or 0
+        _vel = ((_tam / 1024 / 1024) / _dur) if (_dur > 0 and _tam > 0) else None
         conn2 = _bd.inicializar_banco()
         _bd.atualizar_cartao(conn2, cartao_id, {
             "status": "transferencia_ok" if transferencia_ok else "transferencia_falhou",
@@ -1042,6 +1053,8 @@ def copiar_material_recebido(formulario_id):
             "total_arquivos_transferidos": resultado_validacao.get("total_arquivos", 0),
             "total_falhos":  resultado_validacao.get("total_falhos", 0),
             "tamanho_transferido_bytes": resultado_validacao.get("tamanho_bytes", 0),
+            "duracao_copia_segundos": round(_dur, 1) if _dur else None,
+            "velocidade_media_mbs": round(_vel, 1) if _vel else None,
             "transferencia_relatorio_pdf": caminho_pdf,
         })
         if resultado_validacao.get("dados_log"):
