@@ -199,6 +199,15 @@ def inicializar_banco():
                 duracao_copia_segundos          REAL,
                 velocidade_media_mbs            REAL,
 
+                -- ── Pós-produção (editável pelo EDITOR na aba Entrega) ──────
+                -- Preenchidos NA TELA, fora do ciclo crítico: quem editou
+                -- (pos_editor), o status da edição (pos_edicao: Pendente/Em
+                -- edição/OK) e quem subiu (pos_upload). Espelham no Google Sheets
+                -- pelo exportador (mesma fonte). NULL = ainda não preenchido.
+                pos_editor                      TEXT,
+                pos_edicao                      TEXT,
+                pos_upload                      TEXT,
+
                 -- Caminho do arquivo PDF de relatório gerado pela Camada 2
                 transferencia_relatorio_pdf     TEXT,
 
@@ -687,6 +696,9 @@ def inicializar_banco():
 
     # Login da Camada 5: coluna `operador` na tabela `eventos` (quem fez a ação).
     migrar_schema_eventos(conn)
+
+    # Pós-produção (aba Entrega): catálogos de pessoas (editor/upload) dos menus.
+    migrar_schema_pessoas_pos(conn)
 
     return conn
 
@@ -3872,7 +3884,9 @@ def excluir_coluna_custom(conn, chave):
 CATALOGO_PLANILHA = [
     # chave            rótulo           bloco            tipo        campo                          vis
     ("prof_nome",    "Profissional",  "identificacao", "especial", "prof_nome",                    1),
-    ("prof_raiz",    "Nome",          "identificacao", "dado",     "prof_raiz",                    1),
+    # "Nome" (raiz) nasce OCULTA: repete a coluna Profissional (redundância de nome).
+    # Fica disponível em /molde ("Mostrar") se algum evento precisar dela.
+    ("prof_raiz",    "Nome",          "identificacao", "dado",     "prof_raiz",                    0),
     ("prof_curto",   "Cartão",        "identificacao", "dado",     "prof_curto",                   1),
     ("marca_camera", "Câmera",        "identificacao", "dado",     "marca_camera",                 1),
     ("tipo_material","Tipo",          "identificacao", "dado",     "tipo_material",                 1),
@@ -3887,9 +3901,12 @@ CATALOGO_PLANILHA = [
     # Mostra um STATUS compacto (quantos áudios já transcritos), não o texto inteiro;
     # o texto mora POR ARQUIVO na tabela `arquivos`. tipo_render "transcricao".
     ("transcricao",  "Transcrição",   "tecnicas",      "transcricao", None,                         1),
-    ("pos_editor",   "Editor",        "pos_producao",  "dado",     None,                            0),
-    ("pos_edicao",   "Edição",        "pos_producao",  "dado",     None,                            0),
-    ("pos_upload",   "Upload",        "pos_producao",  "dado",     None,                            0),
+    # Pós-produção — EDITÁVEIS pelo editor na aba Entrega (menus). O `campo` faz o
+    # exportador do Sheets ler o valor guardado; a /planilha do Flask troca o texto
+    # por um menu editável (_celula_planilha). Visíveis por padrão.
+    ("pos_editor",   "Editor",        "pos_producao",  "dado",     "pos_editor",                    1),
+    ("pos_edicao",   "Edição",        "pos_producao",  "dado",     "pos_edicao",                    1),
+    ("pos_upload",   "Upload",        "pos_producao",  "dado",     "pos_upload",                    1),
 ]
 
 _CATALOGO_PLANILHA_IDX = {e[0]: e for e in CATALOGO_PLANILHA}
@@ -3913,10 +3930,120 @@ _RANK_BLOCO_PLANILHA = {b: i for i, b in enumerate(
 #       dá match, a ficha passa a ser representada pela linha do cartão (sem duplicar:
 #       o NOT EXISTS exclui da fonte 2 toda ficha que já tem match).
 # Os campos aqui precisam cobrir todos os `campo` referenciados pelo catálogo.
+# ── PÓS-PRODUÇÃO (aba Entrega) — catálogos de pessoas + status de edição ──────
+#
+# Os NOMES da pós-produção vivem numa tabela DEDICADA (`pessoas_pos`), totalmente
+# isolada do sistema de classificação — nunca viram coluna/chip da planilha nem
+# aparecem na Gestão de Listas. Cada nome tem uma FUNÇÃO: 'editor' (menu Editor) ou
+# 'upload' (menu Upload) — são catálogos INDEPENDENTES (não compartilham nomes).
+# O OPERADOR (na base) cria/exclui; o editor só seleciona. Excluir um nome só o tira
+# do menu — o valor já GRAVADO numa célula permanece (é texto solto em `cartoes`).
+
+# Status possíveis da coluna "Edição" (decisão do idealizador: sem "Revisão").
+EDICAO_STATUS = ["Pendente", "Em edição", "OK"]
+
+# Funções válidas de pessoa da pós-produção (allowlist — protege as queries).
+FUNCOES_POS = ("editor", "upload")
+
+
+def migrar_schema_pessoas_pos(conn):
+    """Cria a tabela `pessoas_pos` (nomes da pós-produção, por função) se não existir.
+
+    Migra nomes de uma tabela `editores` antiga (versão anterior desta fatia), se
+    existir, para a função 'editor'; depois remove a tabela antiga.
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS pessoas_pos (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            funcao    TEXT NOT NULL,          -- 'editor' | 'upload'
+            nome      TEXT NOT NULL,
+            ativo     INTEGER NOT NULL DEFAULT 1,
+            criado_em TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+            UNIQUE(funcao, nome)
+        )
+    """)
+    # Backfill defensivo da tabela `editores` (fase intermediária desta fatia).
+    try:
+        antigos = conn.execute("SELECT nome FROM editores").fetchall()
+        for (nome,) in antigos:
+            conn.execute(
+                "INSERT OR IGNORE INTO pessoas_pos (funcao, nome) VALUES ('editor', ?)",
+                (nome,),
+            )
+        conn.execute("DROP TABLE editores")
+    except sqlite3.OperationalError:
+        pass   # não existe a tabela antiga — caminho normal
+    conn.commit()
+
+
+def listar_pessoas_pos(conn, funcao, apenas_ativos=True):
+    """Nomes de uma função da pós-produção ('editor' ou 'upload')."""
+    if funcao not in FUNCOES_POS:
+        return []
+    try:
+        where = " AND ativo = 1" if apenas_ativos else ""
+        rows = conn.execute(
+            f"SELECT nome FROM pessoas_pos WHERE funcao = ?{where} "
+            f"ORDER BY nome COLLATE NOCASE",
+            (funcao,),
+        ).fetchall()
+        return [r[0] for r in rows]
+    except sqlite3.OperationalError:
+        return []   # tabela ainda não migrada (banco muito antigo)
+
+
+def adicionar_pessoa_pos(conn, funcao, nome):
+    """Adiciona um nome a uma função (idempotente). Devolve o nome ou None."""
+    nome = (nome or "").strip()
+    if funcao not in FUNCOES_POS or not nome:
+        return None
+    migrar_schema_pessoas_pos(conn)   # garante a tabela
+    conn.execute(
+        "INSERT OR IGNORE INTO pessoas_pos (funcao, nome) VALUES (?, ?)",
+        (funcao, nome),
+    )
+    conn.commit()
+    return nome
+
+
+def remover_pessoa_pos(conn, funcao, nome):
+    """Remove um nome do menu de uma função. NÃO afeta valores já gravados nos
+    cartões (são texto solto). Devolve True se removeu algo."""
+    if funcao not in FUNCOES_POS or not (nome or "").strip():
+        return False
+    cur = conn.execute(
+        "DELETE FROM pessoas_pos WHERE funcao = ? AND nome = ?",
+        (funcao, nome.strip()),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
+# Campos de pós-produção que a Entrega pode editar (allowlist — protege o UPDATE).
+CAMPOS_POS_PRODUCAO = ("pos_editor", "pos_edicao", "pos_upload")
+
+
+def definir_pos_producao(conn, cartao_id, campo, valor):
+    """Grava um campo de pós-produção de um cartão (Editor/Edição/Upload).
+
+    `campo` tem de estar em CAMPOS_POS_PRODUCAO (allowlist — nunca interpola algo
+    de fora). `valor` vazio limpa a célula (NULL). Devolve True se gravou.
+    """
+    if campo not in CAMPOS_POS_PRODUCAO:
+        return False
+    valor = (valor or "").strip() or None
+    cur = conn.execute(
+        f"UPDATE cartoes SET {campo} = ? WHERE id = ?", (valor, cartao_id)
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
 _SQL_PLANILHA = """
     SELECT c.id, c.numero_cartao, c.volume, c.marca_camera, c.tipo_material,
            c.status, c.total_arquivos_transferidos, c.tamanho_transferido_bytes,
            c.destino_pasta,
+           c.pos_editor, c.pos_edicao, c.pos_upload,
            (SELECT COUNT(*) FROM arquivos a
               WHERE a.cartao_id = c.id AND a.transcricao IS NOT NULL) AS n_transcritos,
            f.id AS form_id,
@@ -3941,6 +4068,7 @@ _SQL_PLANILHA = """
            f.camera AS marca_camera, f.tipo_material AS tipo_material,
            'Post in' AS status, NULL AS total_arquivos_transferidos,
            NULL AS tamanho_transferido_bytes, NULL AS destino_pasta,
+           NULL AS pos_editor, NULL AS pos_edicao, NULL AS pos_upload,
            0 AS n_transcritos,
            f.id AS form_id,
            f.nome AS prof_nome, f.nome_audio AS prof_nome_audio, f.data_gravacao,
@@ -4533,6 +4661,12 @@ def migrar_schema_cartoes(conn):
     if "velocidade_media_mbs" not in colunas_existentes:
         conn.execute("ALTER TABLE cartoes ADD COLUMN velocidade_media_mbs REAL")
         conn.commit()
+    # Pós-produção (editável pelo editor na aba Entrega): quem editou, status da
+    # edição e quem subiu. NULL em cartões antigos até alguém preencher na tela.
+    for _col in ("pos_editor", "pos_edicao", "pos_upload"):
+        if _col not in colunas_existentes:
+            conn.execute(f"ALTER TABLE cartoes ADD COLUMN {_col} TEXT")
+            conn.commit()
 
 
 def migrar_schema_eventos(conn):

@@ -2446,6 +2446,66 @@ def _pagina(titulo, aba, corpo, head_extra=""):
         .pag-planilha .planilha-tabela td {{ color:var(--6f-texto); border-bottom:1px solid var(--6f-borda); }}
         .pag-planilha .planilha-tabela tr:hover td {{ background:var(--6f-bg-hover); }}
         .pag-planilha .mono {{ color:var(--6f-texto-2); }}
+        /* Filtros por coluna (menus gerados a partir das colunas reais do molde) */
+        .pag-planilha .filtros-coluna {{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }}
+        .pag-planilha .filtros-coluna select {{ background:var(--6f-bg-elevado); color:var(--6f-texto);
+                                                border:1px solid var(--6f-borda); border-radius:6px;
+                                                padding:6px 10px; font-size:0.83em; cursor:pointer; }}
+        .pag-planilha .filtros-coluna select:focus {{ border-color:var(--6f-teal); outline:none; }}
+        .pag-planilha .filtros-coluna select.ativo {{ border-color:var(--6f-teal); color:var(--6f-teal-claro); }}
+        .pag-planilha .contador-takes {{ color:var(--6f-texto-2); font-size:0.83em; white-space:nowrap; }}
+        .pag-planilha .btn-limpar-filtros {{ background:none; border:1px solid var(--6f-borda);
+                                             color:var(--6f-texto-2); border-radius:6px; padding:5px 10px;
+                                             font-size:0.8em; cursor:pointer; }}
+        /* Caminho no HD recolhido: botão "⋯" + popover único com o caminho e copiar */
+        .pag-planilha .destino-btn {{ background:var(--6f-bg-elevado); border:1px solid var(--6f-borda);
+                                      color:var(--6f-texto-2); border-radius:6px; padding:1px 10px;
+                                      cursor:pointer; font-size:1em; line-height:1.3; letter-spacing:1px; }}
+        .pag-planilha .destino-btn:hover {{ border-color:var(--6f-teal); color:var(--6f-teal); }}
+        .pag-planilha .destino-pop {{ position:absolute; z-index:60; display:none;
+                                      background:var(--6f-bg-elevado); border:1px solid var(--6f-teal);
+                                      border-radius:8px; padding:10px 12px;
+                                      box-shadow:0 6px 20px rgba(0,0,0,.45);
+                                      max-width:min(90vw,560px); }}
+        .pag-planilha .destino-pop code {{ display:block; color:var(--6f-texto); font-size:0.82em;
+                                           word-break:break-all; margin-bottom:8px; font-family:monospace; }}
+        .pag-planilha .destino-pop button {{ background:var(--6f-teal); color:var(--6f-bg-base); border:none;
+                                             border-radius:6px; padding:5px 12px; cursor:pointer;
+                                             font-size:0.82em; }}
+        /* Pós-produção editável (Editor/Edição/Upload) — menus na própria célula */
+        .pag-planilha .pos-sel {{ background:var(--6f-bg-elevado); color:var(--6f-texto-2);
+                                  border:1px solid var(--6f-borda); border-radius:6px;
+                                  padding:3px 6px; font-size:0.82em; cursor:pointer; max-width:130px; }}
+        .pag-planilha .pos-sel:focus {{ border-color:var(--6f-teal); outline:none; }}
+        .pag-planilha .pos-sel.preenchido {{ color:var(--6f-texto); border-color:var(--6f-teal); }}
+        .pag-planilha .pos-sel.salvo-ok {{ border-color:var(--6f-ok); }}
+        .pag-planilha .pos-sel.erro-salvar {{ border-color:var(--6f-erro); }}
+        /* Caixa de gestão dos nomes (operador) — adicionar/excluir Editor·Upload */
+        .pag-planilha .ger-pessoas {{ background:var(--6f-bg-superficie); border:1px solid var(--6f-borda);
+                                      border-radius:8px; margin-bottom:12px; }}
+        .pag-planilha .ger-pessoas summary {{ cursor:pointer; padding:8px 14px; color:var(--6f-texto-2);
+                                              font-size:0.85em; user-select:none; }}
+        .pag-planilha .ger-pessoas summary:hover {{ color:var(--6f-teal); }}
+        .pag-planilha .ger-corpo {{ display:flex; gap:22px; flex-wrap:wrap; padding:4px 14px 12px; }}
+        .pag-planilha .ger-lista strong {{ display:block; color:var(--6f-texto); font-size:0.82em;
+                                           margin-bottom:6px; }}
+        .pag-planilha .pessoa-chips {{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; }}
+        .pag-planilha .pessoa-chip {{ display:inline-flex; align-items:center; gap:4px;
+                                      background:var(--6f-bg-elevado); border:1px solid var(--6f-borda);
+                                      border-radius:14px; padding:2px 6px 2px 10px; font-size:0.8em;
+                                      color:var(--6f-texto); }}
+        .pag-planilha .pessoa-x {{ background:none; border:none; color:var(--6f-texto-3); cursor:pointer;
+                                   font-size:1.05em; line-height:1; padding:0 2px; }}
+        .pag-planilha .pessoa-x:hover {{ color:var(--6f-erro); }}
+        .pag-planilha .pessoa-vazio {{ color:var(--6f-texto-3); font-size:0.8em; font-style:italic; }}
+        .pag-planilha .pessoa-add {{ display:flex; gap:6px; }}
+        .pag-planilha .pessoa-add input {{ background:var(--6f-bg-elevado); border:1px solid var(--6f-borda);
+                                           color:var(--6f-texto); border-radius:6px; padding:4px 8px;
+                                           font-size:0.8em; max-width:150px; }}
+        .pag-planilha .pessoa-add button {{ background:var(--6f-teal); color:var(--6f-bg-base); border:none;
+                                            border-radius:6px; padding:4px 10px; cursor:pointer; font-size:0.8em; }}
+        .pag-planilha .ger-nota {{ flex-basis:100%; margin:2px 0 0; color:var(--6f-texto-3);
+                                   font-size:0.76em; }}
 
         /* ── TEMA ESCURO 6floor — escopado à aba Sistema (Painel + Histórico) ──
            O corpo do Painel é estilizado por PAINEL_CSS (injetado via head_extra,
@@ -3383,7 +3443,64 @@ def post_copiar_recebido(formulario_id):
         return redirect(f"/?aviso={motivo}#{formulario_id}")
 
 
-def _celula_planilha(col, linha, chips, textos=None):
+def _select_pos(cartao_id, campo, valor_atual, opcoes):
+    """Menu SÓ-SELEÇÃO de uma célula de pós-produção (Editor/Edição/Upload).
+
+    Grava sozinho ao mudar (JS → POST /planilha/pos). Adicionar/excluir nomes é
+    ação do operador (caixa de gestão), não deste menu — o editor só seleciona.
+    """
+    val = (valor_atual or "").strip()
+    opts = [f'<option value=""{" selected" if not val else ""}>—</option>']
+    achou = False
+    for o in opcoes:
+        sel = " selected" if o == val else ""
+        if sel:
+            achou = True
+        opts.append(f'<option value="{_esc(o)}"{sel}>{_esc(o)}</option>')
+    # Valor gravado que não está mais na lista (nome excluído depois) — mantém
+    # visível: excluir um nome NÃO apaga o que já foi selecionado na célula.
+    if val and not achou:
+        opts.append(f'<option value="{_esc(val)}" selected>{_esc(val)}</option>')
+    return (f'<select class="pos-sel" data-cartao="{cartao_id}" data-campo="{campo}">'
+            f'{"".join(opts)}</select>')
+
+
+def _caixa_pessoas(pessoas):
+    """Caixa de gestão dos nomes da pós-produção (AÇÃO DO OPERADOR, na base).
+
+    Duas listas independentes (Editores · Upload); cada nome tem um "×" para
+    excluir e há um campo para adicionar. O editor (fatia futura) não verá esta
+    caixa — só os menus de seleção nas células.
+    """
+    def _bloco(funcao, titulo):
+        nomes = pessoas.get(funcao, [])
+        chips = "".join(
+            f'<span class="pessoa-chip">{_esc(n)}'
+            f'<button type="button" class="pessoa-x" data-funcao="{funcao}" '
+            f'data-nome="{_esc(n)}" title="excluir do menu">×</button></span>'
+            for n in nomes
+        ) or '<span class="pessoa-vazio">nenhum nome ainda</span>'
+        return (
+            f'<div class="ger-lista">'
+            f'<strong>{titulo}</strong>'
+            f'<div class="pessoa-chips">{chips}</div>'
+            f'<form class="pessoa-add" data-funcao="{funcao}">'
+            f'<input type="text" placeholder="+ novo nome" maxlength="60">'
+            f'<button type="submit">adicionar</button></form>'
+            f'</div>'
+        )
+    return (
+        '<details class="ger-pessoas"><summary>⚙ Gerenciar nomes de Editor e Upload</summary>'
+        '<div class="ger-corpo">'
+        + _bloco("editor", "Editores")
+        + _bloco("upload", "Upload")
+        + '<p class="ger-nota">Excluir um nome só o tira do menu — o que já foi '
+          'selecionado numa linha continua lá.</p>'
+        + '</div></details>'
+    )
+
+
+def _celula_planilha(col, linha, chips, textos=None, pessoas=None):
     """
     Renderiza o valor de uma célula da planilha em HTML.
 
@@ -3396,7 +3513,20 @@ def _celula_planilha(col, linha, chips, textos=None):
         linha:  linha do banco (sqlite3.Row).
         chips:  lista de chips desta ficha (bd.chips_por_formulario).
         textos: dict {grupo_chave: [valores]} desta ficha (bd.textos_por_formulario).
+        pessoas: dict {'editor': [...], 'upload': [...]} — nomes de cada menu.
     """
+    # Pós-produção editável (Editor/Edição/Upload). Só em linhas de CARTÃO (material
+    # existe); o Post-in (sem cartão) ainda não tem o que editar → "—".
+    chave = col.get("chave")
+    if chave in ("pos_editor", "pos_edicao", "pos_upload"):
+        if not linha["id"]:
+            return "—"
+        if chave == "pos_edicao":
+            return _select_pos(linha["id"], chave, linha["pos_edicao"], bd.EDICAO_STATUS)
+        funcao = "editor" if chave == "pos_editor" else "upload"
+        nomes = (pessoas or {}).get(funcao, [])
+        return _select_pos(linha["id"], chave, linha[chave], nomes)
+
     if col.get("tipo_render") == "especial":  # Profissional + 2º nome de áudio (HTML rico)
         profissional = linha["prof_nome"]
         if not profissional and linha["numero_cartao"]:
@@ -3406,6 +3536,15 @@ def _celula_planilha(col, linha, chips, textos=None):
             html_val += (f' <span style="color:var(--6f-texto-2);font-size:0.85em">'
                          f'+ {_esc(linha["prof_nome_audio"])} (áudio)</span>')
         return html_val
+
+    # Caminho no HD: recolhido num botão "⋯" (o caminho inteiro estoura a largura da
+    # tabela). O caminho fica no data-path e um popover único (JS) mostra + copia.
+    if col.get("chave") == "destino_pasta":
+        caminho = linha["destino_pasta"]
+        if not caminho:
+            return "—"
+        return (f'<button type="button" class="destino-btn" '
+                f'data-path="{_esc(caminho)}" title="{_esc(caminho)}">⋯</button>')
 
     return _esc(bd.valor_celula_planilha(col, linha, chips, textos))
 
@@ -3512,6 +3651,9 @@ def planilha():
         form_ids = [l["form_id"] for l in linhas if l["form_id"]]
         chips_map = bd.chips_por_formulario(conn, form_ids) if form_ids else {}
         textos_map = bd.textos_por_formulario(conn, form_ids) if form_ids else {}
+        # Catálogos da pós-produção (menus Editor/Upload — listas independentes).
+        pessoas = {"editor": bd.listar_pessoas_pos(conn, "editor"),
+                   "upload": bd.listar_pessoas_pos(conn, "upload")}
 
         # Busca profunda: monta o índice de resultados antes de renderizar as linhas.
         # resultados_busca: {(cartao_id, form_id) → dict com campos_bateram e arquivos}
@@ -3536,6 +3678,7 @@ def planilha():
         chips_map = {}
         textos_map = {}
         resultados_busca = {}
+        pessoas = {"editor": [], "upload": []}
 
     # ── Renderização das linhas ───────────────────────────────────────────────
     # Com busca ativa: só exibe linhas que bateram, com destaque e painel de arquivos.
@@ -3552,7 +3695,7 @@ def planilha():
 
         celulas = "".join(
             f'<td class="{"mono" if c["chave"] == "destino_pasta" else ""}">'
-            f'{_celula_transcricao(linha) if c["chave"] == "transcricao" else _celula_planilha(c, linha, chips, textos)}</td>'
+            f'{_celula_transcricao(linha) if c["chave"] == "transcricao" else _celula_planilha(c, linha, chips, textos, pessoas)}</td>'
             for c in colunas
         )
 
@@ -3592,7 +3735,19 @@ def planilha():
         )
         linhas_html = f"<tr><td colspan='{n_cols}' class='coluna-vazia'>{msg}</td></tr>"
 
-    cabecalhos = "".join(f"<th>{_esc(c['rotulo'])}</th>" for c in colunas)
+    # data-nofilter marca colunas que NÃO fazem sentido como filtro. A busca é
+    # voltada a CONTEÚDO → arquivo, então filtramos por dimensões (profissional,
+    # dia, tipo, status, classificação…), nunca por MEDIDA numérica (nº de arquivos,
+    # tamanho) nem por IDENTIFICADOR único de linha (caminho no HD, nº do cartão).
+    # Regra pela NATUREZA da coluna (não lista cravada): grupos de classificação e
+    # demais dimensões seguem sempre filtráveis.
+    def _coluna_sem_filtro(c):
+        return (c.get("tipo_render") in ("n_arq", "tamanho")
+                or c["chave"] in ("destino_pasta", "numero_cartao"))
+    def _th(c):
+        attr = ' data-nofilter="1"' if _coluna_sem_filtro(c) else ""
+        return f"<th{attr}>{_esc(c['rotulo'])}</th>"
+    cabecalhos = "".join(_th(c) for c in colunas)
 
     # ── Banners de feedback ───────────────────────────────────────────────────
     _msg_ok = (request.args.get("ok") or "").strip()
@@ -3703,32 +3858,309 @@ Múltiplas palavras = AND. Exemplo: sunset volkswagen">
           ⚙ Configurar colunas</a>
     </div>
 
+    {_caixa_pessoas(pessoas)}
+
     {bloco_ia}
     {barra_html}
     {legenda_busca}
 
-    <input type="text" id="filtro" class="filtro"
-           placeholder="filtrar na tela… (afina o resultado acima)"
-           style="margin-bottom:10px">
+    <div id="filtros-coluna" class="filtros-coluna"></div>
+
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+      <input type="text" id="filtro" class="filtro"
+             placeholder="filtrar na tela… (afina o resultado acima)"
+             style="flex:1;max-width:340px;margin:0">
+      <button type="button" id="limpar-filtros" class="btn-limpar-filtros" style="display:none">limpar filtros</button>
+      <span id="contador-takes" class="contador-takes"></span>
+    </div>
 
     <table class="planilha-tabela" id="tabela">
         <thead><tr>{cabecalhos}</tr></thead>
         <tbody>{linhas_html}</tbody>
-    </table>"""
+    </table>
+
+    <div id="destino-pop" class="destino-pop">
+      <code id="destino-pop-path"></code>
+      <button type="button" id="destino-pop-copiar">copiar caminho</button>
+    </div>"""
 
     head_extra = """<script>
+      // Filtros da Entrega — TUDO no navegador, só-leitura da vista (não toca no
+      // banco nem no Sheets). Os menus NÃO são cravados: nascem das próprias colunas
+      // renderizadas (que vêm do molde editável) — projeto zerado = menus vazios;
+      // conforme o material entra, as opções aparecem sozinhas dos valores reais.
       document.addEventListener('DOMContentLoaded', function() {
-        var filtro = document.getElementById('filtro');
-        if (!filtro) return;
-        filtro.addEventListener('input', function() {
-          var termo = this.value.toLowerCase();
-          document.querySelectorAll('#tabela tbody tr').forEach(function(tr) {
-            tr.style.display = tr.textContent.toLowerCase().indexOf(termo) >= 0 ? '' : 'none';
+        var tabela   = document.getElementById('tabela');
+        if (!tabela) return;
+        var filtroTxt = document.getElementById('filtro');
+        var painel    = document.getElementById('filtros-coluna');
+        var contador  = document.getElementById('contador-takes');
+        var btnLimpar = document.getElementById('limpar-filtros');
+        var SEP = ' \\u00b7 ';   // " · " — separador de chips numa mesma célula
+
+        var ths = Array.prototype.slice.call(tabela.querySelectorAll('thead th'));
+        var linhas = Array.prototype.slice.call(tabela.querySelectorAll('tbody tr'));
+        function ehDados(tr) {
+          return !tr.classList.contains('busca-detalhe') && tr.children.length === ths.length;
+        }
+        var linhasDados = linhas.filter(ehDados);
+        // Divide o texto de uma célula em valores (um chip pode ter vários por " · ")
+        function valores(txt) {
+          return txt.split(SEP).map(function(s){ return s.trim(); })
+                    .filter(function(s){ return s && s !== '\\u2014'; });   // ignora "—"
+        }
+        // Valor(es) de filtro de uma célula: se ela tem um MENU (pós-produção),
+        // vale a OPÇÃO escolhida (não o texto de todas as opções); senão, o texto.
+        function celValores(cel) {
+          if (!cel) return [];
+          var sel = cel.querySelector && cel.querySelector('select');
+          if (sel) return sel.value ? [sel.value] : [];
+          return valores(cel.textContent);
+        }
+
+        var selects = [];
+        ths.forEach(function(th, idx) {
+          if (th.getAttribute('data-nofilter')) return;   // coluna opta por não filtrar
+          // Domínio do filtro: para coluna de MENU (pós-produção), oferece TODAS as
+          // opções possíveis (todos os status/editores), não só os já usados; para
+          // coluna de texto, os valores distintos presentes.
+          var conjunto = {}, temMenu = false;
+          linhasDados.forEach(function(tr) {
+            var cel = tr.children[idx];
+            if (!cel) return;
+            var s = cel.querySelector && cel.querySelector('select');
+            if (s) {
+              temMenu = true;
+              Array.prototype.forEach.call(s.options, function(o) {
+                if (o.value && o.value !== '__novo__') conjunto[o.value] = true;
+              });
+            } else {
+              valores(cel.textContent).forEach(function(v){ conjunto[v] = true; });
+            }
+          });
+          var vals = Object.keys(conjunto).sort(function(a, b){ return a.localeCompare(b, 'pt'); });
+          // Heurística: 2 a 25 valores; pula colunas numéricas/únicas (nº de
+          // arquivos, tamanho, cartão, pasta) — a exclusão de "todos únicos" só vale
+          // para colunas de texto (menus têm domínio fixo pequeno).
+          if (vals.length < 2 || vals.length > 25) return;
+          if (!temMenu && linhasDados.length > 1 && vals.length === linhasDados.length) return;
+
+          var titulo = (th.textContent || '').trim();
+          var sel = document.createElement('select');
+          sel.setAttribute('data-col', idx);
+          var optTodos = document.createElement('option');
+          optTodos.value = ''; optTodos.textContent = titulo + ' (todos)';
+          sel.appendChild(optTodos);
+          vals.forEach(function(v) {
+            var o = document.createElement('option');
+            o.value = v; o.textContent = v; sel.appendChild(o);
+          });
+          sel.addEventListener('change', aplicar);
+          painel.appendChild(sel);
+          selects.push(sel);
+        });
+
+        function aplicar() {
+          var termo = (filtroTxt && filtroTxt.value || '').toLowerCase();
+          var ativos = selects.filter(function(s){ return s.value; })
+                              .map(function(s){ return { idx: +s.getAttribute('data-col'), val: s.value }; });
+          selects.forEach(function(s){ s.classList.toggle('ativo', !!s.value); });
+          if (btnLimpar) btnLimpar.style.display = (ativos.length || termo) ? '' : 'none';
+
+          var visiveis = 0, ultimaVisivel = false;
+          linhas.forEach(function(tr) {
+            if (tr.classList.contains('busca-detalhe')) {   // painel de transcrição segue a linha-pai
+              tr.style.display = ultimaVisivel ? '' : 'none';
+              return;
+            }
+            var passaTexto = tr.textContent.toLowerCase().indexOf(termo) >= 0;
+            var passaMenus = ativos.every(function(f) {
+              return celValores(tr.children[f.idx]).indexOf(f.val) >= 0;
+            });
+            var mostra = passaTexto && passaMenus;
+            tr.style.display = mostra ? '' : 'none';
+            ultimaVisivel = mostra;
+            if (mostra && ehDados(tr)) visiveis++;
+          });
+          if (contador) contador.textContent = visiveis + (visiveis === 1 ? ' take' : ' takes');
+        }
+
+        if (filtroTxt) filtroTxt.addEventListener('input', aplicar);
+        if (btnLimpar) btnLimpar.addEventListener('click', function() {
+          selects.forEach(function(s){ s.value = ''; });
+          if (filtroTxt) filtroTxt.value = '';
+          aplicar();
+        });
+        aplicar();
+
+        // ── Popover do Caminho no HD ("⋯" → mostra o caminho + copiar) ──────────
+        var pop     = document.getElementById('destino-pop');
+        var popPath = document.getElementById('destino-pop-path');
+        var popCopy = document.getElementById('destino-pop-copiar');
+        var caminhoAtual = '';
+        function fecharPop() { if (pop) pop.style.display = 'none'; }
+        if (pop) {
+          tabela.addEventListener('click', function(ev) {
+            var btn = ev.target.closest && ev.target.closest('.destino-btn');
+            if (!btn) return;
+            ev.stopPropagation();
+            caminhoAtual = btn.getAttribute('data-path') || '';
+            popPath.textContent = caminhoAtual;
+            popCopy.textContent = 'copiar caminho';
+            var r = btn.getBoundingClientRect();
+            pop.style.display = 'block';
+            // posiciona logo abaixo do botão, respeitando o rolar da página
+            pop.style.top  = (r.bottom + window.scrollY + 4) + 'px';
+            pop.style.left = (r.left + window.scrollX) + 'px';
+          });
+          popCopy.addEventListener('click', function(ev) {
+            ev.stopPropagation();
+            var texto = caminhoAtual;
+            function feito(){ popCopy.textContent = 'copiado \\u2713'; }
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(texto).then(feito, feito);
+            } else {
+              var ta = document.createElement('textarea');
+              ta.value = texto; document.body.appendChild(ta); ta.select();
+              try { document.execCommand('copy'); } catch(e) {}
+              document.body.removeChild(ta); feito();
+            }
+          });
+          document.addEventListener('click', fecharPop);
+          document.addEventListener('keydown', function(e){ if (e.key === 'Escape') fecharPop(); });
+        }
+
+        // ── Pós-produção: grava ao mudar (Editor/Edição/Upload) ─────────────────
+        function postForm(url, dados) {
+          var corpo = Object.keys(dados).map(function(k){
+            return encodeURIComponent(k) + '=' + encodeURIComponent(dados[k]);
+          }).join('&');
+          return fetch(url, { method:'POST',
+                              headers:{'Content-Type':'application/x-www-form-urlencoded'},
+                              body:corpo })
+                 .then(function(r){ return r.json(); })
+                 .catch(function(){ return { ok:false }; });
+        }
+        function salvarPos(sel) {
+          var valor = sel.value;
+          postForm('/planilha/pos', {
+            cartao: sel.getAttribute('data-cartao'),
+            campo:  sel.getAttribute('data-campo'),
+            valor:  valor
+          }).then(function(r) {
+            sel.classList.toggle('preenchido', !!valor);
+            if (r && r.ok) {
+              sel.classList.remove('erro-salvar');
+              sel.classList.add('salvo-ok');
+              setTimeout(function(){ sel.classList.remove('salvo-ok'); }, 700);
+            } else {
+              sel.classList.add('erro-salvar');
+            }
+          });
+        }
+        tabela.addEventListener('change', function(ev) {
+          var sel = ev.target;
+          if (sel.classList && sel.classList.contains('pos-sel')) salvarPos(sel);
+        });
+
+        // ── Caixa de gestão dos nomes (operador): adicionar / excluir ────────────
+        // Add e excluir recarregam a página — o servidor re-renderiza os menus com
+        // a lista nova (e mantém os valores já gravados nas células).
+        document.querySelectorAll('.pessoa-add').forEach(function(form) {
+          form.addEventListener('submit', function(ev) {
+            ev.preventDefault();
+            var inp = form.querySelector('input');
+            var nome = (inp.value || '').trim();
+            if (!nome) return;
+            postForm('/planilha/pessoa/novo', {
+              funcao: form.getAttribute('data-funcao'), nome: nome
+            }).then(function(r){ if (r && r.ok) window.location.reload(); });
+          });
+        });
+        document.querySelectorAll('.pessoa-x').forEach(function(btn) {
+          btn.addEventListener('click', function() {
+            var nome = btn.getAttribute('data-nome');
+            if (!window.confirm('Excluir "' + nome + '" do menu?\\n(o que já foi selecionado continua)')) return;
+            postForm('/planilha/pessoa/excluir', {
+              funcao: btn.getAttribute('data-funcao'), nome: nome
+            }).then(function(r){ if (r && r.ok) window.location.reload(); });
           });
         });
       });
     </script>"""
     return _pagina("Entrega", "planilha", corpo, head_extra), 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
+# ── PÓS-PRODUÇÃO (aba Entrega) — gravar Editor/Edição/Upload + gerir nomes ─────
+# Só na base: o portão _portao_de_acesso já bloqueia o acesso remoto para tudo
+# fora de /ficha. São mudanças de METADADO (nunca tocam mídia).
+
+@app.route("/planilha/pos", methods=["POST"])
+def planilha_pos():
+    """Grava um campo de pós-produção de um cartão (menu Editor/Edição/Upload)."""
+    if not BANCO_DISPONIVEL:
+        return jsonify(ok=False, erro="banco_indisponivel"), 503
+    try:
+        cartao_id = int(request.form.get("cartao", "0"))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, erro="cartao_invalido"), 400
+    campo = (request.form.get("campo") or "").strip()
+    valor = request.form.get("valor", "")
+    if campo not in bd.CAMPOS_POS_PRODUCAO:
+        return jsonify(ok=False, erro="campo_invalido"), 400
+    try:
+        conn = bd.obter_conexao()
+        gravou = bd.definir_pos_producao(conn, cartao_id, campo, valor)
+        conn.close()
+    except Exception as e:
+        logger.error(f"PLANILHA POS | Erro ao gravar | {e}")
+        return jsonify(ok=False, erro="erro_interno"), 500
+    if not gravou:
+        return jsonify(ok=False, erro="cartao_inexistente"), 404
+    logger.info(f"PLANILHA POS | Cartão {cartao_id} | {campo} = {valor!r}")
+    return jsonify(ok=True)
+
+
+@app.route("/planilha/pessoa/novo", methods=["POST"])
+def planilha_pessoa_novo():
+    """Adiciona um nome a uma função (editor/upload) — ação do operador (base)."""
+    if not BANCO_DISPONIVEL:
+        return jsonify(ok=False, erro="banco_indisponivel"), 503
+    funcao = (request.form.get("funcao") or "").strip()
+    nome = (request.form.get("nome") or "").strip()
+    if funcao not in bd.FUNCOES_POS:
+        return jsonify(ok=False, erro="funcao_invalida"), 400
+    if not nome:
+        return jsonify(ok=False, erro="nome_vazio"), 400
+    try:
+        conn = bd.obter_conexao()
+        bd.adicionar_pessoa_pos(conn, funcao, nome)
+        conn.close()
+    except Exception as e:
+        logger.error(f"PLANILHA PESSOA NOVO | Erro | {e}")
+        return jsonify(ok=False, erro="erro_interno"), 500
+    logger.info(f"PLANILHA PESSOA NOVO | {funcao} | {nome!r}")
+    return jsonify(ok=True, funcao=funcao, nome=nome)
+
+
+@app.route("/planilha/pessoa/excluir", methods=["POST"])
+def planilha_pessoa_excluir():
+    """Exclui um nome do menu de uma função. NÃO apaga valores já gravados."""
+    if not BANCO_DISPONIVEL:
+        return jsonify(ok=False, erro="banco_indisponivel"), 503
+    funcao = (request.form.get("funcao") or "").strip()
+    nome = (request.form.get("nome") or "").strip()
+    if funcao not in bd.FUNCOES_POS or not nome:
+        return jsonify(ok=False, erro="parametros_invalidos"), 400
+    try:
+        conn = bd.obter_conexao()
+        removeu = bd.remover_pessoa_pos(conn, funcao, nome)
+        conn.close()
+    except Exception as e:
+        logger.error(f"PLANILHA PESSOA EXCLUIR | Erro | {e}")
+        return jsonify(ok=False, erro="erro_interno"), 500
+    logger.info(f"PLANILHA PESSOA EXCLUIR | {funcao} | {nome!r} | removeu={removeu}")
+    return jsonify(ok=True, funcao=funcao, nome=nome, removeu=removeu)
 
 
 # ── ROTA: MOLDE DA PLANILHA (/molde) ─────────────────────────────────────────
